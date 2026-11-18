@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<title>R36S mini-OS UI · 640×480</title>
+<style>
+  :root{
+    --bg:#0c100e; --panel:#131a16; --panel2:#18221c; --line:#202a24;
+    --fg:#e9ede7; --fg2:#98a69d; --fg3:#5f6d65;
+    --acc:#79d89a; --sel:#18241d; --warn:#e6b25c; --bad:#e0706a;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:#000;font-family:"Segoe UI",Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+  .frame{width:640px;height:480px;background:var(--bg);color:var(--fg);
+    display:flex;flex-direction:column;position:relative;overflow:hidden;font-size:13px;line-height:1.15}
+
+  /* tabs */
+  .tabs{height:30px;flex:0 0 30px;display:flex;align-items:stretch;border-bottom:1px solid var(--line);background:var(--panel)}
+  .tab{padding:0 11px;display:flex;align-items:center;font-size:10.5px;letter-spacing:.1em;color:var(--fg3);text-transform:uppercase}
+  .tab.on{color:var(--fg);background:var(--bg);box-shadow:inset 0 -2px 0 var(--acc)}
+  .status{margin-left:auto;display:flex;align-items:center;gap:7px;padding:0 10px;font-size:11px;color:var(--fg2);font-variant-numeric:tabular-nums}
+  .bat{width:19px;height:9px;border:1px solid var(--fg3);border-radius:2px;padding:1px;position:relative}
+  .bat i{display:block;height:100%;width:78%;background:var(--acc);border-radius:1px}
+  .bat:after{content:"";position:absolute;right:-2.5px;top:2.5px;width:1.5px;height:3.5px;background:var(--fg3);border-radius:0 1px 1px 0}
+
+  .head{height:25px;flex:0 0 25px;display:flex;align-items:center;padding:0 12px;border-bottom:1px solid var(--line)}
+  .crumb{font-size:10px;letter-spacing:.13em;color:var(--fg3);text-transform:uppercase}
+  .head .right{margin-left:auto;font-size:10px;letter-spacing:.06em;color:var(--fg3)}
+  .body{flex:1;min-height:0;display:flex;flex-direction:column}
+  .hint{height:26px;flex:0 0 26px;border-top:1px solid var(--line);background:var(--panel);
+    display:flex;align-items:center;gap:13px;padding:0 12px;font-size:10.5px;color:var(--fg3)}
+  .hint b{color:var(--fg2);font-weight:600}
+  .hint .r{margin-left:auto}
+  .key{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:15px;padding:0 4px;margin-right:5px;
+    border:1px solid var(--line);border-radius:3px;font-size:9px;color:var(--fg2);background:#0f1512}
+
+  /* rows */
+  .list{flex:1;padding:5px 9px;overflow:hidden}
+  .row{display:flex;align-items:center;gap:10px;height:32px;padding:0 8px;border-radius:4px;position:relative}
+  .row.sel{background:var(--sel)}
+  .row.sel:before{content:"";position:absolute;left:0;top:5px;bottom:5px;width:2px;border-radius:2px;background:var(--acc)}
+  .cov{width:34px;height:26px;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#0b110d;flex:0 0 34px}
+  .nm{flex:1;min-width:0;display:flex;align-items:baseline;gap:8px}
+  .nm .t{font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .nm .s{font-size:9.5px;color:var(--fg3);letter-spacing:.08em;text-transform:uppercase;white-space:nowrap}
+  .meta{font-size:11px;color:var(--fg2);font-variant-numeric:tabular-nums;min-width:52px;text-align:right}
+  .pill{font-size:9px;letter-spacing:.07em;padding:2px 5px;border:1px solid var(--line);border-radius:3px;color:var(--fg2);text-transform:uppercase}
+
+
+  .cov{background-size:cover;background-position:center;overflow:hidden;position:relative}
+  .cov:after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,.16),rgba(0,0,0,.22))}
+  .cov-sm{width:24px;height:18px;flex:0 0 24px;border-radius:2px}
+  .a-sonic{background:linear-gradient(135deg,#12327f 0 38%,#3f8bff 38% 62%,#0d1f4d 62% 100%)}
+  .a-crash{background:radial-gradient(circle at 35% 30%,#ffd27a 0 38%,#e8801f 38% 100%)}
+  .a-lumines{background:linear-gradient(90deg,#0e3b3b 0 33%,#35c6c0 33% 66%,#0b2a2a 66% 100%)}
+  .a-sor{background:linear-gradient(90deg,#5a1230 0 30%,#e0457b 30% 55%,#2a0b1c 55% 100%)}
+  .a-mario{background:linear-gradient(180deg,#5fc0f0 0 55%,#2f8f3f 55% 100%)}
+  .a-castle{background:linear-gradient(160deg,#3a0f18 0 45%,#b8452f 45% 70%,#140609 70% 100%)}
+  .a-fft{background:linear-gradient(135deg,#1c2a55 0 50%,#d8c48a 50% 100%)}
+  .a-gunstar{background:linear-gradient(135deg,#0f5a6b 0 45%,#ffd23f 45% 70%,#0a2b33 70% 100%)}
+  .a-phantasy{background:linear-gradient(180deg,#26417f 0 60%,#e0bc63 60% 100%)}
+  .a-disgaea{background:linear-gradient(140deg,#3c1c5c 0 55%,#a364d8 55% 100%)}
+  .a-slug{background:linear-gradient(135deg,#4b5320 0 45%,#e08a2e 45% 75%,#20240f 75% 100%)}
+  .a-ikaruga{background:linear-gradient(135deg,#0b0b0b 0 45%,#e8e8e8 45% 65%,#b42121 65% 100%)}
+  .a-aladdin{background:linear-gradient(135deg,#3a1f6b 0 50%,#f0c04a 50% 100%)}
+  .a-comix{background:linear-gradient(45deg,#e6d21e 0 45%,#1a1a1a 45% 70%,#8a7a12 70% 100%)}
+  .a-contra{background:linear-gradient(160deg,#1b3a12 0 50%,#c8372a 50% 78%,#0d1c08 78% 100%)}
+  .a-ristar{background:linear-gradient(135deg,#f2d24b 0 50%,#2b7bd6 50% 100%)}
+  .a-shining{background:linear-gradient(180deg,#2a3f6b 0 55%,#c9d4e6 55% 100%)}
+  .a-streets{background:linear-gradient(90deg,#8a1f45 0 40%,#ff8fae 40% 60%,#3c0d1f 60% 100%)}
+  .a-story{background:linear-gradient(135deg,#5a3410 0 50%,#d9a13a 50% 100%)}
+  .a-nocover{background:#20281f}
+
+  /* systems */
+  .grid-sys{flex:1;padding:3px 7px;display:grid;grid-template-columns:1fr 1fr;column-gap:10px;align-content:start}
+  .sys{display:flex;align-items:center;gap:9px;height:25.5px;padding:0 7px;border-radius:3px;font-size:11.5px}
+  .sys.sel{background:var(--sel);box-shadow:inset 2px 0 0 var(--acc)}
+  .sys .tag{font-size:8.5px;letter-spacing:.06em;color:var(--fg3);border:1px solid var(--line);border-radius:2px;padding:1px 3px;min-width:30px;text-align:center}
+  .sys .n{font-size:10px;color:var(--fg3);margin-left:auto;font-variant-numeric:tabular-nums}
+
+  /* settings tiles */
+  .cats{flex:1;padding:7px;display:grid;grid-template-columns:repeat(3,1fr);grid-auto-rows:88px;gap:6px}
+  .cat{background:var(--panel);border:1px solid var(--line);border-radius:5px;padding:9px 11px;position:relative;display:flex;flex-direction:column;justify-content:flex-end}
+  .cat.sel{border-color:#2f5c40;background:var(--panel2);box-shadow:inset 2px 0 0 var(--acc)}
+  .cat .ttl{font-size:12px}
+  .cat .sub{font-size:9.5px;color:var(--fg3);margin-top:3px}
+  .cat .ic{position:absolute;right:9px;top:8px}
+  .cat .ic svg{width:13px;height:13px;stroke:var(--fg3);fill:none;stroke-width:1.6}
+
+  /* generic list with values (modules / files) */
+  .vlist{flex:1;padding:4px 9px}
+  .vrow{display:flex;align-items:center;gap:10px;height:34px;padding:0 8px;border-radius:4px;position:relative}
+  .vrow.sel{background:var(--sel)}
+  .vrow.sel:before{content:"";position:absolute;left:0;top:5px;bottom:5px;width:2px;border-radius:2px;background:var(--acc)}
+  .vrow .nm .t{font-size:12.5px}
+  .vrow .sub{font-size:9.5px;color:var(--fg3)}
+  .val{font-size:11px;color:var(--fg2);margin-left:auto;font-variant-numeric:tabular-nums}
+  .val.on{color:var(--acc)}
+  .sw{width:26px;height:13px;border-radius:7px;border:1px solid #2b3a30;position:relative;margin-left:10px}
+  .sw i{position:absolute;top:1px;left:1px;width:9px;height:9px;border-radius:50%;background:var(--fg3)}
+  .sw.on{background:#22402e;border-color:#356a48}
+  .sw.on i{left:14px;background:var(--acc)}
+  .sep{height:1px;background:var(--line);margin:5px 8px}
+
+  /* info */
+  .kv{flex:1;display:flex;gap:16px;padding:6px 12px}
+  .kv>div{flex:1}
+  .line{display:flex;align-items:center;height:25px;border-bottom:1px solid #18201a}
+  .k{font-size:10.5px;color:var(--fg3);width:104px;flex:0 0 104px}
+  .v{font-size:11.5px;color:var(--fg);font-variant-numeric:tabular-nums}
+  .v.good{color:var(--acc)} .v.warn{color:var(--warn)}
+  .bar{width:76px;height:5px;border-radius:3px;background:#1d271f;overflow:hidden;margin-left:auto}
+  .bar i{display:block;height:100%;background:var(--acc)}
+  .sbar{position:absolute;right:3px;width:3px;border-radius:2px;background:#2b3a30}
+</style></head>
+<body>
+
+<!-- 1 -->
+<div class="frame" id="f1">
+  <div class="tabs">
+    <div class="tab on">Продолжить</div><div class="tab">Игры</div><div class="tab">Настройки</div>
+    <div class="tab">Модули</div><div class="tab">Файлы</div><div class="tab">Сведения</div>
+    <div class="status"><span>14:32</span><span class="bat"><i></i></span><span>78%</span></div>
+  </div>
+  <div class="body"><div class="list">
+    <div class="row sel"><div class="cov a-sonic"></div><div class="nm"><span class="t">Sonic 3 &amp; Knuckles</span><span class="s">Mega Drive</span></div><span class="pill">слот 2</span><span class="meta">12 мин</span></div>
+    <div class="row"><div class="cov a-crash"></div><div class="nm"><span class="t">Crash Bandicoot 2</span><span class="s">PlayStation</span></div><span class="meta">1 ч 04</span></div>
+    <div class="row"><div class="cov a-lumines"></div><div class="nm"><span class="t">Lumines</span><span class="s">PSP</span></div><span class="pill">автосейв</span><span class="meta">46 мин</span></div>
+    <div class="row"><div class="cov a-sor"></div><div class="nm"><span class="t">Streets of Rage 2</span><span class="s">Mega Drive</span></div><span class="meta">вчера</span></div>
+    <div class="row"><div class="cov a-mario"></div><div class="nm"><span class="t">Mario Kart 64</span><span class="s">Nintendo 64</span></div><span class="meta">вчера</span></div>
+    <div class="row"><div class="cov a-castle"></div><div class="nm"><span class="t">Castlevania: Bloodlines</span><span class="s">Mega Drive</span></div><span class="meta">2 дня</span></div>
+    <div class="row"><div class="cov a-fft"></div><div class="nm"><span class="t">Final Fantasy Tactics</span><span class="s">PlayStation</span></div><span class="meta">3 дня</span></div>
+    <div class="row"><div class="cov a-gunstar"></div><div class="nm"><span class="t">Gunstar Heroes</span><span class="s">Mega Drive</span></div><span class="meta">4 дня</span></div>
+    <div class="row"><div class="cov a-phantasy"></div><div class="nm"><span class="t">Phantasy Star IV</span><span class="s">Mega Drive</span></div><span class="meta">5 дней</span></div>
+    <div class="row"><div class="cov a-disgaea"></div><div class="nm"><span class="t">Disgaea</span><span class="s">PSP</span></div><span class="meta">6 дней</span></div>
+    <div class="row"><div class="cov a-slug"></div><div class="nm"><span class="t">Metal Slug X</span><span class="s">Arcade</span></div><span class="meta">неделя</span></div>
+    <div class="row"><div class="cov a-ikaruga"></div><div class="nm"><span class="t">Ikaruga</span><span class="s">Dreamcast</span></div><span class="meta">неделя</span></div>
+  </div></div>
+  <div class="sbar" style="top:60px;height:250px"></div>
+  <div class="hint"><span><span class="key">A</span><b>Продолжить</b></span><span><span class="key">X</span>Без сейва</span><span><span class="key">SEL</span>Слот</span><span class="r"><span class="key">B</span>Назад</span></div>
+</div>
+
+<!-- 2 -->
+<div class="frame" id="f2">
+  <div class="tabs">
+    <div class="tab">Продолжить</div><div class="tab on">Игры</div><div class="tab">Настройки</div>
+    <div class="tab">Модули</div><div class="tab">Файлы</div><div class="tab">Сведения</div>
+    <div class="status"><span>14:33</span><span class="bat"><i></i></span><span>78%</span></div>
+  </div>
+  <div class="body">
+    <div class="head"><span class="crumb">Игры / системы</span><span class="right">128 систем · 1 842 игры</span></div>
+    <div class="sbar" style="top:60px;height:300px"></div>
+    <div class="grid-sys">
+      <div class="sys sel"><span class="tag">MD</span>Mega Drive<span class="n">312</span></div><div class="sys"><span class="tag">SNES</span>Super Nintendo<span class="n">286</span></div>
+      <div class="sys"><span class="tag">PS1</span>PlayStation<span class="n">110</span></div><div class="sys"><span class="tag">GBA</span>Game Boy Advance<span class="n">204</span></div>
+      <div class="sys"><span class="tag">PSP</span>PS Portable<span class="n">48</span></div><div class="sys"><span class="tag">DC</span>Dreamcast<span class="n">36</span></div>
+      <div class="sys"><span class="tag">N64</span>Nintendo 64<span class="n">52</span></div><div class="sys"><span class="tag">GB</span>Game Boy<span class="n">167</span></div>
+      <div class="sys"><span class="tag">ARC</span>Arcade<span class="n">241</span></div><div class="sys"><span class="tag">NES</span>Nintendo NES<span class="n">198</span></div>
+      <div class="sys"><span class="tag">SMS</span>Master System<span class="n">94</span></div><div class="sys"><span class="tag">GBC</span>Game Boy Color<span class="n">153</span></div>
+      <div class="sys"><span class="tag">PCE</span>PC Engine<span class="n">88</span></div><div class="sys"><span class="tag">SAT</span>Saturn<span class="n">12</span></div>
+      <div class="sys"><span class="tag">CPS2</span>CPS-2<span class="n">76</span></div><div class="sys"><span class="tag">NEOS</span>Neo Geo<span class="n">64</span></div>
+      <div class="sys"><span class="tag">DOS</span>DOS<span class="n">41</span></div><div class="sys"><span class="tag">AMIGA</span>Amiga<span class="n">37</span></div>
+      <div class="sys"><span class="tag">AT80</span>Atari 800<span class="n">29</span></div><div class="sys"><span class="tag">C64</span>Commodore 64<span class="n">33</span></div>
+      <div class="sys"><span class="tag">SCV</span>Super Cassette<span class="n">14</span></div><div class="sys"><span class="tag">PORTS</span>Порты<span class="n">49</span></div>
+      <div class="sys"><span class="tag">WSW</span>WonderSwan<span class="n">18</span></div><div class="sys"><span class="tag">32X</span>Sega 32X<span class="n">9</span></div>
+      <div class="sys"><span class="tag">X68</span>X68000<span class="n">7</span></div><div class="sys"><span class="tag">VB</span>Virtual Boy<span class="n">6</span></div>
+    </div>
+  </div>
+  <div class="hint"><span><span class="key">A</span><b>Открыть</b></span><span><span class="key">Y</span>Фильтр</span><span class="r"><span class="key">B</span>Назад</span></div>
+</div>
+
+<!-- 3 -->
+<div class="frame" id="f3">
+  <div class="tabs">
+    <div class="tab">Продолжить</div><div class="tab on">Игры</div><div class="tab">Настройки</div>
+    <div class="tab">Модули</div><div class="tab">Файлы</div><div class="tab">Сведения</div>
+    <div class="status"><span>14:34</span><span class="bat"><i></i></span><span>78%</span></div>
+  </div>
+  <div class="body">
+    <div class="head"><span class="crumb">Игры / Mega Drive</span><span class="right">312 игр · A–Z · избранное: 7</span></div>
+    <div class="list" style="padding-top:4px">
+      <div class="row"><div class="cov cov-sm a-aladdin"></div><div class="nm"><span class="t">Aladdin</span><span class="s">1993 · платформер</span></div><span class="meta">3 мин</span></div>
+      <div class="row sel"><div class="nm"><span class="t">Castlevania: Bloodlines</span><span class="s">1994 · экшен</span></div><span class="pill">сейв</span><span class="meta">1 ч 21</span></div>
+      <div class="row"><div class="cov cov-sm a-comix"></div><div class="nm"><span class="t">Comix Zone</span><span class="s">1995 · битемап</span></div><span class="meta">—</span></div>
+      <div class="row"><div class="cov cov-sm a-contra"></div><div class="nm"><span class="t">Contra: Hard Corps</span><span class="s">1994 · run&amp;gun</span></div><span class="meta">24 мин</span></div>
+      <div class="row"><div class="cov cov-sm a-gunstar"></div><div class="nm"><span class="t">Gunstar Heroes</span><span class="s">1993 · run&amp;gun</span></div><span class="meta">52 мин</span></div>
+      <div class="row"><div class="cov cov-sm a-phantasy"></div><div class="nm"><span class="t">Phantasy Star IV</span><span class="s">1993 · JRPG</span></div><span class="pill">сейв</span><span class="meta">4 ч 12</span></div>
+      <div class="row"><div class="cov cov-sm a-nocover"></div><div class="nm"><span class="t">Ristar</span><span class="s">1995 · платформер</span></div><span class="meta">—</span></div>
+      <div class="row"><div class="cov cov-sm a-shining"></div><div class="nm"><span class="t">Shining Force II</span><span class="s">1993 · тактика</span></div><span class="meta">2 ч 05</span></div>
+      <div class="row"><div class="cov cov-sm a-sonic"></div><div class="nm"><span class="t">Sonic 3 &amp; Knuckles</span><span class="s">1994 · платформер</span></div><span class="pill">сейв</span><span class="meta">12 мин</span></div>
+      <div class="row"><div class="cov cov-sm a-sonic"></div><div class="nm"><span class="t">Sonic the Hedgehog 2</span><span class="s">1992 · платформер</span></div><span class="meta">1 ч 46</span></div>
+      <div class="row"><div class="cov cov-sm a-streets"></div><div class="nm"><span class="t">Streets of Rage 2</span><span class="s">1992 · битемап</span></div><span class="meta">31 мин</span></div>
+      <div class="row"><div class="cov cov-sm a-story"></div><div class="nm"><span class="t">The Story of Thor</span><span class="s">1994 · экшен-RPG</span></div><span class="meta">—</span></div>
+    </div>
+  </div>
+  <div class="sbar" style="top:60px;height:280px"></div>
+  <div class="hint"><span><span class="key">A</span><b>Играть</b></span><span><span class="key">Y</span>Буква</span><span><span class="key">X</span>Избранное</span><span><span class="key">SEL</span>Опции</span><span class="r"><span class="key">B</span>Назад</span></div>
+</div>
+
+<!-- 4 -->
+<div class="frame" id="f4">
+  <div class="tabs">
+    <div class="tab">Продолжить</div><div class="tab">Игры</div><div class="tab on">Настройки</div>
+    <div class="tab">Модули</div><div class="tab">Файлы</div><div class="tab">Сведения</div>
+    <div class="status"><span>14:36</span><span class="bat"><i></i></span><span>78%</span></div>
+  </div>
+  <div class="body">
+    <div class="head"><span class="crumb">Настройки</span><span class="right">импорт с Арх-Р: 24 из 24</span></div>
+    <div class="cats">
+      <div class="cat sel"><div class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></svg></div><div class="ttl">Регион и язык</div><div class="sub">Русский · UTC+5</div></div>
+      <div class="cat"><div class="ic"><svg viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="9" rx="4"/><path d="M8 12.5h3M9.5 11v3"/><circle cx="16" cy="12" r="1"/></svg></div><div class="ttl">Управление</div><div class="sub">A/B исправлены</div></div>
+      <div class="cat"><div class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg></div><div class="ttl">Дисплей</div><div class="sub">яркость 60%</div></div>
+      <div class="cat"><div class="ic"><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M17 9a4 4 0 010 6"/></svg></div><div class="ttl">Звук</div><div class="sub">динамик · 55%</div></div>
+      <div class="cat"><div class="ic"><svg viewBox="0 0 24 24"><path d="M5 12a7 7 0 0114 0"/><path d="M8.5 15a3.5 3.5 0 017 0"/><circle cx="12" cy="18" r="1"/></svg></div><div class="ttl">Сеть</div><div class="sub">USB-сеть · SSH вкл</div></div>
+      <div class="cat"><div class="ic"><svg viewBox="0 0 24 24"><rect x="3" y="8" width="15" height="8" rx="2"/><path d="M21 11v2"/><path d="M11 9.5L9 12h4l-2 2.5"/></svg></div><div class="ttl">Питание</div><div class="sub">balanced · 1416 МГц</div></div>
+      <div class="cat"><div class="ic"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 10-3 6.2"/><path d="M20 5v5h-5"/></svg></div><div class="ttl">Обновления</div><div class="sub">stable · 20261116</div></div>
+      <div class="cat"><div class="ic"><svg viewBox="0 0 24 24"><path d="M9 3h6v3h3v3h3v6h-3v3h-3v3H9v-3H6v-3H3V9h3V6h3z"/></svg></div><div class="ttl">Модули</div><div class="sub">4 включено</div></div>
+      <div class="cat"><div class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5"/></svg></div><div class="ttl">Сведения</div><div class="sub">SoC 48 °C · RAM 212 МБ</div></div>
+      <div class="cat"><div class="ic"><svg viewBox="0 0 24 24"><path d="M12 3v10"/><path d="M8 9l4 4 4-4"/><path d="M4 17h16"/></svg></div><div class="ttl">Память</div><div class="sub">zram 1.5 ГБ · lz4</div></div>
+      <div class="cat"><div class="ic"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg></div><div class="ttl">Файлы и сейвы</div><div class="sub">бэкап сегодня</div></div>
+      <div class="cat"><div class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div><div class="ttl">Быстро</div><div class="sub">сон · перезагрузка</div></div>
+    </div>
+  </div>
+  <div class="hint"><span><span class="key">A</span><b>Изменить</b></span><span><span class="key">Y</span>Сброс раздела</span><span class="r"><span class="key">B</span>Назад</span></div>
+</div>
+
+<!-- 5 -->
+<div class="frame" id="f5">
+  <div class="tabs">
+    <div class="tab">Продолжить</div><div class="tab">Игры</div><div class="tab">Настройки</div>
+    <div class="tab on">Модули</div><div class="tab">Файлы</div><div class="tab">Сведения</div>
+    <div class="status"><span>14:37</span><span class="bat"><i></i></span><span>78%</span></div>
+  </div>
+  <div class="body">
+    <div class="head"><span class="crumb">Модули</span><span class="right">установлено 5 · включено 4</span></div>
+    <div class="vlist">
+      <div class="vrow sel"><div class="nm"><div class="t">Температура и профили</div><div class="sub">тайл в «Продолжить» · права: cpu-profile, brightness</div></div><span class="val on">включён</span><span class="sw on"><i></i></span></div>
+      <div class="vrow"><div class="nm"><div class="t">Бэкап сейвов</div><div class="sub">ежедневно 04:00 · 10 архивов · права: roms</div></div><span class="val on">включён</span><span class="sw on"><i></i></span></div>
+      <div class="vrow"><div class="nm"><div class="t">Автонастройка ЦП</div><div class="sub">подбор частоты под игру · права: cpu-tune</div></div><span class="val on">включён</span><span class="sw on"><i></i></span></div>
+      <div class="vrow"><div class="nm"><div class="t">Батарея подробно</div><div class="sub">напряжение, ток, износ · права: нет</div></div><span class="val on">включён</span><span class="sw on"><i></i></span></div>
+      <div class="vrow"><div class="nm"><div class="t">itch.io каталог</div><div class="sub">нужен интернет · права: net</div></div><span class="val">выключен</span><span class="sw"><i></i></span></div>
+      <div class="sep"></div>
+      <div class="vrow"><div class="nm"><div class="t">Найти ещё модули</div><div class="sub">магазин · 12 доступно</div></div><span class="val">открыть</span></div>
+    </div>
+  </div>
+  <div class="sbar" style="top:60px;height:230px"></div>
+  <div class="hint"><span><span class="key">A</span><b>Вкл/выкл</b></span><span><span class="key">Y</span>Права</span><span class="r"><span class="key">B</span>Назад</span></div>
+</div>
+
+<!-- 6 -->
+<div class="frame" id="f6">
+  <div class="tabs">
+    <div class="tab">Продолжить</div><div class="tab">Игры</div><div class="tab">Настройки</div>
+    <div class="tab">Модули</div><div class="tab on">Файлы</div><div class="tab">Сведения</div>
+    <div class="status"><span>14:39</span><span class="bat"><i></i></span><span>78%</span></div>
+  </div>
+  <div class="body">
+    <div class="head"><span class="crumb">Файлы и передача</span><span class="right">USB подключён</span></div>
+    <div class="vlist">
+      <div class="vrow sel"><div class="nm"><div class="t">Режим USB</div><div class="sub">сеть (NCM) · SSH и Samba доступны с ПК</div></div><span class="val on">сеть</span></div>
+      <div class="vrow"><div class="nm"><div class="t">Передача файлов</div><div class="sub">MTP: на ПК появится «R36S» и папка ROMS</div></div><span class="val">переключить</span></div>
+      <div class="sep"></div>
+      <div class="vrow"><div class="nm"><div class="t">Сейвы</div><div class="sub">последний бэкап 14:22 · 135 Б · 0 файлов</div></div><span class="val">сделать копию</span></div>
+      <div class="vrow"><div class="nm"><div class="t">ROM'ы</div><div class="sub">12.4 / 36 ГБ занято · 128 систем</div></div><span class="val">28.6 ГБ свободно</span></div>
+      <div class="sep"></div>
+      <div class="vrow"><div class="nm"><div class="t">Обновления системы</div><div class="sub">stable · установлено 20261116 · проверить</div></div><span class="val">актуально</span></div>
+      <div class="vrow"><div class="nm"><div class="t">Бэкап загрузчика</div><div class="sub">снимок первых 512 МиБ карты на ПК</div></div><span class="val">сделать</span></div>
+    </div>
+  </div>
+  <div class="hint"><span><span class="key">A</span><b>Выполнить</b></span><span class="r"><span class="key">B</span>Назад</span></div>
+</div>
+
+<!-- 7 -->
+<div class="frame" id="f7">
+  <div class="tabs">
+    <div class="tab">Продолжить</div><div class="tab">Игры</div><div class="tab">Настройки</div>
+    <div class="tab">Модули</div><div class="tab">Файлы</div><div class="tab on">Сведения</div>
+    <div class="status"><span>14:40</span><span class="bat"><i></i></span><span>78%</span></div>
+  </div>
+  <div class="body">
+    <div class="head"><span class="crumb">Сведения о системе</span><span class="right">r36s-clone · плата R36S-V20</span></div>
+    <div class="kv">
+      <div>
+        <div class="line"><span class="k">Система</span><span class="v">DEEPoS 0.1</span></div>
+        <div class="line"><span class="k">Ядро</span><span class="v">6.12 LTS</span></div>
+        <div class="line"><span class="k">CPU</span><span class="v">1416 МГц · ondemand</span></div>
+        <div class="line"><span class="k">GPU</span><span class="v">650 МГц</span></div>
+        <div class="line"><span class="k">SoC</span><span class="v good">48 °C</span></div>
+        <div class="line"><span class="k">GPU темп.</span><span class="v good">51 °C</span></div>
+        <div class="line"><span class="k">ОЗУ</span><span class="v">212 / 732 МБ</span></div>
+        <div class="line"><span class="k">zram</span><span class="v">1.5 ГБ · lz4</span></div>
+      </div>
+      <div>
+        <div class="line"><span class="k">Батарея</span><span class="v">78%</span><span class="bar"><i style="width:78%"></i></span></div>
+        <div class="line"><span class="k">Питание</span><span class="v good">разряд · 3.99 В</span></div>
+        <div class="line"><span class="k">Износ</span><span class="v">87.5%</span></div>
+        <div class="line"><span class="k">Карта</span><span class="v">12.4 / 36 ГБ</span></div>
+        <div class="line"><span class="k">Разделы</span><span class="v">A/B · DATA · ROMS</span></div>
+        <div class="line"><span class="k">Сеть</span><span class="v">USB <console-ip></span></div>
+        <div class="line"><span class="k">Время работы</span><span class="v">2 ч 14 мин</span></div>
+        <div class="line"><span class="k">Обновления</span><span class="v">20261116 · stable</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="hint"><span><span class="key">Y</span>Скопировать отчёт</span><span><span class="key">X</span>Полный лог</span><span class="r"><span class="key">B</span>Назад</span></div>
+</div>
+
+</body></html>

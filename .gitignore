@@ -1,0 +1,29 @@
+# OS / editors
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.swp
+
+# Node (для ui/playwright-скриптов)
+node_modules/
+package-lock.json
+
+# Локальные артефакты сборки и логи
+*.log
+*.tmp
+build/
+output/
+target/
+images/*.img
+images/*.img.gz
+
+# Секреты и локальные данные
+session.json
+token
+*.token
+.env
+.env.*
+local/
+
+# Скриншоты-черновики
+ui/shots/_*.png
