@@ -3,7 +3,7 @@
 # same strict flags as the device build and runs the Python test suite.
 FROM alpine:3.20
 
-RUN apk add --no-cache build-base make python3 py3-pillow bash dosfstools mtools squashfs-tools e2fsprogs exfatprogs dtc
+RUN apk add --no-cache build-base make python3 py3-pillow bash dosfstools mtools squashfs-tools e2fsprogs exfatprogs dtc bc flex bison perl
 
 WORKDIR /w
 ENTRYPOINT ["/bin/sh"]

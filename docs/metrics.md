@@ -19,3 +19,4 @@
 - P4b+ modules (host): thermal + saves protocol, helpers, modd handshake, rotation — PASS (python3 tests/modules_test.py)
 - P3/P7 image (host): GPT/FAT32/squashfs/ext4/exFAT + flash lossless — PASS (python3 tests/image_test.py, test image 128 MiB)
 - P0/P1 board (host): DTB 9 316 B, dtc+kernel/busybox configs+extlinux+rootfs builder — PASS (python3 tests/board_test.py, 306 мс)- P6/P7 boot (host): mkboot layout/manifest + A/B attempts/rollback — PASS (python3 tests/boot_test.py)
+- P1 kconfig (6.12.56, host): 113/113 fragment symbols satisfied, 0 unknown — PASS (sh tools/kconfig-check.sh)

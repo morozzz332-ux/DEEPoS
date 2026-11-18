@@ -5,7 +5,7 @@ DOCKER ?= docker
 IMAGE  ?= deepos-build:local
 PYTHON ?= python3
 
-.PHONY: help fonts launcher modd saved render test modd-test saved-test modules-test image-test board-test boot-test docker-image docker-test image clean
+.PHONY: help fonts launcher modd saved render test modd-test saved-test modules-test image-test board-test boot-test kconfig-check docker-image docker-test image clean
 
 help:
 	@echo "make fonts        - regenerate bitmap fonts from tools/fonts/DejaVuSansMono.ttf"
@@ -22,6 +22,7 @@ help:
 	@echo "make docker-image - build the reproducible toolchain image"
 	@echo "make board-test   - dtb, kernel/busybox config fragments, extlinux, rootfs builder"
 	@echo "make boot-test    - BOOT tree assembler (mkboot) and A/B boot state (update)"
+	@echo "make kconfig-check- merge linux.config into a real 6.12 kernel tree and verify"
 	@echo "make docker-test  - run every test suite inside the image (recommended)"
 
 fonts:
@@ -59,6 +60,9 @@ docker-test: docker-image
 
 board-test: docker-image
 	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "python3 tests/board_test.py"
+
+kconfig-check: docker-image
+	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "sh tools/kconfig-check.sh"
 
 boot-test: docker-image
 	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "python3 tests/boot_test.py"

@@ -131,3 +131,9 @@
 - `tools/update.py` — состояние A/B на разделе DATA (`boot.json`): `slot`, `attempts`, `rollback`, `generation`. Три попытки загрузки — четвёртая переключает слот и поднимает `rollback`; `good` (вызывается, когда лаунчер поднялся) сбрасывает попытки; `switch` двигает слот явно. Запись атомарная (tmp → fsync → rename), битый JSON честно сообщается.
 - `tests/boot_test.py` (19 проверок) — раскладка BOOT-дерева и манифест, отказ на маленьком ядре и неправильном extlinux, дефолтный слот A, rollback после трёх неудачных загрузок, сброс через `good`, битое состояние.
 - Makefile/CI: `make boot-test`, седьмой набор в `docker-test`, шаг «Test BOOT tree and A/B boot state» в CI.
+## 2026-11-18 · P1 (проверка фрагмента ядра на настоящем дереве 6.12.56)
+
+- `tools/kconfig-check.sh` — берёт kernel.org `linux-6.12.56.tar.xz` (кэш в `build/cache`, ~148 МБ, в git не попадает), распаковывает в `/tmp/kbuild`, применяет `make ARCH=arm64 defconfig` + `scripts/kconfig/merge_config.sh .config board/r36s-v20/linux.config` + `olddefconfig` и сверяет результат: каждый `=y` из фрагмента обязан выжить, неизвестные ядру символы печатаются отдельно.
+- Первый прогон нашёл 7 мёртвых символов: `ARCH_ROCKCHIP_DT` (нет такого), `ARM_CPU_SUSPEND` (только arm32), `BATTERY_RK817` (в 6.12 гейдж живёт в `CHARGER_RK817`), `MFD_RK808` (правильно `MFD_RK8XX` + `MFD_RK8XX_I2C`), `SND_SOC_ROCKCHIP_RT5651` (нет), `DEBUG_INFO`/`KALLSYMS_ALL` (зависят от `DEBUG_KERNEL`). Фрагмент исправлен.
+- Итог после правок: **113 символов, 113 satisfied, 0 неизвестных**. Это уже не «по памяти», а проверка на реальном Kconfig: драйверы панели, PMIC/зарядки/гейджа, кодека, стиков, zram/zswap, squashfs, dwc2 не отвалятся молча из-за переименований.
+- Стоимость: один прогон ~3–6 минут (распаковка + kconfig), работает офлайн после первого скачивания.
