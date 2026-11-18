@@ -183,6 +183,18 @@ def test_rootfs_builder():
               p.returncode != 0 and "missing bin/busybox" in (p.stderr or ""))
 
 
+def test_partition_mounts():
+    """rcS must mount BOOT, DATA and ROMS; system slots stay unmounted."""
+    text = (ROOT / "board/r36s-v20/rootfs-overlay/etc/init.d/rcS").read_text(encoding="utf-8")
+    check("rcS mounts BOOT at /flash", "mmcblk1p1 /flash" in text)
+    check("rcS mounts DATA at /data", "mmcblk1p4 /data" in text)
+    check("rcS mounts ROMS at /storage", "mmcblk1p5 /storage" in text)
+    check("rcS does not mount SYS_B as /data", "mmcblk1p3 /data" not in text)
+    check("rcS does not mount DATA as /storage", "mmcblk1p4 /storage" not in text)
+    check("modd modules live on DATA", "/data/modules" in text)
+    check("modd data lives on DATA", "/data/module-data" in text)
+
+
 def test_emulators_config():
     path = ROOT / "board" / "r36s-v20" / "data" / "emulators.toml"
     if not path.exists():
@@ -221,12 +233,13 @@ def main():
     test_extlinux()
     test_rootfs_builder()
     test_emulators_config()
+    test_partition_mounts()
     test_rcs_order()
     print()
     if fails:
         print("FAIL  board: " + ", ".join(fails))
         return 1
-    print("PASS  board: dtb, kernel config, busybox config, extlinux, rcs order, emulators, rootfs builder")
+    print("PASS  board: dtb, kernel config, busybox config, extlinux, mounts, rcs order, emulators, rootfs builder")
     return 0
 
 

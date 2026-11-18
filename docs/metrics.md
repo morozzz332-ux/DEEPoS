@@ -62,3 +62,6 @@
 | образ (0.6-dev) | `build/deepos-r36s-v20.img` 4 294 967 296 B, sha256 `505f1c6b9a620542e72e173a9528fcae4988deeeb4dd43bed960af7b67eda518` | ok |
 | наборы тестов | 14 | PASS |
 
+| P0 mounts (host) | `tests/board_test.py` | 7 проверок привязки разделов p1/p4/p5 и путей модулей | PASS |
+| образ (0.7-dev) | 4 294 967 296 B, sha256 `2569c4b70f510d562d31198d272ae321a6e81a3ad65cf7aa1f50cead38916fd7` | ok |
+

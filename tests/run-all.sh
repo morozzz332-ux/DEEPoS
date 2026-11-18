@@ -1,5 +1,7 @@
 set -e
 cd /w
+# stale aarch64 objects from the cross build break the host link
+make -C apps/launcher clean >/dev/null 2>&1 || true
 python3 tests/run.py    | grep -E "^(PASS|FAIL)"
 python3 tests/selftest_test.py | grep -E "^(PASS|FAIL)"
 python3 tests/input_test.py

@@ -480,3 +480,24 @@
   sha256 `505f1c6b9a620542e72e173a9528fcae4988deeeb4dd43bed960af7b67eda518`,
   `PASS verify-image: 39 checks`.
 
+## 2026-11-18 · P0/P4 (исправлена привязка разделов к точкам монтирования)
+
+- Найдено расхождение между `board/r36s-v20/layout.json` и `rcS`: старый `rcS` монтировал
+  **p4 (DATA, ext4) в `/storage`**, а **p3 (SYS_B, squashfs, read-only) в `/data`** — то есть
+  настройки и A/B-состояние писались бы в системный слот, а ROM-библиотека указывала на пустой
+  раздел. Теперь раскладка ровно как в GPT:
+  `p1 BOOT -> /flash`, `p4 DATA -> /data`, `p5 ROMS -> /storage`; системные слоты p2/p3 в
+  рантайме не монтируются (p3 теперь вообще не трогается).
+- Лаунчер по умолчанию читает библиотеку из корня ROMS-раздела (`/storage`), а не из
+  `/storage/roms` — на exFAT-корне лежат папки систем (`md/`, `snes/`, …), как их видит ПК.
+- Модули переехали с ROM-раздела на DATA: `/data/modules` и `/data/module-data` (ROM-раздел
+  общий с ПК, писать туда служебное нельзя).
+- `tests/board_test.py`: новая группа `test_partition_mounts()` (7 проверок) — p1→/flash,
+  p4→/data, p5→/storage, отсутствие старых привязок, пути модулей на DATA.
+- `tests/run-all.sh` чистит host-объекты перед прогоном: после кросс-сборки в `src/*.o`
+  остаются aarch64-объекты и линковка падала `file in wrong format`.
+- Все 14 наборов PASS. Образ пересобран: rootfs 2 113 536 B, BOOT `0.7-dev`,
+  `build/deepos-r36s-v20.img` 4 294 967 296 B,
+  sha256 `2569c4b70f510d562d31198d272ae321a6e81a3ad65cf7aa1f50cead38916fd7`,
+  `PASS verify-image: 39 checks`.
+

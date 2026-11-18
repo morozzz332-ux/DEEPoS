@@ -20,10 +20,15 @@ mount -t tmpfs    tmpfs    /tmp     -o mode=1777,nosuid,nodev
 # Boot partition, persistent state and the ROM library live on their own
 # partitions. /flash is needed by updatr to point the bootloader at the
 # slot that passed the boot attempt.
+# Layout (see board/r36s-v20/layout.json):
+#   p1 BOOT (FAT32)  -> /flash   bootloader + kernel + dtbs
+#   p2 SYS_A, p3 SYS_B (squashfs, read-only roots) - never mounted at runtime
+#   p4 DATA (ext4)   -> /data    settings, save states, A/B state
+#   p5 ROMS (exFAT)  -> /storage ROM library shared with the PC
 mkdir -p /flash /storage /data
-[ -b /dev/mmcblk1p1 ] && mount -o noatime /dev/mmcblk1p1 /flash  2>/dev/null || true
-[ -b /dev/mmcblk1p4 ] && mount -o noatime /dev/mmcblk1p4 /storage 2>/dev/null || true
-[ -b /dev/mmcblk1p3 ] && mount -o noatime /dev/mmcblk1p3 /data    2>/dev/null || true
+[ -b /dev/mmcblk1p1 ] && mount -o noatime /dev/mmcblk1p1 /flash   2>/dev/null || true
+[ -b /dev/mmcblk1p4 ] && mount -o noatime /dev/mmcblk1p4 /data    2>/dev/null || true
+[ -b /dev/mmcblk1p5 ] && mount -o noatime /dev/mmcblk1p5 /storage 2>/dev/null || true
 
 # A/B boot accounting: count this boot attempt and mark the slot good once
 # userspace has been running for a while (no init system, no watchdog daemon).
@@ -34,10 +39,9 @@ if [ -x /usr/bin/updatr ] && [ -d /data ]; then
 fi
 
 # Module supervisor: only started when at least one module is installed.
-if [ -x /usr/bin/modd ] && [ -d /storage/.config/deepos/modules ]; then
+if [ -x /usr/bin/modd ] && [ -d /data/modules ]; then
     mkdir -p /run
-    /usr/bin/modd --modules /storage/.config/deepos/modules \
-                  --data /storage/.config/deepos/module-data \
+    /usr/bin/modd --modules /data/modules --data /data/module-data \
                   --socket /run/modd.sock &
 fi
 

@@ -410,7 +410,7 @@ static int selftest(const char *roms, const char *data, const char *emulators_pa
 }
 int main(int argc, char **argv)
 {
-    const char *roms = "/storage/roms";
+    const char *roms = "/storage";
     const char *data = "/data";
     const char *screen = "continue";
     const char *out = NULL;
