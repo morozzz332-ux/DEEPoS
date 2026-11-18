@@ -4,8 +4,8 @@
 консоли, и то, что ждёт реального железа. Числа — из `docs/metrics.md`.
 
 Образ для записи: `build/deepos-r36s-v20.img`, 4 294 967 296 B,
-sha256 `e8e4273a7ba7e3ec269c3b2d3bbaedfdfd19b1acee349bf08bd3db6d5a5ccfd3`,
-BOOT-дерево `0.12-dev`. Перед записью: `python3 tools/preflight.py --root .` → `PREFLIGHT: GO (32 checks)`.
+sha256 `349a900d6b318888851e35a2260893db2b7eadfb4ec99e08b194935e0d4bf2c3`,
+BOOT-дерево `0.13-dev`. Перед записью: `python3 tools/preflight.py --root .` → `PREFLIGHT: GO (32 checks)`.
 
 ## Работает и покрыто тестами (15 наборов)
 
@@ -26,6 +26,7 @@ BOOT-дерево `0.12-dev`. Перед записью: `python3 tools/prefligh
 | A/B | `updatr` begin/good/switch, откат на 4-й попытке, синхронизация `root=LABEL=` в extlinux | `tests/updatr_test.py` |
 | Загрузка системы | `rcS` монтирует BOOT→`/flash`, DATA→`/data`, ROMS→`/storage`; A/B до `exit 0`; UI из `inittab ::respawn`; readiness-строка | `tests/board_test.py` (mounts, order, handover, robustness) |
 | Запуск игры | `emulators.toml`, `%ROM%`/`%SLOT%`, hook allow/deny, «Продолжить», обновление `continue.tsv` | `tests/launch_test.py` |
+| Отладка | `getty` на `ttyS2` (1500000), `passwd`/`group` с root без пароля | `tests/board_test.py` (handover) |
 | Диагностика | `launcher --selftest` (ROM/continue/emulators/modd/fb/input/`data_ok`/`roms_ok`) | `tests/selftest_test.py` |
 
 Сборка без `make` на Windows: всё гоняется через docker-образы `deepos-build:local`

@@ -229,6 +229,17 @@ def test_boot_handover():
     rc_mode = (ROOT / "board/r36s-v20/rootfs-overlay/etc/init.d/rcS").stat().st_mode
     check("rcS is executable", bool(rc_mode & 0o111), oct(rc_mode))
 
+    # Debug UART: without a getty on ttyS2 a boot failure is a black screen.
+    check("inittab spawns getty on ttyS2",
+          "ttyS2::respawn:/sbin/getty" in init and "1500000" in init)
+    passwd = (ROOT / "board/r36s-v20/rootfs-overlay/etc/passwd").read_text(encoding="utf-8")
+    check("passwd has root with shell", "root:" in passwd and "/bin/sh" in passwd)
+    group = (ROOT / "board/r36s-v20/rootfs-overlay/etc/group").read_text(encoding="utf-8")
+    check("group has root", "root:" in group)
+    bb = (ROOT / "board/r36s-v20/busybox.config").read_text(encoding="utf-8")
+    check("busybox getty enabled", "CONFIG_GETTY=y" in bb)
+    check("busybox login enabled", "CONFIG_LOGIN=y" in bb)
+
 
 def test_emulators_config():
     path = ROOT / "board" / "r36s-v20" / "data" / "emulators.toml"

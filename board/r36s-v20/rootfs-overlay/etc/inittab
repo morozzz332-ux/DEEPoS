@@ -3,8 +3,13 @@
 # ::sysinit runs once before anything else; ::respawn keeps the launcher alive
 # (if it crashes we get it back instead of a black screen); ::ctrlaltdel and
 # ::shutdown keep the power button path clean.
+#
+# ttyS2 is the debug UART (pads on the board, 1500000 baud): a shell there is
+# the difference between "black screen" and "here is why". Root has no password
+# on purpose - the port is physical access only, documented in DEVICE-TEST-PLAN.
 
 ::sysinit:/etc/init.d/rcS
 ::respawn:/usr/bin/launcher
+ttyS2::respawn:/sbin/getty -L ttyS2 1500000 vt100
 ::ctrlaltdel:/sbin/reboot
 ::shutdown:/bin/umount -a -r

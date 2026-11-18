@@ -625,3 +625,28 @@
   free + PSI, температуры, A/B, питание, dmesg по mmc/panel/rk817/gadget) и таблица
   «эталон host → факт на устройстве», чтобы разговор по железу был предметным.
 
+## 2026-11-18 · P0/P9 (отладочный UART: getty на ttyS2)
+
+- `board/r36s-v20/rootfs-overlay/etc/inittab`: добавлена строка
+  `ttyS2::respawn:/sbin/getty -L ttyS2 1500000 vt100` — без неё любая ошибка загрузки
+  на железе выглядит как «чёрный экран»; с ней на гребёнке UART (3.3V TX/RX/GND) есть
+  логин и шелл. BusyBox уже собран с `CONFIG_GETTY=y` и `CONFIG_LOGIN=y`.
+- Добавлены `etc/passwd` (`root::0:0:DEEPoS root:/:/bin/sh`) и `etc/group` (`root:x:0:`):
+  пароля у root нет намеренно — это физический порт, ограничение описано в
+  `docs/DEVICE-TEST-PLAN.md`.
+- `tests/board_test.py::test_boot_handover`: +5 проверок (getty на ttyS2 с 1500000,
+  запись root в passwd, root в group, `CONFIG_GETTY=y`, `CONFIG_LOGIN=y`).
+- Проверка сборки: 15 наборов PASS, `PREFLIGHT: GO (32 checks)`, `verify-image: 39 checks`,
+  в squashfs есть `etc/passwd`, `etc/group`, `etc/inittab`.
+- Образ `0.13-dev`: 4 294 967 296 B, sha256 `349a900d6b318888851e35a2260893db2b7eadfb4ec99e08b194935e0d4bf2c3`.
+
+## 2026-11-18 · состояние стенда перед этапом 2
+
+- Консоль подключена к ПК по USB-NCM и работает под Arch-R: адаптер `Ethernet 4` (idx 11),
+  адреса `<pc-ip>/24` + `<pc-link-local>/16`, открыты `<console-ip>:22` (SSH) и `:8080`
+  (веб-панель ArchR), вторая сеть консоли тоже отвечает.
+- Внешний диск `X:` («Внешний», NTFS) на месте, свободно 250.5 ГБ (там бэкап `BOOT` и
+  `EASYROMS` с прошлой Arch-R-установки).
+- **SD-карты в картридере нет** (`Get-Disk` видит только NVMe и внешний HDD) — для записи
+  DEEPoS карту нужно вставить в картридер.
+
