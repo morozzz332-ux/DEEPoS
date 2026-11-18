@@ -10,7 +10,7 @@ SIZE_MIB ?= 4096
 IMG      ?= build/deepos-r36s-v20.img
 KARCH  ?= linux-6.12.56
 
-.PHONY: settings-test preflight preflight-test release release-test config-test help selftest-test fonts launcher modd saved updatr updatr render test modd-test saved-test launch-test modules-test image-test board-test boot-test kconfig-check verify-image docker-image docker-cross docker-test kernel uboot image-full image clean
+.PHONY: playdemo-test settings-test preflight preflight-test release release-test config-test help selftest-test fonts launcher modd saved updatr updatr render test modd-test saved-test launch-test modules-test image-test board-test boot-test kconfig-check verify-image docker-image docker-cross docker-test kernel uboot image-full image clean
 
 help:
 	@echo "make fonts        - regenerate bitmap fonts from tools/fonts/DejaVuSansMono.ttf"
@@ -94,6 +94,9 @@ selftest-test: docker-image
 
 input-test: docker-image
 	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "make -C apps/launcher clean >/dev/null && make -C apps/launcher && python3 tests/input_test.py && python3 tests/launcher_mod_test.py"
+
+playdemo-test:
+	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "make -C apps/playdemo && python3 tests/playdemo_test.py"
 
 settings-test:
 	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "python3 tests/settings_test.py"

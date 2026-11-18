@@ -35,6 +35,7 @@ REQUIRED_ANY = [
     (("apps/saved/saved", "usr/bin/saved"), "saved"),
         (("apps/updatr/updatr", "usr/bin/updatr"), "updatr"),
     (("apps/launcher/launcher", "usr/bin/launcher"), "launcher"),
+    (("apps/playdemo/playdemo", "usr/bin/playdemo"), "playdemo"),
 ]
 
 

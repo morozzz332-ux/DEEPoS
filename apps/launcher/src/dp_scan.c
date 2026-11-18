@@ -13,7 +13,7 @@ static const char *const dp_exts[] = {
     ".gb", ".gbc", ".gba", ".n64", ".z64", ".v64", ".nds", ".pce", ".cue", ".chd", ".iso",
     ".pbp", ".cso", ".gdi", ".cdi", ".zip", ".7z", ".a26", ".a78", ".col", ".vec", ".dsk",
     ".tap", ".tzx", ".adf", ".d64", ".prg", ".lnx", ".ngc", ".ws", ".wsc", ".vb", ".min",
-    ".st", ".stx", ".j64", ".jag", ".int", ".tv", ".pgm", ".scv", ".xex", ".atr", ".cas",
+    ".sh", ".st", ".stx", ".j64", ".jag", ".int", ".tv", ".pgm", ".scv", ".xex", ".atr", ".cas",
 };
 
 static int dp_has_ext(const char *name)

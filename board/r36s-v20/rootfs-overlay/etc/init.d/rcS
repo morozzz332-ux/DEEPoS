@@ -66,6 +66,21 @@ fi
 # 7. Quiet kernel console: the splash screen owns the panel.
 echo 0 > /proc/sys/kernel/printk 2>/dev/null || true
 
+# 7a. First-boot provisioning: bundled modules and the demo port.
+if is_mounted /data && [ ! -d /data/modules ]; then
+    mkdir -p /data/modules 2>/dev/null || true
+    cp -a /usr/share/deepos/modules/. /data/modules/ 2>/dev/null || true
+fi
+if is_mounted /storage && [ ! -d /storage/ports ]; then
+    mkdir -p /storage/ports 2>/dev/null || true
+    cp -a /usr/share/deepos/roms/. /storage/ 2>/dev/null || true
+fi
+
+# 7a2. Apply the saved brightness / volume / cpu profile before the UI starts.
+if [ -x /usr/bin/launcher ] && is_mounted /data; then
+    /usr/bin/launcher --apply --data /data >/dev/null 2>&1 || true
+fi
+
 # 7b. Boot report on the BOOT partition (FAT32): the only channel that works
 #     without UART or SSH - the card can be pulled and read from a PC.
 if is_mounted /flash; then

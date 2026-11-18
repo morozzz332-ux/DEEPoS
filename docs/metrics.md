@@ -108,3 +108,12 @@
 | preflight | GO (32 checks) |
 | verify-image | PASS (39 checks) |
 | Образ | 4 294 967 296 B, sha256 `02cff0cfb53563dcd7f2e4e09a29298ca06928818ec61510c36c1072806359ce` |
+
+## 2026-11-18 · образ 0.19-dev
+
+| Проверка | Значение |
+| --- | --- |
+| Наборов тестов | 18 |
+| playdemo (static aarch64) | 597 944 B |
+| preflight / verify-image | GO (32 checks) / PASS (39 checks) |
+| Образ | 4 294 967 296 B, sha256 `c824889e9138e7f9aa1ec9e76aa9e17ea598250c86bcd35fe90ae2e16f65f6cd` |

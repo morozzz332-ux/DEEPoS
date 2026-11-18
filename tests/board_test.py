@@ -156,7 +156,8 @@ def test_rootfs_builder():
     with tempfile.TemporaryDirectory() as tmp:
         stage = pathlib.Path(tmp) / "root"
         for rel in ["sbin/init", "bin/busybox", "apps/modd/modd", "apps/saved/saved",
-                    "apps/updatr/updatr", "apps/launcher/launcher", "etc/deepos/version"]:
+                    "apps/updatr/updatr", "apps/launcher/launcher",
+                    "apps/playdemo/playdemo", "etc/deepos/version"]:
             p = stage / rel
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text("#!/bin/sh\nexit 0\n")
@@ -171,8 +172,9 @@ def test_rootfs_builder():
             check("rootfs has squashfs magic", magic == b"hsqs", magic.hex())
             ls = run(["unsquashfs", "-l", str(out)]).stdout
             check("rootfs keeps busybox and init", "sbin/init" in ls and "bin/busybox" in ls)
-            check("rootfs keeps modd, saved and updatr",
-                  "apps/modd/modd" in ls and "apps/saved/saved" in ls and "apps/updatr/updatr" in ls)
+            check("rootfs keeps modd, saved, updatr and playdemo",
+                  "apps/modd/modd" in ls and "apps/saved/saved" in ls and
+                  "apps/updatr/updatr" in ls and "apps/playdemo/playdemo" in ls)
 
         broken = pathlib.Path(tmp) / "broken"
         (broken / "sbin").mkdir(parents=True)
@@ -333,6 +335,25 @@ def test_selfcheck() -> None:
     check("rcS runs selfcheck", "selfcheck.sh /flash/report/checks.txt" in rcs)
 
 
+
+def test_rcs_provisioning():
+    rcs = (ROOT / "board/r36s-v20/rootfs-overlay/etc/init.d/rcS").read_text(
+        encoding="utf-8")
+    check("rcS provisions modules on first boot",
+          "/usr/share/deepos/modules" in rcs and "[ ! -d /data/modules ]" in rcs)
+    check("rcS provisions the demo port", "/usr/share/deepos/roms" in rcs)
+    check("rcS applies saved settings at boot", "launcher --apply --data /data" in rcs)
+
+    demo = ROOT / "board/r36s-v20/rootfs-overlay/usr/share/deepos/roms/ports/demo.sh"
+    check("demo port shipped in the rootfs", demo.is_file())
+    check("demo port is executable", demo.is_file() and (demo.stat().st_mode & 0o111) != 0)
+    check("demo port starts playdemo",
+          demo.is_file() and "/usr/bin/playdemo" in demo.read_text(encoding="utf-8"))
+
+    table = (ROOT / "board/r36s-v20/data/emulators.toml").read_text(encoding="utf-8")
+    check("ports are launched through the shell", "ports = " in table and "%ROM%" in table)
+
+
 def main():
     print("board tests (R36S-V20):")
     test_dts()
@@ -341,6 +362,7 @@ def main():
     test_extlinux()
     test_rootfs_builder()
     test_emulators_config()
+    test_rcs_provisioning()
     test_partition_mounts()
     test_rcs_robustness()
     test_boot_handover()

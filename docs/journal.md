@@ -737,3 +737,25 @@ max → eco`. Логика вынесена в `settings_edit_card()` в `apps/l
 `tests/settings_test.py` (10 проверок): циклы трёх карточек, сохранение комментария,
 отсутствие `.tmp`, профиль рядом с модулями, `--config` и работа без sysfs.
 17 наборов зелёные.
+
+## 2026-11-18 · P5/P8 (демо-порт и первичное развёртывание)
+
+Прошивка не содержит эмуляторов, поэтому проверить цепочку «библиотека →
+`emulators.toml` → exec → fbdev → кнопки» на железе было нечем. Добавлен
+`apps/playdemo` (60 строк): рисует кадр через те же `dp_canvas`/`dp_display`,
+читает те же evdev-клавиши, UP/DOWN меняют столбики, B/START+SELECT выходят. На
+хосте тот же бинарник пишет кадр в файл (`--fb frame.bin --keys ...`), поэтому он
+покрыт тестом `tests/playdemo_test.py` (7 проверок).
+
+Демо оформлен как обычный порт: `board/r36s-v20/rootfs-overlay/usr/share/deepos/roms/ports/demo.sh`
+(`exec /usr/bin/playdemo "$1"`), в `emulators.toml` появилась строка
+`ports = "/bin/sh %ROM%"`, а лаунчер теперь знает расширение `.sh` — папка
+`/storage/ports` видна как система «Порты».
+
+Первый буст сам готовит систему: `rcS` копирует `/usr/share/deepos/modules` в
+`/data/modules` (иначе `modd` не стартует), `/usr/share/deepos/roms` в `/storage`
+(там демо-порт), и применяет сохранённые яркость/громкость/профиль
+(`launcher --apply --data /data`) до запуска UI. Проверки — в
+`tests/board_test.py::test_rcs_provisioning`.
+
+18 наборов зелёные, образ `0.19-dev`.

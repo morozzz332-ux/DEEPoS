@@ -12,7 +12,7 @@ if [ "${1:-}" = "--out" ]; then
     OUT=$2
 fi
 
-APPS=${APPS:-launcher modd saved updatr}
+APPS=${APPS:-launcher modd saved updatr playdemo}
 CROSS=${CROSS:-aarch64-linux-gnu-}
 REPO=${REPO:-$(cd "$(dirname "$0")/.." && pwd)}
 
@@ -20,7 +20,7 @@ REPO=${REPO:-$(cd "$(dirname "$0")/.." && pwd)}
 # turns bounded snprintf calls into -Wformat-truncation errors. Our buffers are
 # bounded by explicit precision widths, so fortify buys us nothing here.
 CFLAGS=${CFLAGS:--O2 -std=c11 -Wall -Wextra -Werror -pedantic \
-    -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L -U_FORTIFY_SOURCE -Wno-format-truncation -static}
+    -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L -D_GNU_SOURCE -U_FORTIFY_SOURCE -Wno-format-truncation -static}
 
 for app in $APPS; do
     echo "building $app"
