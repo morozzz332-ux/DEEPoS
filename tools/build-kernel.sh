@@ -16,7 +16,10 @@ TARBALL="linux-${KVER}.tar.xz"
 URL="https://cdn.kernel.org/pub/linux/kernel/v6.x/${TARBALL}"
 CACHE=${CACHE:-/w/build/cache}
 REPO=${REPO:-/w}
-WORK=${WORK:-$REPO/build/kbuild}
+# Sources are extracted inside the container: the Windows bind mount is slow and
+# has dropped files during extraction, which produced bogus 'no rule to make target'
+# errors. Only artifacts are written back to $REPO/build.
+WORK=${WORK:-/tmp/kbuild}
 OUT="$REPO/build/kernel"
 CROSS=aarch64-linux-gnu-
 
@@ -27,10 +30,16 @@ if [ ! -f "$CACHE/$TARBALL" ]; then
     wget -qO "$CACHE/$TARBALL" "$URL"
 fi
 
-if [ ! -d "$WORK" ]; then
+if [ ! -f "$WORK/lib/stmp_device.c" ]; then
     echo "extracting $TARBALL"
+    rm -rf "$WORK"
     mkdir -p "$WORK"
-    tar -xJf "$CACHE/$TARBALL" -C "$WORK" --strip-components=1 && touch "$WORK/.extracted"
+    tar -xJf "$CACHE/$TARBALL" -C "$WORK" --strip-components=1
+    # Guard against a silently truncated extraction: a few files are checked
+    # explicitly instead of trusting tar's exit status.
+    for probe in lib/stmp_device.c arch/arm64/boot/dts/rockchip/px30.dtsi include/dt-bindings/input/linux-event-codes.h; do
+        [ -f "$WORK/$probe" ] || { echo "incomplete kernel tree: missing $probe" >&2; exit 1; }
+    done
 fi
 
 cd "$WORK"
@@ -40,8 +49,8 @@ make -s ARCH=arm64 CROSS_COMPILE=$CROSS defconfig
 ARCH=arm64 scripts/kconfig/merge_config.sh .config "$REPO/board/r36s-v20/linux.config" >/dev/null
 make -s ARCH=arm64 CROSS_COMPILE=$CROSS olddefconfig
 
-echo "building Image (-j$(nproc))"
-make -s -j"$(nproc)" ARCH=arm64 CROSS_COMPILE=$CROSS Image
+echo "building Image (-j${JOBS:-4})"
+make -s -j"${JOBS:-4}" ARCH=arm64 CROSS_COMPILE=$CROSS Image
 
 echo "compiling board DTB"
 gcc -E -P -w -Dlinux=linux -x assembler-with-cpp \

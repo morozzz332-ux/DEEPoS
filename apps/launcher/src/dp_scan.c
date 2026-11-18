@@ -86,8 +86,10 @@ static int dp_count_roms(const char *dir)
     while ((e = readdir(d)) != NULL) {
         if (e->d_name[0] == '.')
             continue;
-        char path[1024];
-        snprintf(path, sizeof(path), "%s/%s", dir, e->d_name);
+        char path[2048];
+        /* Bounded widths keep -Wformat-truncation (fortify) quiet and cap the
+         * path well below PATH_MAX; deeper trees simply do not appear in scans. */
+        snprintf(path, sizeof(path), "%.1000s/%.200s", dir, e->d_name);
         struct stat st;
         if (stat(path, &st) != 0 || !S_ISREG(st.st_mode))
             continue;
@@ -119,8 +121,8 @@ int dp_model_scan(struct dp_model *m, const char *roms_dir)
     while ((e = readdir(d)) != NULL && m->nsys < DP_MAX_SYSTEMS) {
         if (e->d_name[0] == '.')
             continue;
-        char path[1024];
-        snprintf(path, sizeof(path), "%s/%s", roms_dir, e->d_name);
+        char path[2048];
+        snprintf(path, sizeof(path), "%.1000s/%.200s", roms_dir, e->d_name);
         struct stat st;
         if (stat(path, &st) != 0 || !S_ISDIR(st.st_mode))
             continue;
@@ -128,7 +130,7 @@ int dp_model_scan(struct dp_model *m, const char *roms_dir)
         if (games <= 0)
             continue;
         struct dp_system *s = &m->systems[m->nsys++];
-        snprintf(s->id, sizeof(s->id), "%s", e->d_name);
+        snprintf(s->id, sizeof(s->id), "%.23s", e->d_name);
         for (char *p = s->id; *p; p++) {
             if (*p >= 'A' && *p <= 'Z')
                 *p = (char)(*p - 'A' + 'a');
