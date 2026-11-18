@@ -31,6 +31,11 @@ jobs:
           docker run --rm -v "$PWD:/w" -w /w deepos-build:local \
             -c "make -C apps/modd && python3 tests/modd_test.py"
 
+      - name: Build saved and run save-store tests
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w deepos-build:local \
+            -c "make -C apps/saved && python3 tests/saved_test.py"
+
       - name: Secret scan
         shell: pwsh
         run: ./tools/check-secrets.ps1
