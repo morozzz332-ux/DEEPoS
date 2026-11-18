@@ -6,6 +6,7 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 static const char *const dp_exts[] = {
     ".bin", ".gen", ".md", ".smd", ".32x", ".sms", ".gg", ".nes", ".fds", ".sfc", ".smc",
@@ -110,9 +111,11 @@ static int dp_sys_cmp(const void *a, const void *b)
 
 int dp_model_scan(struct dp_model *m, const char *roms_dir)
 {
+    m->roms_ok = 0;
     DIR *d = opendir(roms_dir);
     if (!d)
         return -1;
+    m->roms_ok = 1;
 
     m->nsys = 0;
     m->total_games = 0;
@@ -147,6 +150,7 @@ int dp_model_scan(struct dp_model *m, const char *roms_dir)
 
 int dp_model_load_continue(struct dp_model *m, const char *data_dir)
 {
+    m->data_ok = access(data_dir, R_OK | W_OK) == 0 ? 1 : 0;
     char path[1024];
     snprintf(path, sizeof(path), "%s/continue.tsv", data_dir);
     FILE *f = fopen(path, "r");

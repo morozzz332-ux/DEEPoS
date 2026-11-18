@@ -77,3 +77,6 @@
 | P8 settings UI (host) | `tests/run.py` + `tests/selftest_test.py` | карточки читают settings.toml, selftest печатает config | PASS |
 | образ (0.11-dev) | 4 294 967 296 B, sha256 `f5bdb6c1a59070c319af6dc1da50181e56ebf1f676c532453ddf442341ccdd9e` | ok |
 
+| P8 files screen (host) | `tests/run.py` + `tests/selftest_test.py` | состояние разделов и свободное место в UI | PASS |
+| образ (0.12-dev) | 4 294 967 296 B, sha256 `e8e4273a7ba7e3ec269c3b2d3bbaedfdfd19b1acee349bf08bd3db6d5a5ccfd3` | ok |
+

@@ -410,7 +410,8 @@ static int selftest(const char *roms, const char *data, const char *emulators_pa
 
     printf("version=0.4\n");
     printf("roms=%s systems=%d games=%u\n", roms, m->nsys, m->total_games);
-    printf("data=%s continue=%d\n", data, m->ncont);
+    printf("data=%s continue=%d data_ok=%d\n", data, m->ncont, m->data_ok);
+    printf("roms_ok=%d\n", m->roms_ok);
     printf("emulators=%s emulators_present=%d\n", emulators_path,
            access(emulators_path, R_OK) == 0 ? 1 : 0);
     printf("modd=%s modules=%d\n", mods_socket, m->nmods);

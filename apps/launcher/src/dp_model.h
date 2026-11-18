@@ -51,6 +51,10 @@ struct dp_model {
     struct dp_module_info mods[DP_MAX_MODULES];
 
     /* settings.toml, loaded by main(); 0 / "" mean "not set" */
+    /* 1 when the runtime directory is usable right now */
+    int data_ok;
+    int roms_ok;
+
     int cfg_brightness;
     int cfg_volume;
     char cfg_profile[16];

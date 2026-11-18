@@ -54,6 +54,8 @@ def main() -> int:
         ("continue", "1"),
         ("emulators_present", "1"),
         ("modules", "0"),
+        ("data_ok", "1"),
+        ("roms_ok", "1"),
     ]
     for key, want in checks:
         if got.get(key) != want:
@@ -90,6 +92,19 @@ def main() -> int:
     if res.returncode != 0 or not got.get("systems", "").lstrip("-").isdigit():
         print(f"FAIL  selftest on empty env: rc={res.returncode} {res.stderr}")
         ok = False
+    if got.get("data_ok") != "0" or got.get("roms_ok") != "0":
+        print(f"FAIL  selftest empty env paths data_ok={got.get('data_ok')!r} "
+              f"roms_ok={got.get('roms_ok')!r}")
+        ok = False
+
+    # an empty ROM partition must not hide the "continue" history on DATA
+    res = run(["--roms", str(tmp / "noroms"), "--data", str(data), "--selftest"])
+    got = kv(res.stdout)
+    if res.returncode != 0 or got.get("continue") != "1" or got.get("roms_ok") != "0":
+        print(f"FAIL  selftest continue on empty ROMs: rc={res.returncode} "
+              f"continue={got.get('continue')!r} roms_ok={got.get('roms_ok')!r}")
+        ok = False
+
     if got.get("status") != "ok":
         print(f"FAIL  selftest empty env status={got.get('status')!r}")
         ok = False

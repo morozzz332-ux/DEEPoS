@@ -490,6 +490,15 @@ static void dp_screen_files(struct dp_canvas *cv, const struct dp_model *m)
     snprintf(romline, sizeof(romline), "%u / %u ГБ занято · %d систем", m->rom_used_mb,
              m->rom_total_mb, m->nsys);
 
+    char parts[96];
+    int parts_ok = m->data_ok && m->roms_ok;
+    snprintf(parts, sizeof(parts), "data — %s · roms — %s",
+             m->data_ok ? "ok" : "нет",
+             m->roms_ok ? "ok" : "нет");
+    char free_line[48];
+    unsigned free_gb = m->rom_total_mb > m->rom_used_mb ? m->rom_total_mb - m->rom_used_mb : 0;
+    snprintf(free_line, sizeof(free_line), "%u \u0413\u0411 \u0441\u0432\u043e\u0431\u043e\u0434\u043d\u043e", free_gb);
+
     struct {
         const char *label;
         const char *sub;
@@ -499,7 +508,10 @@ static void dp_screen_files(struct dp_canvas *cv, const struct dp_model *m)
         { "Режим USB", "сеть (NCM) · SSH и Samba доступны с ПК", "сеть", DP_COL_ACC },
         { "Передача файлов", "MTP: на ПК появится «R36S» и папка ROMS", "переключить", DP_COL_FG2 },
         { "Сейвы", "последний бэкап 14:22 · 135 Б · 0 файлов", "сделать копию", DP_COL_ACC },
-        { "ROM'ы", romline, "28.6 ГБ свободно", DP_COL_FG2 },
+        { "Разделы", parts,
+          parts_ok ? "ok" : "проверить",
+          parts_ok ? DP_COL_ACC : DP_COL_WARN },
+        { "ROM'ы", romline, free_line, DP_COL_FG2 },
         { "Обновления системы", "stable · установлено 20261116 · проверить", "актуально", DP_COL_FG2 },
         { "Бэкап загрузчика", "снимок первых 512 МиБ карты на ПК", "сделать", DP_COL_FG2 },
     };
