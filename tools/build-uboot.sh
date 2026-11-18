@@ -11,17 +11,20 @@ set -e
 
 REPO=${REPO:-/w}
 OUT=${OUT:-$REPO/build/uboot}
-WORK=${WORK:-/tmp/uboot-work}
+WORK=${WORK:-$REPO/build/uboot-work}
 CROSS=${CROSS:-aarch64-linux-gnu-}
+CROSS32=${CROSS32:-arm-none-eabi-}
 UBOOT_REF=${UBOOT_REF:-next-dev}
 RKBIN_REF=${RKBIN_REF:-master}
 SOC=${SOC:-rk3326}
+JOBS=${JOBS:-4}
 
 mkdir -p "$OUT" "$WORK"
 
 clone() {
     url=$1; ref=$2; dir=$3
     if [ ! -d "$dir/.git" ]; then
+        echo "cloning $url ($ref)"
         git clone --depth 1 -b "$ref" "$url" "$dir"
     fi
 }
@@ -30,36 +33,55 @@ clone https://github.com/rockchip-linux/u-boot.git "$UBOOT_REF" "$WORK/u-boot"
 clone https://github.com/rockchip-linux/rkbin.git "$RKBIN_REF" "$WORK/rkbin"
 
 export CROSS_COMPILE="$CROSS"
+export CROSS_COMPILE_ARM32="$CROSS32"
 export RKBIN="$WORK/rkbin"
 export PATH="$WORK/rkbin/tools:$PATH"
 
 cd "$WORK/u-boot"
-make distclean >/dev/null 2>&1 || true
-make "$SOC" CROSS_COMPILE="$CROSS" >/dev/null 2>&1 || true
 
-# The vendor build.sh pairs SPL + BL31 into a bootable itb; fall back to plain
-# make targets when build.sh is unavailable.
-if [ -x ./build.sh ]; then
-    echo "building with vendor build.sh ($SOC)"
-    ./build.sh "$SOC" 2>&1 | tail -20
+echo "--- rk3326 support in this tree ---"
+ls configs/ | grep -i "$SOC" || echo "no $SOC defconfig"
+ls arch/arm/dts/ 2>/dev/null | grep -i "$SOC" || echo "no $SOC dts"
+
+DEFCONFIG=""
+for cand in "${SOC}_defconfig" "evb-${SOC}_defconfig" "${SOC}-aarch32_defconfig"; do
+    if [ -f "configs/$cand" ]; then DEFCONFIG="$cand"; break; fi
+done
+if [ -z "$DEFCONFIG" ]; then
+    echo "no usable defconfig for $SOC" >&2
+    exit 1
 fi
+echo "--- configuring with $DEFCONFIG ---"
+make distclean >/dev/null 2>&1 || true
+make "$DEFCONFIG"
+
+echo "--- building (ARCH=arm, tpl/spl + u-boot) ---"
+make -j"$JOBS" ARCH=arm 2>&1 | tail -25 || true
 
 if [ ! -f idbloader.img ]; then
-    echo "idbloader.img missing; building SPL by hand"
-    make "$(echo "$SOC" | sed 's/rk/rk/')_defconfig" >/dev/null 2>&1 || true
-    make CROSS_COMPILE="$CROSS" ARCH=arm -j"$(nproc)" u-boot-spl.bin >/dev/null
-    ./tools/mkimage -n "$SOC" -T rksd -d spl/u-boot-spl.bin idbloader.img
+    if [ -f tpl/u-boot-tpl.bin ] && [ -f spl/u-boot-spl.bin ]; then
+        echo "--- assembling idbloader from tpl + spl ---"
+        ./tools/mkimage -n "$SOC" -T rksd -d tpl/u-boot-tpl.bin idbloader.img
+        cat spl/u-boot-spl.bin >> idbloader.img
+    elif [ -f spl/u-boot-spl.bin ]; then
+        echo "--- assembling idbloader from spl only ---"
+        ./tools/mkimage -n "$SOC" -T rksd -d spl/u-boot-spl.bin idbloader.img
+    else
+        echo "no tpl/spl artifacts produced; cannot build idbloader" >&2
+        exit 1
+    fi
 fi
 
 if [ ! -f u-boot.itb ]; then
-    echo "u-boot.itb missing; building itb from u-boot.bin + BL31"
-    BL31=$(ls "$RKBIN/${SOC^^}"/"${SOC^^}"-BL31-*.bin 2>/dev/null | tail -1)
+    echo "--- building u-boot.itb from u-boot.bin + BL31 ---"
+    BL31=$(ls "$RKBIN/${SOC^^}/${SOC^^}-BL31-"*.bin 2>/dev/null | tail -1 || true)
     if [ -z "$BL31" ]; then
         echo "no BL31 blob for $SOC in rkbin; cannot build u-boot.itb" >&2
         exit 1
     fi
+    echo "BL31=$BL31"
     cp "$BL31" bl31.bin
-    make CROSS_COMPILE="$CROSS" ARCH=arm -j"$(nproc)" BL31=bl31.bin u-boot.itb
+    make -j"$JOBS" ARCH=arm u-boot.itb 2>&1 | tail -15
 fi
 
 cp idbloader.img "$OUT/idbloader.img"
@@ -67,6 +89,7 @@ cp u-boot.itb "$OUT/u-boot.itb"
 {
     echo "uboot_ref: $UBOOT_REF"
     echo "rkbin_ref: $RKBIN_REF"
+    echo "defconfig: $DEFCONFIG"
     echo "soc: $SOC"
     echo "idbloader_bytes: $(stat -c %s "$OUT/idbloader.img")"
     echo "uboot_itb_bytes: $(stat -c %s "$OUT/u-boot.itb")"

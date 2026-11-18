@@ -69,3 +69,9 @@
 ## Лицензия
 
 MIT — см. [LICENSE](LICENSE). Брендинг (логотип DEEPoS) распространяется по той же лицензии.
+
+## Документы
+
+- [docs/FIRMWARE-SPEC.md](docs/FIRMWARE-SPEC.md) — спецификация DEEPoS (MVP).
+- [docs/DEVICE-TEST-PLAN.md](docs/DEVICE-TEST-PLAN.md) — план проверки на реальной консоли.
+- [docs/journal.md](docs/journal.md) — журнал изменений, [docs/metrics.md](docs/metrics.md) — метрики.
