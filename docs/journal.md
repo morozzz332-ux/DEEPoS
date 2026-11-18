@@ -137,3 +137,18 @@
 - Первый прогон нашёл 7 мёртвых символов: `ARCH_ROCKCHIP_DT` (нет такого), `ARM_CPU_SUSPEND` (только arm32), `BATTERY_RK817` (в 6.12 гейдж живёт в `CHARGER_RK817`), `MFD_RK808` (правильно `MFD_RK8XX` + `MFD_RK8XX_I2C`), `SND_SOC_ROCKCHIP_RT5651` (нет), `DEBUG_INFO`/`KALLSYMS_ALL` (зависят от `DEBUG_KERNEL`). Фрагмент исправлен.
 - Итог после правок: **113 символов, 113 satisfied, 0 неизвестных**. Это уже не «по памяти», а проверка на реальном Kconfig: драйверы панели, PMIC/зарядки/гейджа, кодека, стиков, zram/zswap, squashfs, dwc2 не отвалятся молча из-за переименований.
 - Стоимость: один прогон ~3–6 минут (распаковка + kconfig), работает офлайн после первого скачивания.
+
+## 2026-11-18 · P0 (ядро и загрузчик: реальная сборка)
+
+- Добавлен отдельный образ сборки `tools/cross/Dockerfile` (`ubuntu:24.04` + `gcc-aarch64-linux-gnu`,
+  `dtc`, `mtools`, `squashfs-tools`, `e2fsprogs`, `exfatprogs`) — `deepos-cross:local`.
+- `tools/build-kernel.sh`: скачивает `linux-6.12.56.tar.xz` в `build/cache` (в git не попадает),
+  конфигурирует через `defconfig` + `merge_config.sh board/r36s-v20/linux.config` + `olddefconfig`,
+  собирает `Image`, компилирует дизайн-плату через `cpp` + `dtc` против **настоящего** дерева
+  исходников ядра (а не против стабов из `tests/fixtures/dts`), пишет `build/kernel/BUILD.txt`.
+- `tools/mkimage.py`: поддержка загрузчика — `--loader DIR`, `LOADER_OFFSETS`
+  (`idbloader.img` → 32 KiB, `u-boot.itb` → 8 MiB), отказ при пустом каталоге.
+  Тест в `tests/image_test.py` подтверждает смещения и что загрузчик не портит GPT.
+- Разведка: в mainline U-Boot v2025.10 **нет rk3326** (`configs/`, `arch/arm/dts`, `board/rockchip`
+  содержат только rk3308/rk3328/…), поэтому загрузчик для этой платы собирается из вендорского
+  форка `rockchip-linux/u-boot` (`evb-rk3326_defconfig`, BL31 из `rkbin`).

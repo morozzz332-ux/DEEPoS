@@ -191,6 +191,35 @@ def make_exfat(path, label, mib, source):
         raise SystemExit("mkimage: copying files into exFAT is not supported yet (mount it on the device)")
 
 
+# Rockchip boot chain: idbloader (DDR init + SPL) at 32 KiB, U-Boot proper at 8 MiB.
+LOADER_OFFSETS = {
+    "idbloader.img": 32 * 1024,
+    "u-boot.itb": 8 * 1024 * 1024,
+}
+
+
+def write_loader(image, loader_dir):
+    """Place a Rockchip boot chain into the unpartitioned area of the image.
+
+    Both files are optional individually, but at least one must be present: an
+    image without a loader cannot boot this SoC (the BootROM only understands
+    the Rockchip ID block format).
+    """
+    found = 0
+    for name, offset in LOADER_OFFSETS.items():
+        path = loader_dir / name
+        if not path.is_file():
+            continue
+        data = path.read_bytes()
+        if len(data) > 8 * 1024 * 1024:
+            raise SystemExit(f"mkimage: {name} is suspiciously large ({len(data)} B)")
+        image.seek(offset)
+        image.write(data)
+        found += 1
+    if not found:
+        raise SystemExit(f"mkimage: no idbloader.img or u-boot.itb in {loader_dir}")
+    return found
+
 def build(args):
     layout = json.loads(Path(args.layout).read_text(encoding="utf-8"))
     size_mib = args.size_mib
@@ -241,6 +270,9 @@ def build(args):
                 shutil.copyfileobj(src, image, 4 * MIB)
             path.unlink()
 
+        if args.loader:
+            write_loader(image, Path(args.loader))
+
         write_gpt(image, layout["name"], parts, total_sectors)
         image.flush()
         os.fsync(image.fileno())
@@ -275,6 +307,7 @@ def main(argv=None):
     parser.add_argument("--sys-a", default=None, help="rootfs tree or squashfs for SYS_A")
     parser.add_argument("--sys-b", default=None, help="rootfs tree or squashfs for SYS_B (default: same as A)")
     parser.add_argument("--data", default=None, help="directory laid down as the initial DATA contents")
+    parser.add_argument("--loader", default=None, help="directory with idbloader.img / u-boot.itb (Rockchip boot chain)")
 
     args = parser.parse_args(argv)
     build(args)

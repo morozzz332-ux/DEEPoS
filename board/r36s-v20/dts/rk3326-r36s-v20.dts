@@ -16,7 +16,7 @@
  */
 /dts-v1/;
 #include <dt-bindings/gpio/gpio.h>
-#include <dt-bindings/input/input-event-codes.h>
+#include <dt-bindings/input/linux-event-codes.h>
 #include <dt-bindings/pinctrl/rockchip.h>
 #include "rk3326.dtsi"
 
@@ -463,11 +463,11 @@
 	status = "okay";
 };
 
-&u2phy0 {
+&u2phy {
 	status = "okay";
 };
 
-&u2phy0_otg {
+&u2phy_otg {
 	status = "okay";
 };
 

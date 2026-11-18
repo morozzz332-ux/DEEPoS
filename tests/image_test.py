@@ -146,6 +146,44 @@ def flash(image, tmp):
     check("small target refused", proc.returncode != 0)
 
 
+def loader_test(tmp):
+    loader = tmp / "loader"
+    loader.mkdir()
+    (loader / "idbloader.img").write_bytes(b"\x55" * 512)
+    (loader / "u-boot.itb").write_bytes(b"\xAA" * 1024)
+    boot = tmp / "boot2"
+    boot.mkdir()
+    (boot / "KERNEL").write_bytes(b"\x00" * 4096)
+    rootfs = tmp / "rootfs2"
+    rootfs.mkdir()
+    image = tmp / "deepos-loader.img"
+    proc = subprocess.run([
+        sys.executable, str(MKIMAGE), "--layout", str(SMALL_LAYOUT), "--out", str(image),
+        "--size-mib", "128", "--boot", str(boot), "--sys-a", str(rootfs), "--loader", str(loader),
+    ], capture_output=True, text=True, timeout=300)
+    check("mkimage with loader exits 0", proc.returncode == 0, proc.stderr.strip()[-300:])
+    if proc.returncode != 0:
+        return
+    with open(image, "rb") as handle:
+        handle.seek(32 * 1024)
+        idb = handle.read(512)
+        handle.seek(8 * 1024 * 1024)
+        itb = handle.read(1024)
+        handle.seek(0)
+        head = handle.read(512)
+    check("idbloader at 32 KiB", idb == b"\x55" * 512)
+    check("u-boot.itb at 8 MiB", itb == b"\xAA" * 1024)
+    check("loader does not disturb GPT", head[510:512] == b"\x55\xaa")
+
+    empty = tmp / "loader-empty"
+    empty.mkdir()
+    proc = subprocess.run([
+        sys.executable, str(MKIMAGE), "--layout", str(SMALL_LAYOUT), "--out", str(tmp / "x.img"),
+        "--size-mib", "128", "--boot", str(boot), "--sys-a", str(rootfs), "--loader", str(empty),
+    ], capture_output=True, text=True, timeout=300)
+    check("empty loader refused", proc.returncode != 0)
+
+
 def main():
     if not SMALL_LAYOUT.exists():
         print("missing tests/fixtures/layout-small.json")
@@ -158,13 +196,15 @@ def main():
         parts = probe(image)
         print("flash")
         flash(image, tmp)
+        print("loader")
+        loader_test(tmp)
 
     if failures:
         print(f"\nFAIL  image: {len(failures)} problem(s)")
         for item in failures:
             print(f"  - {item}")
         return 1
-    print("\nPASS  image: GPT layout, FAT32/squashfs/ext4/exFAT signatures, flash is lossless")
+    print("\nPASS  image: GPT layout, filesystem signatures, loader placement, flash is lossless")
     return 0
 
 
