@@ -87,7 +87,7 @@ uboot: docker-cross
 	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(CROSS_IMAGE) -c "sh tools/build-uboot.sh"
 
 image: docker-image
-	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "python3 tools/mkimage.py --out build/deepos-r36s-v20.img --boot build/boot --sys-a build/rootfs --data build/data"
+	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "python3 tools/mkimage.py --out build/deepos-r36s-v20.img --size-mib $(SIZE_MIB) --boot build/boot --sys-a build/rootfs.squashfs --data build/data"
 
 # Full image: real kernel + DTB (build/kernel), boot chain (build/uboot) and the
 # staged BOOT tree. Fails loudly when a piece is missing instead of silently
@@ -95,7 +95,7 @@ image: docker-image
 image-full: docker-image
 	@test -f build/kernel/Image || (echo "missing build/kernel/Image - run 'make kernel' first" >&2; exit 1)
 	@test -f build/uboot/idbloader.img || (echo "missing build/uboot/idbloader.img - run 'make uboot' first" >&2; exit 1)
-	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "python3 tools/mkimage.py --out build/deepos-r36s-v20.img --boot build/boot --sys-a build/rootfs --data build/data --loader build/uboot"
+	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "python3 tools/mkimage.py --out build/deepos-r36s-v20.img --size-mib $(SIZE_MIB) --boot build/boot --sys-a build/rootfs.squashfs --data build/data --loader build/uboot"
 
 clean:
 	$(MAKE) -C apps/launcher clean

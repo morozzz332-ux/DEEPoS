@@ -24,3 +24,5 @@
 | P3 rootfs | build-rootfs.sh | squashfs 1.87 MB, 439 entries, static busybox + 3 apps |
 | P0 kernel | 6.12.56 aarch64 | Image 74.5 MB, DTB 46.6 KB, config 113/113 |
 | P3 image | mkimage 4096 MiB | 4 296 015 872 B, sha256 19130fdb…, 5 partitions |
+| P0 uboot | vendor next-dev | idbloader 113 194 B, itb 1 304 064 B |
+| P3 image-full | 4096 MiB + loader | 4 311 744 512 B, sha256 cabbf277… |

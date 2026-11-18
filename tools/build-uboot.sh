@@ -56,7 +56,9 @@ make distclean >/dev/null 2>&1 || true
 make "$DEFCONFIG"
 
 echo "--- building (native arch from defconfig) ---"
-make -j"$JOBS" 2>&1 | tail -20 || true
+# The vendor tree predates modern GCC and trips -Werror in unrelated files
+# (common/edid.c); warnings there are not our bugs, so keep them non-fatal.
+make -j"$JOBS" KCFLAGS="-Wno-error" 2>&1 | tail -20 || true
 echo "--- produced artifacts ---"
 ls -l idbloader.img u-boot.itb u-boot.bin spl/u-boot-spl.bin tpl/u-boot-tpl.bin 2>/dev/null || true
 
@@ -78,12 +80,19 @@ if [ ! -f u-boot.itb ]; then
     echo "--- building u-boot.itb from u-boot.bin + BL31 ---"
     BL31=$(ls "$RKBIN/${SOC^^}/${SOC^^}-BL31-"*.bin 2>/dev/null | tail -1 || true)
     if [ -z "$BL31" ]; then
+        # older rkbin trees keep the ARM Trusted Firmware blobs under bin/rk33/
+        BL31=$(ls "$RKBIN"/bin/rk33/"${SOC}"_bl31_*.elf 2>/dev/null | tail -1 || true)
+    fi
+    if [ -z "$BL31" ]; then
         echo "no BL31 blob for $SOC in rkbin; cannot build u-boot.itb" >&2
         exit 1
     fi
     echo "BL31=$BL31"
-    cp "$BL31" bl31.bin
-    make -j"$JOBS" u-boot.itb 2>&1 | tail -15
+    case "$BL31" in
+        *.elf) cp "$BL31" bl31.elf; BL31_ARG=bl31.elf ;;
+        *)     cp "$BL31" bl31.bin; BL31_ARG=bl31.bin ;;
+    esac
+    make -j"$JOBS" KCFLAGS="-Wno-error" BL31="$PWD/$BL31_ARG" u-boot.itb 2>&1 | tail -15
 fi
 
 cp idbloader.img "$OUT/idbloader.img"

@@ -191,3 +191,21 @@
   нужен вендорский `rockchip-linux/u-boot` (ветка `next-dev`, `evb-rk3326_defconfig`)
   + BL31 из `rkbin`; `tools/build-uboot.sh` написан, запущен в контейнере, результат
   в `build/uboot.log`. Без `idbloader.img`/`u-boot.itb` образ не стартует на железе.
+
+## 2026-11-18 · P0 загрузчик: вендорский U-Boot собран
+
+- `tools/build-uboot.sh` доведён до рабочего состояния: `rockchip-linux/u-boot`
+  (next-dev, `rk3326_defconfig`) + BL31 `rkbin/bin/rk33/rk3326_bl31_v1.37.elf`.
+- Три ключевых момента: (1) сборка без `ARCH=arm` (иначе SPL не появляется),
+  (2) `KCFLAGS="-Wno-error"` — вендорское дерево не совместимо с новым GCC
+  (`common/edid.c`), (3) `make_fit_atf.py` требует ELF-файл BL31 и пакет
+  `python3-pyelftools` в кросс-образе; idbloader собирается из `tpl/` + `spl/`
+  через `mkimage -T rksd` (как в Arch-R).
+- Итог: `idbloader.img` 113 194 B (sha256 `da92d9bb…`), `u-boot.itb` 1 304 064 B
+  (sha256 `60bbe765…`), `build/uboot/BUILD.txt` с рефами и хешами.
+- Раскладка образа исправлена: `BOOT` теперь начинается с 16 MiB
+  (`"start_mib": 16`), чтобы не накрывать загрузчик (32 KiB / 8 MiB);
+  `mkimage.py` понимает `start_mib`; первый раздел больше не перетирает boot chain.
+- Полный образ с загрузчиком: `build/deepos-r36s-v20.img` 4 311 744 512 B,
+  sha256 `cabbf277…`; проверено: `RK33` по 32 KiB, FIT по 8 MiB (FDT 2617 B +
+  1.3 MB данных), FAT32 `BOOT` по 16 MiB, `EFI PART` по LBA1.

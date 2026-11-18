@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential bc bison flex libssl-dev libelf-dev \
         gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu libc6-dev-arm64-cross \
         gcc-arm-none-eabi \
-        python3 python3-pillow xz-utils wget ca-certificates \
+        python3 python3-pillow python3-pyelftools xz-utils wget ca-certificates \
         device-tree-compiler dosfstools mtools squashfs-tools \
         e2fsprogs exfatprogs make git rsync file \
     && rm -rf /var/lib/apt/lists/*
