@@ -22,7 +22,9 @@
 
 ```sh
 docker run --rm --entrypoint /bin/bash -v "$PWD:/w" -w /w deepos-build:local \
-  -c "make -C apps/launcher && make -C apps/modd && make -C apps/saved && make -C apps/updatr && sh tests/run-all.sh"
+  -c "make -C apps/launcher && make -C apps/modd && make -C apps/saved && make -C apps/updatr && sh tests/run-all.sh". После сборки: `python3 tools/preflight.py --root .` (или `make preflight`) — одна команда, которая говорит GO/NO-GO перед записью карты.
+
+`tests/run-all.sh"
 ```
 
 13 наборов: экраны/детерминизм/golden, `--selftest`, ввод, вывод на fbdev, список

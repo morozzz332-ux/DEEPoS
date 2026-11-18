@@ -137,3 +137,10 @@ clean:
 	$(MAKE) -C apps/modd clean
 	$(MAKE) -C apps/saved clean
 	rm -rf tests/out
+
+preflight:
+	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "python3 tools/preflight.py --root /w"
+
+preflight-test:
+	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "python3 tests/preflight_test.py"
+

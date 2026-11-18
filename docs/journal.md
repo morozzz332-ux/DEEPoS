@@ -589,3 +589,24 @@
   sha256 `e8e4273a7ba7e3ec269c3b2d3bbaedfdfd19b1acee349bf08bd3db6d5a5ccfd3`,
   `PASS verify-image: 39 checks`.
 
+## 2026-11-18 · P7 (preflight: одна команда GO/NO-GO перед записью карты)
+
+- `tools/preflight.py` — проверяет артефакты так, как их использует загрузка:
+  размер `build/kernel/Image` (>= 10 МиБ), наличие `compatible = "deepos,r36s-v20"`
+  и строки `sitronix,st7703` в DTB, `LABEL DEEPoS` и `LINUX /KERNEL` в `extlinux.conf`,
+  **совпадение имени FDT из extlinux с реальным файлом в `BOOT/dtbs`** (частая опечатка =
+  тихий небут), `BOOT/KERNEL` побайтово равен ядру и его sha256 сходится с `MANIFEST.json`,
+  в squashfs есть `sbin/init`, `bin/busybox`, `usr/bin/{launcher,modd,saved,updatr}`,
+  `etc/init.d/rcS` с битом `x`, `etc/inittab`, `etc/os-release`; наличие обоих загрузчиков;
+  в конце — `tools/verify-image.py` (GPT, backup GPT, сигнатуры ФС).
+- Вывод: `ok/FAIL` по каждой проверке и итог `PREFLIGHT: GO (32 checks)` или
+  `PREFLIGHT: NO-GO (n of m failed)`; код возврата 0/1.
+- `tests/preflight_test.py`: синтетическое дерево (11 МиБ «ядро», DTB с нужными строками,
+  extlinux, MANIFEST с sha256, squashfs из staging с симлинком `sbin/init`, загрузчики)
+  → GO; переименованный DTB в `BOOT/dtbs` → NO-GO с упоминанием `fdt file exists`;
+  rootfs без `usr/bin/launcher` → NO-GO.
+- На реальной сборке: `PREFLIGHT: GO (32 checks)`.
+- Проводка: `make preflight` / `make preflight-test`, `tests/run-all.sh` — 15 наборов,
+  CI получил шаг «Preflight self-test», в `docs/DEVICE-TEST-PLAN.md` — §0.4a
+  «Проверка готовности» с правилом «NO-GO — карту не писать».
+

@@ -19,7 +19,17 @@
 `u-boot.itb` — по 8 MiB (Rockchip boot chain), это делает `tools/mkimage.py --loader`.
 
 
-### 0.4 Проверка образа до записи (обязательно)
+### 0.4a Проверка готовности (preflight)
+
+    python3 tools/preflight.py --root .
+
+Проверяет то, что нужно именно загрузке: размер ядра, `compatible` нашего DTB,
+имя DTB в `extlinux.conf` = файл в `BOOT/dtbs`, sha256 `BOOT/KERNEL` = `MANIFEST.json`,
+все бинари и бит `x` на `etc/init.d/rcS`, наличие загрузчиков, и в конце гоняет
+`tools/verify-image.py`. Ожидаемая строка: `PREFLIGHT: GO (32 checks)`.
+**Если NO-GO — карту не писать.**
+
+## 0.4 Проверка образа до записи (обязательно)
 
 Перед записью на карту образ проверяется офлайн — без карты и без прав администратора:
 

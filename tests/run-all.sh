@@ -16,3 +16,4 @@ python3 tests/boot_test.py    | grep -E "^(PASS|FAIL)"
 python3 tests/updatr_test.py  | grep -E "^(PASS|FAIL)"
 python3 tests/launch_test.py  | grep -E "^(PASS|FAIL)"
 python3 tests/config_test.py | grep -E "^(PASS|FAIL)"
+python3 tests/preflight_test.py

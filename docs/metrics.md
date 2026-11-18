@@ -79,4 +79,6 @@
 
 | P8 files screen (host) | `tests/run.py` + `tests/selftest_test.py` | состояние разделов и свободное место в UI | PASS |
 | образ (0.12-dev) | 4 294 967 296 B, sha256 `e8e4273a7ba7e3ec269c3b2d3bbaedfdfd19b1acee349bf08bd3db6d5a5ccfd3` | ok |
+| P7 preflight (host) | `tools/preflight.py --root .` | 32 проверки, PREFLIGHT: GO | PASS |
+| P7 preflight test | `tests/preflight_test.py` | GO/NO-GO на синтетике (missing fdt, missing launcher) | PASS |
 
