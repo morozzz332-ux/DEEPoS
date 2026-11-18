@@ -136,3 +136,55 @@ python tools/dpflash.py --image build/deepos-r36s-v20.img `
 локальной папке проекта: перепрошить тем же `dpflash.py` или Etcher,
 вернуть оверлей `mipi-panel.dtbo` и настройки из бэкапа. Данные ROM лежат на
 отдельном exFAT-разделе, при перепрошивке их нужно сохранить заранее.
+
+## 7. Отчёт с устройства (после первого буста)
+
+Собрать факты в один файл, чтобы сравнивать с host-эталоном из `docs/PROTOTYPE-STATUS.md`.
+Команды выполняются на консоли (UART или SSH через USB-NCM, `root@deepos.local`):
+
+```sh
+# 1. Базовая готовность
+/usr/bin/launcher --selftest
+
+# 2. Диски и монтирования
+cat /proc/mounts
+df -h
+
+# 3. Память (цель: MemAvailable >= 560 МБ, MemTotal ~732 МБ)
+free -m
+cat /proc/pressure/memory
+
+# 4. Температуры и частоты
+for z in /sys/class/thermal/thermal_zone*/type; do echo "$z: $(cat $z) $(cat $(dirname $z)/temp)"; done
+cat /sys/devices/system/cpu/cpufreq/policy0/scaling_cur_freq
+cat /sys/devices/system/cpu/cpufreq/policy0/scaling_governor
+
+# 5. A/B и модули
+/usr/bin/updatr --state /data --boot /flash status
+/usr/bin/modd --help >/dev/null 2>&1; echo "modd: $?"
+ls /data/modules
+
+# 6. Питание
+grep . /sys/class/power_supply/battery/{status,capacity,voltage_now,charge_full,charge_full_design}
+
+# 7. Загрузка (что успело сказать ядро и rcS)
+dmesg | grep -iE "mmc|panel|st7703|rk817|gadget" | head -40
+dmesg | head -3
+```
+
+Прислать вывод целиком — по нему заполняется `docs/device-report.md`:
+
+| Что | Эталон host | Факт на устройстве |
+|---|---|---|
+| `launcher --selftest` | `status=ok`, `systems=…`, `data_ok=1`, `roms_ok=1` | |
+| Загрузка до первого кадра | ≤ 12 с | |
+| `MemAvailable` в простое | ≥ 560 МБ (Arch-R: 414–468) | |
+| Простой, °C | 48–53 | |
+| Стресс 4 потока 45 с, °C | 1296 → ~70, 1416 → 79.6 | |
+| Троттлинг | порог 85 °C | |
+| A/B | `attempts=0..2`, слот A | |
+| `modd` + модули | thermal/saves в списке | |
+
+Если расхождение по экрану/кнопкам/звуку — сначала смотреть таблицу «Если что-то пошло
+не так» (§5), затем присылать `dmesg` и `--selftest`: по этим двум выводам видно,
+DTB-проблема это, драйвер панели или userland.

@@ -1,40 +1,53 @@
 # Статус прототипа DEEPoS (host-уровень)
 
-Снимок на 2026-11-18. Что уже проверено автоматически, а что ждёт реальной консоли.
+Снимок на 2026-11-18 (раунд 21). Здесь только то, что проверено автоматически без
+консоли, и то, что ждёт реального железа. Числа — из `docs/metrics.md`.
 
-## Работает и покрыто тестами
+Образ для записи: `build/deepos-r36s-v20.img`, 4 294 967 296 B,
+sha256 `e8e4273a7ba7e3ec269c3b2d3bbaedfdfd19b1acee349bf08bd3db6d5a5ccfd3`,
+BOOT-дерево `0.12-dev`. Перед записью: `python3 tools/preflight.py --root .` → `PREFLIGHT: GO (32 checks)`.
+
+## Работает и покрыто тестами (15 наборов)
 
 | Слой | Что именно | Чем проверено |
 |---|---|---|
-| Настройки (яркость/звук/профиль) | сохраняются в `/data/config/settings.toml`, применяются в sysfs без композитора | `tests/config_test.py` |
-| Загрузчик | вендорский `idbloader.img` + `u-boot.itb` (RK3326), раскладка 32 KiB / 8 MiB | `tests/image_test.py` (loader placement) |
-| Ядро/DTB | кросс-сборка 6.12.56, DTB 46 564 B, `linux.config` 115 символов | `tests/board_test.py`, `tools/kconfig-check.sh` |
-| BOOT | `KERNEL`, `dtbs/`, `extlinux.conf`, `logo.bmp`, `MANIFEST.json` | `tests/boot_test.py` |
-| Rootfs | static busybox + launcher/modd/saved/updatr, overlay `inittab`/`rcS` | `tests/board_test.py`, `tests/image_test.py` (DATA/debugfs) |
-| Образ карты | GPT: BOOT / DEEPOS_A / DEEPOS_B / DATA / ROMS, побайтовая прошивка | `tests/image_test.py` |
-| UI | 7 экранов, 12×12/10×10 шрифты, детерминизм рендера | `tests/run.py` + golden |
-| Ввод | evdev, навигация вкладок/списков, синтетические `--keys` | `tests/input_test.py` |
-| Вывод | fbdev RGB565 (плюс 24/32 bpp), блит = PPM | `tests/display_test.py` |
-| Модули | `modd` (NDJSON, таймауты, watchdog), thermal/saves протокол, действия из UI | `tests/modd_test.py`, `tests/modules_test.py`, `tests/launcher_mod_test.py` |
-| Сейвы | атомарное хранилище `saved`, журнал, recover | `tests/saved_test.py` |
-| A/B | `updatr` (begin/good/switch, rollback на 4-й попытке) | `tests/updatr_test.py` |
-| Запуск игры | `emulators.toml`, `%ROM%`/`%SLOT%`, hook allow/deny, «Продолжить», обновление `continue.tsv` после сессии | `tests/launch_test.py` |
-| Диагностика | `launcher --selftest` (ROM/continue/emulators/modd/fb/input) | `tests/selftest_test.py` |
+| Загрузчик | вендорский `idbloader.img` + `u-boot.itb` (RK3326), раскладка 32 KiB / 8 MiB, BOOT с `start_mib: 16` | `tests/image_test.py` (loader placement) |
+| Ядро/DTB | кросс-сборка 6.12.56: `Image` 74 490 368 B, DTB 46 564 B, `linux.config` 115 символов | `tests/board_test.py`, `tools/kconfig-check.sh` |
+| BOOT | `KERNEL`, `dtbs/`, `extlinux.conf` (`LABEL DEEPoS`, `root=LABEL=DEEPOS_A|B`), `logo.bmp`, `MANIFEST.json` с sha256 | `tests/boot_test.py` |
+| Rootfs | static busybox + `launcher`/`modd`/`saved`/`updatr`, overlay `inittab`/`rcS`, `os-release` | `tests/board_test.py`, `tests/image_test.py` (DATA через `debugfs`) |
+| Образ карты | GPT: BOOT / DEEPOS_A / DEEPOS_B / DATA / ROMS, побайтовая прошивка, backup GPT | `tests/image_test.py`, `tools/verify-image.py` (39 checks) |
+| Готовность | preflight: ядро, `compatible` DTB, имя FDT = файл в `BOOT/dtbs`, sha256 KERNEL, бинари и `x` на `rcS`, загрузчики, verify-image | `tests/preflight_test.py` |
+| UI | 7 экранов, шрифты 12×12/10×10, детерминизм, пустая библиотека, склонения | `tests/run.py` + golden |
+| Ввод | evdev (без `linux/input.h`), навигация вкладок/списков, синтетические `--keys` | `tests/input_test.py` |
+| Вывод | fbdev RGB565 (плюс 24/32 bpp), блит побайтово = PPM | `tests/display_test.py` |
+| Настройки | `/data/config/settings.toml` → `brightness`/`volume`/`profile`, sysfs backlight, `cpu-profile`; карточки «Дисплей/Звук/Питание» читают значения | `tests/config_test.py`, `tests/selftest_test.py` |
+| Модули | `modd` (NDJSON, таймауты, watchdog 3/10 мин), протокол thermal/saves, действия из UI | `tests/modd_test.py`, `tests/modules_test.py`, `tests/launcher_mod_test.py` |
+| Сейвы | атомарное хранилище `saved` (tmp→fsync→rename→fsync(dir)), журнал, recover | `tests/saved_test.py` |
+| A/B | `updatr` begin/good/switch, откат на 4-й попытке, синхронизация `root=LABEL=` в extlinux | `tests/updatr_test.py` |
+| Загрузка системы | `rcS` монтирует BOOT→`/flash`, DATA→`/data`, ROMS→`/storage`; A/B до `exit 0`; UI из `inittab ::respawn`; readiness-строка | `tests/board_test.py` (mounts, order, handover, robustness) |
+| Запуск игры | `emulators.toml`, `%ROM%`/`%SLOT%`, hook allow/deny, «Продолжить», обновление `continue.tsv` | `tests/launch_test.py` |
+| Диагностика | `launcher --selftest` (ROM/continue/emulators/modd/fb/input/`data_ok`/`roms_ok`) | `tests/selftest_test.py` |
+
+Сборка без `make` на Windows: всё гоняется через docker-образы `deepos-build:local`
+и `deepos-cross:local` (`make docker-test` / `sh tests/run-all.sh`).
 
 ## Не проверено (этап 2 — реальная консоль)
 
-| Слой | Риск | Как проверять |
-|---|---|---|
-| Панель ST7703 + DSI-тайминг | нет картинки или «снег» | первый буст, `dmesg | grep -i dsi` |
-| gpio-keys / adc-joystick | кнопки не те, стики уехали | `--selftest`, «Проверка контроллера» |
-| fbdev emulation | нет `/dev/fb0` | `fb_present=1` в selftest |
-| Аудио (rk817_codec) | нет звука | `aplay`, наушники/динамик |
-| Зарядка/батарея (rk817) | проценты врут | `/sys/class/power_supply/*` |
-| Память в простое | >150 МБ | `--selftest` + `/proc/meminfo`, `docs/metrics.md` |
-| Реальная загрузка | >12 с, чёрный экран | секундомер + `dmesg` |
-| Переключение A/B на устройстве | не грузится второй слот | `updatr switch B` + ребут |
+| Риск | Как проверить |
+|---|---|
+| Загрузчик + DTB на живой V20 (панель, кнопки, звук) | первый буст по `docs/DEVICE-TEST-PLAN.md`: экран, `--selftest`, «Проверка контроллера» |
+| fbdev на реальном `/dev/fb0` (stride, 16 bpp) | после буста: `--screen continue --fb /dev/fb0`, глазами |
+| evdev-имена (`gpio-keys`, `adc-joystick`) | `--selftest` → `input_events>0`, нажатия в UI |
+| Монтирования и `updatr` на живой карте | `cat /proc/mounts`, `updatr --state /data --boot /flash status` |
+| Бюджет ОЗУ (цель ≤150 МБ idle) | `free`, `ps` после буста; сравнить с Arch-R (263–318 МБ) |
+| Температуры под нагрузкой | стресс 4 потока 45 с при 1416 МГц, порог троттлинга 85 °C |
+| Время загрузки (цель ≤12 с) | секундомер от нажатия до первого кадра |
+| Порты и эмуляторы на железе | запуск 2–3 портов и PS1/PSP-игры |
 
-## Бэкап перед прошивкой
+## Известные ограничения, принятые сознательно
 
-Обязательно снять образ текущей карты (см. `docs/DEVICE-TEST-PLAN.md` §1) — DEEPoS
-пишет в первые 4 ГиБ, включая загрузочную цепочку.
+- 1512 МГц недоступны в Arch-R-ядре (нет `cpufreq/boost`); свой DTB тоже не спешит:
+  максимум 1416 МГц, дальше — только охлаждение.
+- Wi-Fi нет: сеть только через USB-NCM (или MTP), плюс Samba/HTTP поверх.
+- 2 ГБ ОЗУ — только BGA-пайка; программно максимум zram 1.5–2 ГБ.
+- `make` на Windows-хосте нет — цели Makefile выполняются эквивалентными docker-командами.
