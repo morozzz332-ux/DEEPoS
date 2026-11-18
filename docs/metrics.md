@@ -99,3 +99,12 @@
 | verify-image | PASS (39 checks) |
 | Образ | `build/deepos-r36s-v20.img`, 4 294 967 296 B, sha256 `05598792dd1dd795fa332f467884903721f0c4ffd3d979659675d676ed70a2fe` |
 | BOOT | `0.17-dev`, KERNEL 74 490 368 B, dtb 46 564 B, `README-FIRST.txt` 1 533 B |
+
+## 2026-11-18 · образ 0.18-dev
+
+| Проверка | Значение |
+| --- | --- |
+| Наборов тестов | 17 |
+| preflight | GO (32 checks) |
+| verify-image | PASS (39 checks) |
+| Образ | 4 294 967 296 B, sha256 `02cff0cfb53563dcd7f2e4e09a29298ca06928818ec61510c36c1072806359ce` |

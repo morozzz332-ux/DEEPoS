@@ -52,6 +52,7 @@ struct dp_nav {
     char lsys[32];
     char lrom[64];
     int lslot;
+    int settings_edit; /* card index + 1, applied after the key */
 };
 
 static int tab_screen(const struct dp_nav *nav)
@@ -100,7 +101,69 @@ static int row_count(const struct dp_model *m, const struct dp_nav *nav)
         return m->nsys;
     if (scr == DP_SCR_GAMES && nav->system < m->nsys)
         return (int)m->systems[nav->system].games;
+    if (scr == DP_SCR_SETTINGS)
+        return 12;
+    if (scr == DP_SCR_MODULES)
+        return 5;
+    if (scr == DP_SCR_FILES)
+        return 6;
     return 0;
+}
+
+/* Settings cards that own a value: brightness, volume and the cpu profile.
+ * A press cycles the value, writes settings.toml and applies it right away. */
+static int settings_edit_card(struct dp_model *m, int card, const char *config_path,
+                              const char *sysfs_prefix, const char *data_dir)
+{
+    struct dp_config cfg;
+    dp_config_init(&cfg);
+    dp_config_load(&cfg, config_path);
+    cfg.brightness = m->cfg_brightness;
+    cfg.volume = m->cfg_volume;
+    snprintf(cfg.profile, sizeof(cfg.profile), "%s",
+             m->cfg_profile[0] ? m->cfg_profile : "auto");
+
+    static const int steps[] = { 20, 40, 60, 80, 100 };
+    const int nsteps = (int)(sizeof(steps) / sizeof(steps[0]));
+    static const char *profiles[] = { "eco", "balanced", "max" };
+    const int nprofiles = 3;
+    int changed = 0;
+
+    if (card == 2) { /* display */
+        int cur = cfg.brightness;
+        int next = steps[0];
+        for (int i = 0; i < nsteps; i++)
+            if (cur >= steps[i])
+                next = steps[(i + 1) % nsteps];
+        cfg.brightness = next;
+        changed = 1;
+    } else if (card == 3) { /* sound */
+        int cur = cfg.volume;
+        int next = steps[0];
+        for (int i = 0; i < nsteps; i++)
+            if (cur >= steps[i])
+                next = steps[(i + 1) % nsteps];
+        cfg.volume = next;
+        changed = 1;
+    } else if (card == 5) { /* power */
+        int idx = 0;
+        for (int i = 0; i < nprofiles; i++)
+            if (strcmp(cfg.profile, profiles[i]) == 0)
+                idx = i;
+        snprintf(cfg.profile, sizeof(cfg.profile), "%s", profiles[(idx + 1) % nprofiles]);
+        changed = 1;
+    }
+    if (!changed)
+        return 0;
+
+    char profile_path[512];
+    snprintf(profile_path, sizeof(profile_path), "%s/cpu-profile", data_dir);
+    dp_config_save(&cfg, config_path);
+    dp_config_apply(&cfg, sysfs_prefix, profile_path);
+    m->cfg_brightness = cfg.brightness;
+    m->cfg_volume = cfg.volume;
+    snprintf(m->cfg_profile, sizeof(m->cfg_profile), "%s", cfg.profile);
+    return 1;
 }
 
 /* Returns 1 when the launcher should quit. */
@@ -131,6 +194,8 @@ static int nav_key(struct dp_nav *nav, const struct dp_model *m, enum dp_key key
             nav->system = nav->sel < m->nsys ? nav->sel : 0;
             nav->level = 1;
             nav->sel = 0;
+        } else if (scr == DP_SCR_SETTINGS && nav->sel < 12) {
+            nav->settings_edit = nav->sel + 1;
         } else if (scr == DP_SCR_CONTINUE && nav->sel < m->ncont) {
             const struct dp_continue_item *it = &m->cont[nav->sel];
             if (it->rom[0]) {
@@ -444,7 +509,9 @@ int main(int argc, char **argv)
     const char *run_game = NULL;
     const char *emulators_path = "/data/emulators.toml";
     int save_slot = -1;
-    const char *config_path = "/data/config/settings.toml";
+    char config_buf[512];
+    const char *config_path = NULL;
+    snprintf(config_buf, sizeof(config_buf), "/data/config/settings.toml");
     const char *sysfs_prefix = "";
     const char *set_kv = NULL;
     int print_config = 0;
@@ -504,6 +571,11 @@ int main(int argc, char **argv)
             return 2;
         }
         #undef NEED_ARG
+    }
+
+    if (!config_path) {
+        snprintf(config_buf, sizeof(config_buf), "%s/config/settings.toml", data);
+        config_path = config_buf;
     }
 
     if (set_kv || print_config || do_apply) {
@@ -633,6 +705,11 @@ int main(int argc, char **argv)
                 return 2;
             }
             quit = nav_key(&nav, m, k);
+            if (!quit && nav.settings_edit) {
+                settings_edit_card(m, nav.settings_edit - 1, config_path,
+                                   sysfs_prefix, data);
+                nav.settings_edit = 0;
+            }
         }
     }
 
