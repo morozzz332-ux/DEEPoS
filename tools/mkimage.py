@@ -80,7 +80,13 @@ def layout_partitions(layout, size_mib):
         parts.append(dict(spec, size_mib=part_mib))
     if size_mib is None or size_mib < used + 8:
         raise SystemExit(f"mkimage: image too small ({size_mib} MiB) for layout (needs > {used + 8} MiB)")
-    fill = size_mib - used
+    # Anything below the first partition start is reserved for the GPT and the
+    # Rockchip boot chain (idbloader at 32 KiB, u-boot.itb at 8 MiB), so the
+    # fill partition may only use what is left after that reservation.
+    reserved = max((int(spec.get("start_mib", 0)) for spec in layout["partitions"]), default=0)
+    fill = size_mib - used - reserved
+    if fill <= 0:
+        raise SystemExit(f"mkimage: no room left for the fill partition ({fill} MiB)")
     for part in parts:
         if part["size_mib"] is None:
             part["size_mib"] = fill
@@ -97,57 +103,66 @@ def layout_partitions(layout, size_mib):
 
 
 def write_gpt(image, image_name, parts, total_sectors):
+    """Write protective MBR + primary/backup GPT and verify the entries CRC."""
     sector = SECTOR
-    entries = []
-    for part in parts:
-        entries.append({
-            "type": gpt_type_for(part["type"]),
-            "guid": part_guid(image_name, part["name"]),
-            "first": part["start_lba"],
-            "last": part["start_lba"] + part["sectors"] - 1,
-            "name": part["label"],
-        })
-
     entry_size = 128
-    entry_count = 32
-    entries_blob = bytearray(entry_size * entry_count)
-    for index, entry in enumerate(entries):
-        off = index * entry_size
-        entries_blob[off:off + 16] = uuid.UUID(entry["type"]).bytes_le
-        entries_blob[off + 16:off + 32] = uuid.UUID(entry["guid"]).bytes_le
-        entries_blob[off + 32:off + 40] = struct.pack("<Q", entry["first"])
-        entries_blob[off + 40:off + 48] = struct.pack("<Q", entry["last"])
-        entries_blob[off + 56:off + entry_size] = entry["name"].encode("utf-16-le")[:70]
+    entry_count = 32  # 4 KiB of entries, the conventional minimum
 
-    entries_crc = zlib.crc32(bytes(entries_blob)) & 0xFFFFFFFF
+    blob = bytearray(entry_size * entry_count)
+    for index, part in enumerate(parts):
+        off = index * entry_size
+        blob[off:off + 16] = uuid.UUID(gpt_type_for(part["type"])).bytes_le
+        blob[off + 16:off + 32] = uuid.UUID(part_guid(image_name, part["name"])).bytes_le
+        first = part["start_lba"]
+        last = first + part["sectors"] - 1
+        struct.pack_into("<QQQ", blob, off + 32, first, last, 0)
+        name = part["label"].encode("utf-16-le")[:70]
+        blob[off + 56:off + 56 + len(name)] = name
+
+    entries_crc = zlib.crc32(bytes(blob)) & 0xFFFFFFFF
     disk_guid = uuid.UUID(part_guid(image_name, "disk"))
+    entries_sectors = entry_count * entry_size // sector
 
     def header(current_lba, entries_lba):
-        return struct.pack(
+        raw = struct.pack(
             "<8sIIIIQQQQ16sQIII",
             b"EFI PART", 0x00010000, 92, 0, 0,
             current_lba, total_sectors - 1,
-            2 * sector, total_sectors - 1 - entry_count * entry_size // sector,
+            2 + entries_sectors, total_sectors - 2 - entries_sectors,
             disk_guid.bytes_le,
             entries_lba, entry_count, entry_size, entries_crc,
         )
+        crc = zlib.crc32(raw) & 0xFFFFFFFF
+        return raw[:16] + struct.pack("<I", crc) + raw[20:]
 
-    backup_entries_lba = total_sectors - 1 - entry_count * entry_size // sector
-    primary = header(sector, 2)
-    primary = primary[:16] + struct.pack("<I", zlib.crc32(primary) & 0xFFFFFFFF) + primary[20:]
+    backup_entries_lba = total_sectors - 1 - entries_sectors
+    primary = header(1, 2)
     backup = header(total_sectors - 1, backup_entries_lba)
-    backup = backup[:16] + struct.pack("<I", zlib.crc32(backup) & 0xFFFFFFFF) + backup[20:]
 
+    image.seek(0)
+    image.write(bytes(34 * sector))
     image.seek(sector)
     image.write(primary)
     image.seek(2 * sector)
-    image.write(entries_blob)
+    image.write(blob)
+    image.seek((total_sectors - 34) * sector)
+    image.write(bytes(34 * sector))
     image.seek(backup_entries_lba * sector)
-    image.write(entries_blob)
+    image.write(blob)
     image.seek((total_sectors - 1) * sector)
     image.write(backup)
     image.seek(0)
     image.write(protective_mbr(total_sectors))
+    image.flush()
+
+    # Self-check: a short write here would produce a card that no longer boots.
+    image.seek(2 * sector)
+    written = image.read(entry_size * entry_count)
+    if len(written) != entry_size * entry_count or zlib.crc32(written) & 0xFFFFFFFF != entries_crc:
+        raise SystemExit("mkimage: GPT entries CRC mismatch right after writing the image")
+    image.seek((total_sectors - 1) * sector)
+    if image.read(8) != b"EFI PART":
+        raise SystemExit("mkimage: backup GPT header is missing after writing the image")
 
 
 def protective_mbr(total_sectors):
@@ -179,9 +194,20 @@ def make_squashfs(path, label, mib, source):
     if not source:
         # empty filesystem still gets a valid superblock, useful for tests
         source = tempfile.mkdtemp(prefix="deepos-empty-")
-    if not Path(source).exists():
+    src = Path(source)
+    if not src.exists():
         raise SystemExit(f"mkimage: squashfs source missing: {source}")
-    run(["mksquashfs", source, path, "-noappend", "-quiet", "-comp", "zstd", "-no-progress"])
+    if src.is_file():
+        # A ready image (build/rootfs.squashfs from tools/build-rootfs.sh): copy it
+        # as-is. Packing a file with mksquashfs would put that file *inside* a new
+        # filesystem instead of using its contents.
+        with open(path, "r+b") as dst, src.open("rb") as handle:
+            shutil.copyfileobj(handle, dst, 4 * MIB)
+            dst.truncate(src.stat().st_size)
+            dst.flush()
+            os.fsync(dst.fileno())
+        return
+    run(["mksquashfs", str(src), path, "-noappend", "-quiet", "-comp", "zstd", "-no-progress"])
 
 
 def make_ext4(path, label, mib, source):
@@ -247,7 +273,7 @@ def build(args):
     else:
         sources_b = args.sys_a
 
-    with open(out, "wb") as image:
+    with open(out, "w+b") as image:
         image.truncate(size_mib * MIB)
         for part in parts:
             path = out.with_suffix(out.suffix + f".{part['name'].lower()}")

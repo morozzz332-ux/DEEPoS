@@ -53,3 +53,8 @@
 | rcS порядок | host | `/flash` смонтирован, `begin`/`good` до `exit 0` | ok |
 | image (0.5-dev) | `build/deepos-r36s-v20.img` 4 311 744 512 B, sha256 `4f921aa551cc1020d9ffc9e5e4625bb81c2f97d1f4c78a0878db8bc4e2e14dc7` | ok |
 | тестовые наборы | 13 | PASS |
+
+| P7 verify-image | host | 39 проверок: GPT CRC, геметрия, сигнатуры ФС, загрузчик, BOOT, squashfs | PASS |
+| image (0.5-dev) | `build/deepos-r36s-v20.img` 4 294 967 296 B, sha256 `6cf5a8be2ab34f037763a49a152525662b5974f7355347e61304a4fc9166ecf7` | ok |
+| тестовые наборы | 13 | PASS |
+

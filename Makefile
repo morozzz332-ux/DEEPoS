@@ -8,7 +8,7 @@ CROSS_IMAGE ?= deepos-cross:local
 PYTHON ?= python3
 KARCH  ?= linux-6.12.56
 
-.PHONY: help selftest-test fonts launcher modd saved updatr updatr render test modd-test saved-test launch-test modules-test image-test board-test boot-test kconfig-check docker-image docker-cross docker-test kernel uboot image-full image clean
+.PHONY: help selftest-test fonts launcher modd saved updatr updatr render test modd-test saved-test launch-test modules-test image-test board-test boot-test kconfig-check verify-image docker-image docker-cross docker-test kernel uboot image-full image clean
 
 help:
 	@echo "make fonts        - regenerate bitmap fonts from tools/fonts/DejaVuSansMono.ttf"
@@ -30,6 +30,7 @@ help:
 	@echo "make kconfig-check- merge linux.config into a real 6.12 kernel tree and verify"
 	@echo "make kernel       - cross-build Image + board DTB into build/kernel"
 	@echo "make uboot        - cross-build the Rockchip boot chain into build/uboot"
+	@echo "make verify-image - verify the built image (GPT CRCs, loader, payloads) before flashing"
 	@echo "make image-full   - full image with real kernel, DTB, boot chain and rootfs"
 	@echo "make docker-test  - run every test suite inside the image (recommended)"
 
@@ -114,6 +115,11 @@ image: docker-image
 # Full image: real kernel + DTB (build/kernel), boot chain (build/uboot) and the
 # staged BOOT tree. Fails loudly when a piece is missing instead of silently
 # producing an unbootable card.
+verify-image: docker-image
+	@echo "==> verifying $(IMG) before writing it to a card"
+	docker run --rm --entrypoint /bin/bash -v "$(CURDIR):/w" -w /w $(DOCKER_IMAGE) \
+		python3 tools/verify-image.py --loader build/uboot $(IMG)
+
 image-full: docker-image
 	@test -f build/kernel/Image || (echo "missing build/kernel/Image - run 'make kernel' first" >&2; exit 1)
 	@test -f build/uboot/idbloader.img || (echo "missing build/uboot/idbloader.img - run 'make uboot' first" >&2; exit 1)

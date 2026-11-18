@@ -202,6 +202,74 @@ def loader_test(tmp):
     check("empty loader refused", proc.returncode != 0)
 
 
+def verify_tool(image: pathlib.Path, loader: pathlib.Path) -> subprocess.CompletedProcess:
+    cmd = [sys.executable, str(ROOT / "tools" / "verify-image.py"),
+           "--loader", str(loader), "--skip-rootfs", str(image)]
+    return subprocess.run(cmd, capture_output=True, text=True)
+
+
+def verify_checks(tmp: pathlib.Path) -> None:
+    """verify-image must accept a good image and reject a damaged GPT."""
+    build_dir = tmp / "verify-build"
+    loader = build_dir / "loader"
+    boot = build_dir / "boot"
+    data = build_dir / "data"
+    for d in (loader, boot, data):
+        d.mkdir(parents=True)
+    (loader / "idbloader.img").write_bytes(b"\x55" * 512)
+    (loader / "u-boot.itb").write_bytes(b"\xaa" * 1024)
+    kernel = b"\x4d\x5a" + b"\x00" * 2048
+    (boot / "KERNEL").write_bytes(kernel)
+    (boot / "extlinux").mkdir()
+    (boot / "extlinux" / "extlinux.conf").write_text("LABEL DEEPoS\n", encoding="utf-8")
+    dtb = b"\xd0\x0d\xfe\xed" + b"\x00" * 512
+    (boot / "dtbs").mkdir()
+    (boot / "dtbs" / "rk3326-r36s-v20.dtb").write_bytes(dtb)
+    (boot / "MANIFEST.json").write_text(json.dumps({
+        "board": "verify-test",
+        "version": "test",
+        "files": {"KERNEL": hashlib.sha256(kernel).hexdigest(),
+                  "dtbs/rk3326-r36s-v20.dtb": hashlib.sha256(dtb).hexdigest()},
+        "sizes": {"KERNEL": len(kernel), "dtbs/rk3326-r36s-v20.dtb": len(dtb)},
+    }, indent=2) + "\n", encoding="utf-8")
+    (data / "config.toml").write_text('name = "deepos"\n', encoding="utf-8")
+
+    layout = build_dir / "layout.json"
+    layout.write_text(json.dumps({
+        "name": "verify-test",
+        "sector": 512,
+        "align_mib": 1,
+        "partitions": [
+            {"name": "BOOT", "label": "BOOT", "type": "fat32", "size_mib": 16, "start_mib": 16},
+            {"name": "SYS_A", "label": "DEEPOS_A", "type": "squashfs", "size_mib": 20},
+            {"name": "SYS_B", "label": "DEEPOS_B", "type": "squashfs", "size_mib": 20},
+            {"name": "DATA", "label": "DATA", "type": "ext4", "size_mib": 16},
+            {"name": "ROMS", "label": "ROMS", "type": "exfat", "size_mib": 0, "fill": True},
+        ],
+    }), encoding="utf-8")
+
+    image = build_dir / "verify.img"
+    proc = subprocess.run([
+        sys.executable, str(ROOT / "tools" / "mkimage.py"),
+        "--layout", str(layout), "--out", str(image), "--size-mib", "96",
+        "--boot", str(boot), "--sys-a", str(tmp), "--data", str(data), "--loader", str(loader),
+    ], capture_output=True, text=True)
+    check("verify fixture image builds", proc.returncode == 0, proc.stderr[-300:])
+    if proc.returncode != 0:
+        return
+
+    good = verify_tool(image, loader)
+    check("verify-image accepts a good image", good.returncode == 0, good.stdout[-400:])
+
+    blob = bytearray(image.read_bytes())
+    blob[1024 + 60] ^= 0xFF
+    broken = build_dir / "broken.img"
+    broken.write_bytes(bytes(blob))
+    bad = verify_tool(broken, loader)
+    check("verify-image rejects a corrupted GPT", bad.returncode == 1, bad.stdout[-200:])
+    check("failure names the entries CRC", "GPT entries CRC" in bad.stdout)
+
+
 def main():
     if not SMALL_LAYOUT.exists():
         print("missing tests/fixtures/layout-small.json")
@@ -216,6 +284,7 @@ def main():
         flash(image, tmp)
         print("loader")
         loader_test(tmp)
+    verify_checks(tmp)
 
     if failures:
         print(f"\nFAIL  image: {len(failures)} problem(s)")
