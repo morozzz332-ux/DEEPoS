@@ -2,9 +2,9 @@
   "name": "r36s-v20",
   "sector": 512,
   "align_mib": 1,
-  "note": "Sizes are in MiB. A partition with \"fill\": true takes the rest of the card.",
+  "note": "Sizes are in MiB. A partition with \"fill\": true takes the rest of the card. BOOT starts at 16 MiB to keep the Rockchip boot chain intact: idbloader.img at 32 KiB, u-boot.itb at 8 MiB.",
   "partitions": [
-    { "name": "BOOT", "label": "BOOT", "type": "fat32", "size_mib": 256 },
+    { "name": "BOOT", "label": "BOOT", "type": "fat32", "size_mib": 256, "start_mib": 16 },
     { "name": "SYS_A", "label": "DEEPOS_A", "type": "squashfs", "size_mib": 700 },
     { "name": "SYS_B", "label": "DEEPOS_B", "type": "squashfs", "size_mib": 700 },
     { "name": "DATA", "label": "DATA", "type": "ext4", "size_mib": 1536 },

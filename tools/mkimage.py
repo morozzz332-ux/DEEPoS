@@ -64,6 +64,9 @@ def layout_partitions(layout, size_mib):
     sector = layout.get("sector", SECTOR)
     align = layout.get("align_mib", 1) * MIB // sector
     cursor = align  # 1 MiB of headroom for the GPT itself
+    # The Rockchip boot chain lives below the first partition: idbloader.img at
+    # 32 KiB (sector 64) and u-boot.itb at 8 MiB (sector 16384). Partitions that
+    # must not cover it declare "start_mib" explicitly (BOOT starts at 16 MiB).
     parts = []
     used = 0
     for spec in layout["partitions"]:
@@ -83,6 +86,9 @@ def layout_partitions(layout, size_mib):
             part["size_mib"] = fill
         sectors = part["size_mib"] * MIB // sector
         cursor = (cursor + align - 1) // align * align
+        if part.get("start_mib"):
+            want = int(part["start_mib"]) * MIB // sector
+            cursor = (want + align - 1) // align * align
         part["start_lba"] = cursor
         part["sectors"] = sectors
         part["byte_offset"] = cursor * sector

@@ -55,8 +55,10 @@ echo "--- configuring with $DEFCONFIG ---"
 make distclean >/dev/null 2>&1 || true
 make "$DEFCONFIG"
 
-echo "--- building (ARCH=arm, tpl/spl + u-boot) ---"
-make -j"$JOBS" ARCH=arm 2>&1 | tail -25 || true
+echo "--- building (native arch from defconfig) ---"
+make -j"$JOBS" 2>&1 | tail -20 || true
+echo "--- produced artifacts ---"
+ls -l idbloader.img u-boot.itb u-boot.bin spl/u-boot-spl.bin tpl/u-boot-tpl.bin 2>/dev/null || true
 
 if [ ! -f idbloader.img ]; then
     if [ -f tpl/u-boot-tpl.bin ] && [ -f spl/u-boot-spl.bin ]; then
@@ -81,7 +83,7 @@ if [ ! -f u-boot.itb ]; then
     fi
     echo "BL31=$BL31"
     cp "$BL31" bl31.bin
-    make -j"$JOBS" ARCH=arm u-boot.itb 2>&1 | tail -15
+    make -j"$JOBS" u-boot.itb 2>&1 | tail -15
 fi
 
 cp idbloader.img "$OUT/idbloader.img"

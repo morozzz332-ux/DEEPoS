@@ -49,3 +49,16 @@ make image-test   # маленький образ 128 MiB + проверка с�
 `tools/dpflash.py` пишет образ на карту или в файл (`--dry-run`, `--target`,
 `--expect-sha256`, `--no-defer-table`). На Windows `--target \\.\PhysicalDriveN`
 требует прав администратора и закрытого проводника.
+
+## Rockchip boot chain (ниже первого раздела)
+
+| Смещение | Что | Кто пишет |
+|---|---|---|
+| 32 KiB (сектор 64) | `idbloader.img` (TPL + SPL) | `mkimage.py --loader` |
+| 8 MiB (сектор 16384) | `u-boot.itb` (U-Boot proper + BL31) | `mkimage.py --loader` |
+| 16 MiB (сектор 32768) | раздел `BOOT` (FAT32) | `mkimage.py --boot` |
+
+Поэтому `BOOT` в `layout.json` объявлен с `"start_mib": 16`: разделы не должны
+накрывать загрузчик. Mainline U-Boot не поддерживает RK3326, поэтому загрузчик
+собирается из вендорского форка (`tools/build-uboot.sh`).
+
