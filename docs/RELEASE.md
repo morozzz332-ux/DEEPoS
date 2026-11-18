@@ -1,9 +1,9 @@
 # DEEPoS release
 
-- image sha256: `84cdb21a2432369d70f6fc4e3910970c099e721e60611305a800cc899586dfc2`
+- image sha256: `43e8438055aec9548984a2c1a9343f822c0af230e7e9cb9a41d4c469eb1385f2`
 - image size: 4294967296 bytes
-- BOOT version: `0.21-dev`
-- git: `main` at `8761a8c`
+- BOOT version: `0.23-dev`
+- git: `main` at `dd34ba0`
 
 | artefact | bytes | sha256 | path |
 |---|---|---|---|
@@ -11,7 +11,7 @@
 | dtb | 46836 | `430540c59e7d1b1255faf6c58b929c97a2b6ddd271dbf4ef2f8345ed70044688` | `build/kernel/rk3326-r36s-v20.dtb` |
 | boot | 75461654 | `dir` | `build/boot` |
 | rootfs | 2355200 | `738d2f0699788ec06d4eef3e64b7063f7c5152a28406f9e6841fc15e6a5addc4` | `build/rootfs.squashfs` |
-| image | 4294967296 | `84cdb21a2432369d70f6fc4e3910970c099e721e60611305a800cc899586dfc2` | `build/deepos-r36s-v20.img` |
+| image | 4294967296 | `43e8438055aec9548984a2c1a9343f822c0af230e7e9cb9a41d4c469eb1385f2` | `build/deepos-r36s-v20.img` |
 | idbloader | 113194 | `da92d9bb07fb8a635a661ddac22f965a35fdd8c118ce9823e22145eb391a42f0` | `build/uboot/idbloader.img` |
 | u-boot | 1304064 | `60bbe765838fddabc48a85dbc59bcd3cac42e186f1da20f5e090a1d02e8dfd8e` | `build/uboot/u-boot.itb` |
 

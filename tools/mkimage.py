@@ -83,7 +83,8 @@ def layout_partitions(layout, size_mib):
     # Anything below the first partition start is reserved for the GPT and the
     # Rockchip boot chain (idbloader at 32 KiB, u-boot.itb at 8 MiB), so the
     # fill partition may only use what is left after that reservation.
-    reserved = max((int(spec.get("start_mib", 0)) for spec in layout["partitions"]), default=0)
+    explicit = [int(spec.get("start_mib", 0)) for spec in layout["partitions"] if spec.get("start_mib")]
+    reserved = max(explicit) if explicit else layout.get("align_mib", 1)
     fill = size_mib - used - reserved
     if fill <= 0:
         raise SystemExit(f"mkimage: no room left for the fill partition ({fill} MiB)")
@@ -258,7 +259,8 @@ def build(args):
     if size_mib is None:
         size_mib = sum(p["size_mib"] for p in layout["partitions"] if not p.get("fill")) + 8192
     parts = layout_partitions(layout, size_mib)
-    total_sectors = size_mib * MIB // SECTOR
+    end_sector = max(p["start_lba"] + p["sectors"] for p in parts)
+    total_sectors = max(size_mib * MIB // SECTOR, end_sector)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
 
@@ -274,7 +276,7 @@ def build(args):
         sources_b = args.sys_a
 
     with open(out, "w+b") as image:
-        image.truncate(size_mib * MIB)
+        image.truncate(total_sectors * SECTOR)
         for part in parts:
             path = out.with_suffix(out.suffix + f".{part['name'].lower()}")
             path.unlink(missing_ok=True)

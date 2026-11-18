@@ -22,3 +22,5 @@ python3 tests/preflight_test.py
 python3 tests/release_test.py
 python3 tests/hardware_test.py | grep -E "^(PASS|FAIL)"
 python3 tests/expand_test.py | grep -E "^(PASS|FAIL)"
+python3 tests/verify_card_test.py | grep -E "^(PASS|FAIL)"
+python3 tests/read_report_test.py | grep -E "^(PASS|FAIL)"
