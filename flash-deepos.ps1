@@ -104,9 +104,13 @@ function Invoke-DeepOSFlash {
         $current = Get-FlashDisk $Disk
         if ($current.Path -ne $target.Path -or $current.UniqueId -ne $target.UniqueId -or
             $current.SerialNumber -ne $target.SerialNumber) { throw 'Disk identity changed before clearing' }
-        Log 'clearing partition table'
-        Clear-Disk -InputObject $current -RemoveData -RemoveOEM -Confirm:$false -ErrorAction Stop
-        Log 'Clear-Disk: OK'
+        if ($current.NumberOfPartitions -ne 0) {
+            Log 'clearing partition table'
+            Clear-Disk -InputObject $current -RemoveData -RemoveOEM -Confirm:$false -ErrorAction Stop
+            Log 'Clear-Disk: OK'
+        } else {
+            Log 'Windows reports no partitions to remove'
+        }
 
         # Wait for the storage stack to drop the old volume objects before opening the raw disk.
         for ($attempt = 0; $attempt -lt 10; $attempt++) {
@@ -115,10 +119,10 @@ function Invoke-DeepOSFlash {
             if ($ready.Path -ne $target.Path -or $ready.SerialNumber -ne $target.SerialNumber) {
                 throw 'Disk identity changed after clearing'
             }
-            if ($ready.PartitionStyle -in @('RAW', 'MBR') -and $ready.NumberOfPartitions -eq 0) { break }
+            if ($ready.PartitionStyle -in @('RAW', 'MBR', 'GPT') -and $ready.NumberOfPartitions -eq 0) { break }
             Start-Sleep -Seconds 1
         }
-        if ($ready.PartitionStyle -notin @('RAW', 'MBR') -or $ready.NumberOfPartitions -ne 0) {
+        if ($ready.PartitionStyle -notin @('RAW', 'MBR', 'GPT') -or $ready.NumberOfPartitions -ne 0) {
             throw "Old partition layout remains visible: $($ready.PartitionStyle), $($ready.NumberOfPartitions) partitions"
         }
         Log "ready: style=$($ready.PartitionStyle) partitions=0"

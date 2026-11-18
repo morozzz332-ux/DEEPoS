@@ -43,9 +43,10 @@ sys.exit(23)
             PartitionStyle = 'GPT'; NumberOfPartitions = 4; LogicalSectorSize = 512
         }
         if ($script:clears -and $script:case -ne 'old-layout') {
-            $p.PartitionStyle = 'MBR'
+            $p.PartitionStyle = if ($script:case -eq 'empty-gpt') { 'GPT' } else { 'MBR' }
             $p.NumberOfPartitions = 0
         }
+        if ($script:case -eq 'already-empty') { $p.NumberOfPartitions = 0 }
         if ($script:case -eq 'small') { $p.Size = 512 }
         if ($script:case -eq 'sector') { $p.LogicalSectorSize = 4096 }
         if ($script:case -eq 'system') { $p.IsSystem = $true }
@@ -66,7 +67,7 @@ sys.exit(23)
     function Update-HostStorageCache { [CmdletBinding()] param() }
     function Start-Sleep { param([int]$Seconds) }
 
-    foreach ($script:case in 'sha', 'small', 'sector', 'system', 'ambiguous', 'clear-error', 'old-layout', 'python-error') {
+    foreach ($script:case in 'sha', 'small', 'sector', 'system', 'ambiguous', 'clear-error', 'old-layout', 'python-error', 'empty-gpt', 'already-empty') {
         $script:clears = 0
         $script:sourceUnlocked = $false
         Remove-Item -LiteralPath $env:DEEPOS_TEST_FLASH_MARKER -ErrorAction SilentlyContinue
@@ -74,11 +75,11 @@ sys.exit(23)
         if ($script:case -eq 'sha') { $expectedSha = '0' * 64 }
         $code = Invoke-DeepOSFlash -Image $image -Sha256 $expectedSha -Python $interpreter -Fresh
         $wrote = Test-Path -LiteralPath $env:DEEPOS_TEST_FLASH_MARKER
-        if ($script:case -in @('clear-error', 'old-layout', 'python-error')) { $expectedClears = 1 }
+        if ($script:case -in @('clear-error', 'old-layout', 'python-error', 'empty-gpt')) { $expectedClears = 1 }
         else { $expectedClears = 0 }
         if ($script:clears -ne $expectedClears) { throw "Wrong number of clear calls for $($script:case)" }
         if ($script:sourceUnlocked) { throw 'Source allowed writes after verification' }
-        if ($script:case -eq 'python-error') {
+        if ($script:case -in @('python-error', 'empty-gpt', 'already-empty')) {
             if ($code -ne 23 -or -not $wrote) { throw "Expected child error 23, got $code" }
             $lines = Get-Content -LiteralPath $log
             if (($lines -match 'simulated failure').Count -ne 1 -or ($lines -match 'DONE').Count) {

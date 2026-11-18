@@ -180,7 +180,7 @@ def _require_blank_disk(handle, disk_size):
         raise OSError("prepare: raw handle capacity differs from the selected disk")
     layout = _device_ioctl(handle, 0x70050, 4096)  # IOCTL_DISK_GET_DRIVE_LAYOUT_EX
     style, count = struct.unpack_from("<II", layout)
-    if count != 0 or style not in (0, 2):  # Empty MBR or RAW
+    if count != 0 or style not in (0, 1, 2):
         raise OSError(f"prepare: expected a blank raw disk, layout={style} partitions={count}")
 
 
@@ -227,7 +227,7 @@ def _checked_disk(number, disk_path, disk_size, disk_serial):
             or disk.get("IsSystem") is not False or disk.get("IsReadOnly") is not False
             or disk.get("IsOffline") is not False or disk.get("LogicalSectorSize") != SECTOR):
         raise SystemExit("dpflash: disk identity or sector size changed before opening")
-    if disk.get("Style") not in ("RAW", "MBR") or disk.get("NumberOfPartitions") != 0:
+    if disk.get("Style") not in ("RAW", "MBR", "GPT") or disk.get("NumberOfPartitions") != 0:
         raise SystemExit("dpflash: Windows still reports a partition layout on the disk")
     return path
 
