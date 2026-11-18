@@ -10,6 +10,7 @@
 #include "dp_canvas.h"
 #include "dp_display.h"
 #include "dp_input.h"
+#include "dp_config.h"
 #include "dp_modc.h"
 #include "dp_model.h"
 #include "dp_theme.h"
@@ -31,7 +32,12 @@ static void usage(void)
          "  --keys LIST       apply synthetic keys (comma separated, for tests)\n"
          "  --print-state     print navigation state instead of rendering\n"
          "  --list            list available screens\n"
-         "  --selftest       print the device environment and exit\n"
+         "  --config PATH     settings file (default /data/config/settings.toml)\n"
+         "  --set KEY=VAL     change one setting and save it (brightness/volume/profile)\n"
+         "  --print-config    print the effective settings and exit\n"
+         "  --apply           write settings to sysfs/profile file\n"
+         "  --sysfs PREFIX    sysfs root for --apply (tests, default empty)\n"
+         "  --selftest        print the device environment and exit\n"
         "  --list-roms       list detected ROM systems with game counts\n");
 }
 
@@ -422,6 +428,11 @@ int main(int argc, char **argv)
     const char *run_game = NULL;
     const char *emulators_path = "/data/emulators.toml";
     int save_slot = -1;
+    const char *config_path = "/data/config/settings.toml";
+    const char *sysfs_prefix = "";
+    const char *set_kv = NULL;
+    int print_config = 0;
+    int do_apply = 0;
 
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
@@ -445,6 +456,11 @@ int main(int argc, char **argv)
         else if (strcmp(a, "--run-game") == 0) run_game = NEED_ARG();
         else if (strcmp(a, "--emulators") == 0) emulators_path = NEED_ARG();
         else if (strcmp(a, "--save-slot") == 0) save_slot = atoi(NEED_ARG());
+        else if (strcmp(a, "--config") == 0) config_path = NEED_ARG();
+        else if (strcmp(a, "--sysfs") == 0) sysfs_prefix = NEED_ARG();
+        else if (strcmp(a, "--set") == 0) set_kv = NEED_ARG();
+        else if (strcmp(a, "--print-config") == 0) print_config = 1;
+        else if (strcmp(a, "--apply") == 0) do_apply = 1;
         else if (strcmp(a, "--list") == 0) {
             for (int s = 0; s < DP_SCR_COUNT; s++)
                 printf("%s\n", dp_screen_id((enum dp_screen)s));
@@ -472,6 +488,38 @@ int main(int argc, char **argv)
             return 2;
         }
         #undef NEED_ARG
+    }
+
+    if (set_kv || print_config || do_apply) {
+        struct dp_config cfg;
+        char line[128];
+        dp_config_init(&cfg);
+        dp_config_load(&cfg, config_path);
+        if (set_kv) {
+            int rc = dp_config_set(&cfg, set_kv);
+            if (rc < 0) {
+                fprintf(stderr, "launcher: bad value in '%s'\n", set_kv);
+                return 2;
+            }
+            if (rc == 0) {
+                fprintf(stderr, "launcher: unknown setting in '%s'\n", set_kv);
+                return 2;
+            }
+            if (dp_config_save(&cfg, config_path) != 0) {
+                fprintf(stderr, "launcher: cannot save %s\n", config_path);
+                return 1;
+            }
+        }
+        if (do_apply) {
+            char profile_path[512];
+            int n;
+            snprintf(profile_path, sizeof(profile_path), "%s/cpu-profile", data);
+            n = dp_config_apply(&cfg, sysfs_prefix, profile_path);
+            printf("applied=%d\n", n);
+        }
+        dp_config_format(&cfg, line, (int)sizeof(line));
+        printf("config %s\n", line);
+        return 0;
     }
 
     int scr = dp_screen_from_id(screen);

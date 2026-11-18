@@ -6,6 +6,7 @@
 
 | Слой | Что именно | Чем проверено |
 |---|---|---|
+| Настройки (яркость/звук/профиль) | сохраняются в `/data/config/settings.toml`, применяются в sysfs без композитора | `tests/config_test.py` |
 | Загрузчик | вендорский `idbloader.img` + `u-boot.itb` (RK3326), раскладка 32 KiB / 8 MiB | `tests/image_test.py` (loader placement) |
 | Ядро/DTB | кросс-сборка 6.12.56, DTB 46 564 B, `linux.config` 115 символов | `tests/board_test.py`, `tools/kconfig-check.sh` |
 | BOOT | `KERNEL`, `dtbs/`, `extlinux.conf`, `logo.bmp`, `MANIFEST.json` | `tests/boot_test.py` |

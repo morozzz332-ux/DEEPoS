@@ -458,3 +458,25 @@
 - Следующий шаг: этап 2 — записать образ на карту (`tools/dpflash.py`) и проверить первый
   буст на устройстве.
 
+## 2026-11-18 · P8 (настройки: сохранение и применение без композитора)
+
+- Новый модуль `apps/launcher/src/dp_config.{h,c}`: настройки в
+  `/data/config/settings.toml` (`brightness`, `volume`, `profile`), разбор `key = value`
+  с комментариями `#`, запись атомарная (`tmp` -> `fsync` -> `rename`), кривые значения
+  отвергаются, битая строка не роняет чтение остальных.
+- Применение без композитора: яркость пишется прямо в sysfs backlight
+  (`backlight/deepos-bl|backlight|pwm-backlight`), профиль CPU — в `<data>/cpu-profile`
+  (его читает `cpu-profile.sh` на Arch-R; в DEEPoS тему подхватывает будущий
+  `thermal`-модуль). Нет sysfs-узла — просто ничего не трогаем.
+- CLI лаунчера: `--config`, `--set KEY=VAL`, `--print-config`, `--apply`, `--sysfs PREFIX`.
+  По умолчанию настроек нет и устройство не трогается (`brightness=0`, `volume=0`).
+- `tests/config_test.py` — 18 проверок: дефолты без файла, сохранение и загрузка трёх
+  ключей, отказ на `brightness=150`/`profile=turbo`/неизвестный ключ (rc 2, файл не
+  меняется), `--apply` пишет backlight (40 % -> 18 из 45) и профиль, битый файл
+  терпится (`brightness = abc` отбрасывается, остальные ключи живы).
+- `tests/run-all.sh` — 14 наборов; `make config-test`. Все наборы PASS.
+- Образ пересобран: rootfs 2 113 536 B, BOOT-дерево `0.6-dev`, образ
+  `build/deepos-r36s-v20.img` 4 294 967 296 B,
+  sha256 `505f1c6b9a620542e72e173a9528fcae4988deeeb4dd43bed960af7b67eda518`,
+  `PASS verify-image: 39 checks`.
+

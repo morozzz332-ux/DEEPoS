@@ -58,3 +58,7 @@
 | image (0.5-dev) | `build/deepos-r36s-v20.img` 4 294 967 296 B, sha256 `6cf5a8be2ab34f037763a49a152525662b5974f7355347e61304a4fc9166ecf7` | ok |
 | тестовые наборы | 13 | PASS |
 
+| P8 config (host) | `tests/config_test.py` | 18 проверок: дефолты, save/load, отказы, sysfs apply, битый файл | PASS |
+| образ (0.6-dev) | `build/deepos-r36s-v20.img` 4 294 967 296 B, sha256 `505f1c6b9a620542e72e173a9528fcae4988deeeb4dd43bed960af7b67eda518` | ok |
+| наборы тестов | 14 | PASS |
+
