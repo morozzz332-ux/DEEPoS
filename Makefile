@@ -77,6 +77,9 @@ docker-test: docker-image
 launcher-mod-test: docker-image
 	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "make -C apps/launcher make -C apps/modd && python3 tests/launcher_mod_test.py"
 
+display-test: docker-image
+	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "make -C apps/launcher && python3 tests/display_test.py"
+
 input-test: docker-image
 	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "make -C apps/launcher && python3 tests/input_test.py && python3 tests/launcher_mod_test.py"
 

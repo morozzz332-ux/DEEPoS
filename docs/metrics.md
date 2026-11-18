@@ -29,3 +29,4 @@
 | P6 updatr | host build | 21 checks PASS, A/B + install |
 | P4 input | host | 17 checks PASS, evdev-независимая навигация |
 | P4 launcher↔modd | host | 6 checks PASS, живой список модулей |
+| P4 display | host | 8 checks PASS, RGB565 blit = PPM |

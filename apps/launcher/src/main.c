@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "dp_canvas.h"
+#include "dp_display.h"
 #include "dp_input.h"
 #include "dp_modc.h"
 #include "dp_model.h"
@@ -170,6 +171,7 @@ int main(int argc, char **argv)
     int print_state = 0;
     const char *mods_socket = "/run/modd.sock";
     int print_modules = 0;
+    const char *fb_path = NULL;
 
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
@@ -188,6 +190,7 @@ int main(int argc, char **argv)
         else if (strcmp(a, "--print-state") == 0) print_state = 1;
         else if (strcmp(a, "--modules-socket") == 0) mods_socket = NEED_ARG();
         else if (strcmp(a, "--print-modules") == 0) print_modules = 1;
+        else if (strcmp(a, "--fb") == 0) fb_path = NEED_ARG();
         else if (strcmp(a, "--list") == 0) {
             for (int s = 0; s < DP_SCR_COUNT; s++)
                 printf("%s\n", dp_screen_id((enum dp_screen)s));
@@ -272,7 +275,7 @@ int main(int argc, char **argv)
         }
     }
 
-    if (print_state || (keys && !out)) {
+    if (print_state || (keys && !out && !fb_path)) {
         nav_print(&nav);
         dp_canvas_free(&cv);
         dp_model_free(m);
@@ -285,7 +288,23 @@ int main(int argc, char **argv)
     if (out && write_ppm(out, &cv) != 0) {
         fprintf(stderr, "launcher: cannot write %s\n", out);
         rc = 1;
-    } else if (!out) {
+    }
+
+    struct dp_display disp;
+    int have_disp = dp_display_open(&disp, fb_path) == 0;
+    if ((fb_path || !out) && !have_disp) {
+        fprintf(stderr, "launcher: no display (%s)\n", fb_path ? fb_path : "/dev/fb0");
+        if (fb_path)
+            rc = 1;
+    }
+    if (have_disp) {
+        if (dp_display_present(&disp, &cv) != 0) {
+            fprintf(stderr, "launcher: cannot present the frame\n");
+            rc = 1;
+        }
+    }
+
+    if (!out && !fb_path) {
         struct dp_input in;
         if (dp_input_open(&in) == 0) {
             while (!quit) {
@@ -294,13 +313,17 @@ int main(int argc, char **argv)
                     continue;
                 quit = nav_key(&nav, m, k);
                 dp_ui_paint(&cv, m, (enum dp_screen)tab_screen(&nav), nav.system, nav.sel);
+                if (have_disp)
+                    dp_display_present(&disp, &cv);
             }
             dp_input_close(&in);
-        } else {
+        } else if (!have_disp) {
             printf("screen=%s systems=%d games=%u continue=%d\n",
                    dp_screen_id((enum dp_screen)scr), m->nsys, m->total_games, m->ncont);
         }
     }
+    if (have_disp)
+        dp_display_close(&disp);
 
     dp_canvas_free(&cv);
     dp_model_free(m);
