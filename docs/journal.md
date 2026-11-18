@@ -125,3 +125,9 @@
 - `tests/board_test.py` (306 мс) — препроцессинг DTS, компиляция dtc, проверка ключевых биндингов (панель, GPIO-кнопки, стики, PMIC, гейдж, звук, 3500 мА·ч, reset GPIO3_B7), конфликтов в фрагменте ядра и его «бloat-списка», апплетов BusyBox, строк extlinux и работоспособности сборщика rootfs (включая отказ на неполном дереве). Настоящая сборка DTB идёт в дереве ядра — тест использует стаб `tests/fixtures/dts/rk3326.dtsi`.
 - Makefile/CI: цель `make board-test`, шестой набор в `docker-test`, шаг «Test board layer» в CI; `.gitignore` дополнен `.tmp/`.
 - Ограничение MVP: у платы нет линии card-detect, поэтому `broken-cd` (карта опрашивается); вендорные `adc-keys`-таблицы для стиков заменены mainline `adc-joystick` (ось Y не инвертируется в DTS — инверсия в лаунчере/эмуляторе).
+## 2026-11-18 · P6/P7 (BOOT-дерево и A/B-переключение слотов)
+
+- `tools/mkboot.py` — собирает содержимое FAT32-раздела BOOT: `KERNEL` (arm64 Image), `dtbs/rk3326-r36s-v20.dtb`, `extlinux/extlinux.conf` (проверяет `LABEL DEEPoS` / `LINUX /KERNEL` / `FDT /dtbs/...`), опционально `logo.bmp` и `MANIFEST.json` с sha256 и размерами всех файлов. Меньше 1 МиБ ядром не считается — ранняя ошибка вместо «тихого» кирпича.
+- `tools/update.py` — состояние A/B на разделе DATA (`boot.json`): `slot`, `attempts`, `rollback`, `generation`. Три попытки загрузки — четвёртая переключает слот и поднимает `rollback`; `good` (вызывается, когда лаунчер поднялся) сбрасывает попытки; `switch` двигает слот явно. Запись атомарная (tmp → fsync → rename), битый JSON честно сообщается.
+- `tests/boot_test.py` (19 проверок) — раскладка BOOT-дерева и манифест, отказ на маленьком ядре и неправильном extlinux, дефолтный слот A, rollback после трёх неудачных загрузок, сброс через `good`, битое состояние.
+- Makefile/CI: `make boot-test`, седьмой набор в `docker-test`, шаг «Test BOOT tree and A/B boot state» в CI.

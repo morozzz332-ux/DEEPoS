@@ -44,6 +44,8 @@ jobs:
         run: python3 tests/image_test.py
       - name: Test board layer (dtb, configs, rootfs builder)
         run: python3 tests/board_test.py
+      - name: Test BOOT tree and A/B boot state
+        run: python3 tests/boot_test.py
       - name: Secret scan
         shell: pwsh
         run: ./tools/check-secrets.ps1
