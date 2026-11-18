@@ -27,3 +27,4 @@
 | P0 uboot | vendor next-dev | idbloader 113 194 B, itb 1 304 064 B |
 | P3 image-full | 4096 MiB + loader | 4 311 744 512 B, sha256 cabbf277… |
 | P6 updatr | host build | 21 checks PASS, A/B + install |
+| P4 input | host | 17 checks PASS, evdev-независимая навигация |

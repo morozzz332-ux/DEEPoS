@@ -1,7 +1,7 @@
 # DEEPoS launcher - host build (the device build uses the same sources via
 # board/r36s-v20 recipes; here we only need a native binary for tests).
 CC ?= cc
-CFLAGS ?= -O2 -std=c11 -Wall -Wextra -Werror -pedantic
+CFLAGS ?= -O2 -std=c11 -Wall -Wextra -Werror -pedantic -D_GNU_SOURCE
 LDFLAGS ?=
 SRC := $(wildcard src/*.c)
 OBJ := $(SRC:.c=.o)

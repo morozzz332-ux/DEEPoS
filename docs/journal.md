@@ -226,3 +226,26 @@
 - Проводка: `make updatr`, `make updatr-test`, `docker-test` гоняет 8 наборов,
   `board_test` требует `apps/updatr/updatr` в staging.
 - Итог: rootfs 2 097 152 B (с `updatr`), образ пересобран, все 8 наборов зелёные.
+
+## 2026-11-18 · P4 (ввод и навигация лаунчера)
+
+- `apps/launcher/src/dp_input.{h,c}`: evdev-бэкенд без `<linux/input.h>` (в musl-образе
+  нет kernel headers, поэтому константы ABI объявлены локально), перебор
+  `/dev/input/event0..31`, `EVIOCGNAME`, предпочтение устройствам с `r36s`/`deepos`/
+  `gamepad`/`gpio-keys` в имени; маппинг `BTN_SOUTH→A`, `BTN_EAST→B`, `BTN_NORTH→X`,
+  `BTN_WEST→Y`, `BTN_TL/TR→L1/R1`, `KEY_UP/DOWN/LEFT/RIGHT`, `KEY_ENTER→A`,
+  `KEY_ESC→B`, `KEY_SELECT`, `KEY_START`.
+- Навигация в `main.c`: 6 вкладок (continue, games, settings, modules, files, info),
+  игры двухуровневые (список систем → список игр), `B` возвращает на уровень выше,
+  `LEFT/RIGHT` листают вкладки с заворачиванием, `UP/DOWN` двигают курсор с упором
+  в границы, `quit` завершает цикл.
+- CLI для host-тестов: `--keys "RIGHT,DOWN,A"` (синтетические нажатия) и
+  `--print-state` (`screen=<id> level=<n> sel=<n> system=<n>`); без `--keys` и без
+  `--out` лаунчер открывает evdev и работает интерактивно.
+- `tests/input_test.py` — 17 проверок: дефолтное состояние, курсор и его границы,
+  переключение вкладок в обе стороны с заворачиванием, вход в систему/игры и возврат,
+  размер списка игр, отказ на неизвестную клавишу (`rc=2`), `quit`, а также кадр,
+  отрисованный после синтетических нажатий.
+- Сборка: в `apps/launcher/Makefile` добавлен `-D_GNU_SOURCE` (иначе `strcasecmp`/
+  `strcasestr` скрыты при `-std=c11 -Werror`), запрос `EVIOCGNAME` приводится к `int`.
+- `make input-test`, `docker-test` и `build/run-tests.sh` теперь гоняют 9 наборов.
