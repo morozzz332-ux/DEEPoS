@@ -59,4 +59,10 @@ fi
 
 # 7. Quiet kernel console: the splash screen owns the panel.
 echo 0 > /proc/sys/kernel/printk 2>/dev/null || true
+
+# 8. Report readiness for the serial console. The UI itself is started by init
+#    from /etc/inittab (::respawn) so a crashed launcher comes back by itself.
+st=missing; is_mounted /storage && st=ok
+dt=missing; is_mounted /data && dt=ok
+echo "DEEPoS: storage=$st data=$dt"
 exit 0

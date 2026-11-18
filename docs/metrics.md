@@ -68,3 +68,6 @@
 | P0 rcS (host) | `tests/board_test.py` | 13 проверок: best-effort mounts, mount_part, /data/config, guard A/B, sh -n | PASS |
 | образ (0.8-dev) | 4 294 967 296 B, sha256 `bf04b4dbf32d3d9bcfabaa41ab71f179c0a36916bbb02ddd9af5eedc1f16b6c5` | ok |
 
+| P0 handover (host) | `tests/board_test.py` | 8 проверок: readiness-строка, respawn лаунчера, overlay, exec-бит | PASS |
+| образ (0.9-dev) | 4 294 967 296 B, sha256 `95227b2595af00cc7ba07359f8edc360cd3a2c856505f6b743f1a83f85c51429` | ok |
+

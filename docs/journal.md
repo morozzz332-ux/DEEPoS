@@ -522,3 +522,17 @@
   sha256 `bf04b4dbf32d3d9bcfabaa41ab71f179c0a36916bbb02ddd9af5eedc1f16b6c5`,
   `PASS verify-image: 39 checks`.
 
+## 2026-11-18 · P0 (передача управления UI и проверка готовности)
+
+- `rcS` теперь в конце печатает готовность окружения для серийной консоли:
+  `DEEPoS: storage=ok|missing data=ok|missing` (по факту `/proc/mounts`), после чего `exit 0`.
+- UI запускается штатно инициативой из `/etc/inittab` (`::respawn:/usr/bin/launcher`),
+  поэтому упавший лаунчер поднимается сам, без init-системы и без сторожевого демона.
+- `tests/board_test.py`: новая группа `test_boot_handover()` — 8 проверок: readiness-строка,
+  запуск лаунчера из inittab, `::sysinit` для `rcS`, `::shutdown`, наличие overlay-файлов
+  (`etc/init.d/rcS`, `etc/inittab`, `etc/os-release`) и бит исполнения на `rcS`.
+- Все 14 наборов PASS. Образ пересобран: BOOT `0.9-dev`,
+  `build/deepos-r36s-v20.img` 4 294 967 296 B,
+  sha256 `95227b2595af00cc7ba07359f8edc360cd3a2c856505f6b743f1a83f85c51429`,
+  `PASS verify-image: 39 checks`.
+

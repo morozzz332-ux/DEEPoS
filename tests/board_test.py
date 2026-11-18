@@ -215,6 +215,21 @@ def test_rcs_robustness():
     check("rcS parses as POSIX sh", pat.returncode == 0, pat.stderr)
 
 
+def test_boot_handover():
+    """rcS reports readiness and init respawns the launcher in the foreground."""
+    rc = (ROOT / "board/r36s-v20/rootfs-overlay/etc/init.d/rcS").read_text(encoding="utf-8")
+    init = (ROOT / "board/r36s-v20/rootfs-overlay/etc/inittab").read_text(encoding="utf-8")
+    check("rcS reports storage/data readiness", "DEEPoS: storage=" in rc)
+    check("inittab starts the launcher", "::respawn:/usr/bin/launcher" in init)
+    check("inittab boots via rcS", "::sysinit:/etc/init.d/rcS" in init)
+    check("inittab umounts on shutdown", "::shutdown:" in init)
+    for rel in ("etc/init.d/rcS", "etc/inittab", "etc/os-release"):
+        p = ROOT / "board/r36s-v20/rootfs-overlay" / rel
+        check(f"overlay has {rel}", p.exists())
+    rc_mode = (ROOT / "board/r36s-v20/rootfs-overlay/etc/init.d/rcS").stat().st_mode
+    check("rcS is executable", bool(rc_mode & 0o111), oct(rc_mode))
+
+
 def test_emulators_config():
     path = ROOT / "board" / "r36s-v20" / "data" / "emulators.toml"
     if not path.exists():
@@ -255,12 +270,13 @@ def main():
     test_emulators_config()
     test_partition_mounts()
     test_rcs_robustness()
+    test_boot_handover()
     test_rcs_order()
     print()
     if fails:
         print("FAIL  board: " + ", ".join(fails))
         return 1
-    print("PASS  board: dtb, kernel config, busybox config, extlinux, mounts, rcs order, emulators, rootfs builder")
+    print("PASS  board: dtb, kernel config, busybox config, extlinux, mounts, handover, rcs order, emulators, rootfs builder")
     return 0
 
 
