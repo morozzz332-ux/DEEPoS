@@ -8,7 +8,7 @@ CROSS_IMAGE ?= deepos-cross:local
 PYTHON ?= python3
 KARCH  ?= linux-6.12.56
 
-.PHONY: help fonts launcher modd saved updatr updatr render test modd-test saved-test modules-test image-test board-test boot-test kconfig-check docker-image docker-cross docker-test kernel uboot image-full image clean
+.PHONY: help fonts launcher modd saved updatr updatr render test modd-test saved-test launch-test modules-test image-test board-test boot-test kconfig-check docker-image docker-cross docker-test kernel uboot image-full image clean
 
 help:
 	@echo "make fonts        - regenerate bitmap fonts from tools/fonts/DejaVuSansMono.ttf"
@@ -20,6 +20,7 @@ help:
 	@echo "make modd-test    - build + run the module supervisor tests"
 	@echo "make saved-test   - build + run the save-store tests"
 	@echo "make modules-test - run thermal/saves module protocol tests (docker)"
+	@echo "make launch-test  - launcher -> modd hook -> emulator pipeline"
 	@echo "make image-test   - build a small test image and check GPT + filesystems"
 	@echo "make image        - build a full card image into build/"
 	@echo "make docker-image - build the reproducible toolchain image"
@@ -77,6 +78,9 @@ docker-test: docker-image
 launcher-mod-test: docker-image
 	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "make -C apps/launcher make -C apps/modd && python3 tests/launcher_mod_test.py"
 
+launch-test: docker-image
+	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "make -C apps/launcher && make -C apps/modd && python3 tests/launch_test.py && python3 tests/modd_test.py"
+
 display-test: docker-image
 	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "make -C apps/launcher && python3 tests/display_test.py"
 
@@ -102,7 +106,7 @@ uboot: docker-cross
 	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(CROSS_IMAGE) -c "sh tools/build-uboot.sh"
 
 image: docker-image
-	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "python3 tools/mkimage.py --out build/deepos-r36s-v20.img --size-mib $(SIZE_MIB) --boot build/boot --sys-a build/rootfs.squashfs --data build/data"
+	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "mkdir -p build/data && cp board/r36s-v20/data/emulators.toml build/data/emulators.toml && python3 tools/mkimage.py --out build/deepos-r36s-v20.img --size-mib $(SIZE_MIB) --boot build/boot --sys-a build/rootfs.squashfs --data build/data"
 
 # Full image: real kernel + DTB (build/kernel), boot chain (build/uboot) and the
 # staged BOOT tree. Fails loudly when a piece is missing instead of silently
@@ -110,7 +114,7 @@ image: docker-image
 image-full: docker-image
 	@test -f build/kernel/Image || (echo "missing build/kernel/Image - run 'make kernel' first" >&2; exit 1)
 	@test -f build/uboot/idbloader.img || (echo "missing build/uboot/idbloader.img - run 'make uboot' first" >&2; exit 1)
-	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "python3 tools/mkimage.py --out build/deepos-r36s-v20.img --size-mib $(SIZE_MIB) --boot build/boot --sys-a build/rootfs.squashfs --data build/data --loader build/uboot"
+	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "mkdir -p build/data && cp board/r36s-v20/data/emulators.toml build/data/emulators.toml && python3 tools/mkimage.py --out build/deepos-r36s-v20.img --size-mib $(SIZE_MIB) --boot build/boot --sys-a build/rootfs.squashfs --data build/data --loader build/uboot"
 
 clean:
 	$(MAKE) -C apps/launcher clean

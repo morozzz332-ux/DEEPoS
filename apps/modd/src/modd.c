@@ -4,6 +4,7 @@
  *   {"id":1,"method":"status"}
  *   {"id":2,"method":"initialize","params":{"module":"thermal"}}
  *   {"id":3,"method":"action.invoke","params":{"module":"thermal","action":"eco"}}
+ *   {"id":5,"method":"launch.before","params":{"system":"md","rom":"g0.md"}}
  *   {"id":4,"method":"shutdown"}
  * Replies: {"id":N,"result":{...}} or {"id":N,"error":{"message":"..."}}.
  *
@@ -160,6 +161,35 @@ static void handle_request(char *line, char *out, size_t out_n)
     if (!strcmp(method, "shutdown")) {
         snprintf(out, out_n, "{\"jsonrpc\":\"2.0\",\"id\":%ld,\"result\":{\"stopped\":true}}", id);
         g_running = 0;
+        return;
+    }
+    if (!strcmp(method, "launch.before")) {
+        const char *p = strstr(line, "\"params\"");
+        char sys[32] = "", rom[256] = "";
+        char params[512];
+        int allow = 1, asked = 0;
+        if (p) {
+            dp_json_get_str(p, "system", sys, sizeof(sys));
+            dp_json_get_str(p, "rom", rom, sizeof(rom));
+        }
+        snprintf(params, sizeof(params), "{\"system\":\"%s\",\"rom\":\"%s\"}", sys, rom);
+        for (int i = 0; i < g_nmods; i++) {
+            struct dp_module *m = &g_mods[i];
+            char reply[MODD_MAX_LINE];
+            if (m->state == MODD_DISABLED)
+                continue;
+            if (bring_up(m) != 0)
+                continue;
+            if (dp_module_request(m, "launch.before", params, action_timeout_ms(), reply,
+                                  sizeof(reply)) == 0) {
+                asked++;
+                if (strstr(reply, "\"decision\":\"deny\""))
+                    allow = 0;
+            }
+        }
+        snprintf(out, out_n,
+                 "{\"jsonrpc\":\"2.0\",\"id\":%ld,\"result\":{\"allow\":%s,\"asked\":%d}}",
+                 id, allow ? "true" : "false", asked);
         return;
     }
     if (dp_json_get_str(line, "module", module_id, sizeof(module_id)) == 0) {

@@ -18,6 +18,12 @@ int dp_modc_status(const char *socket_path, struct dp_model *m);
  * supervisor accepted it, -1 when the call failed or modd reported an error. */
 int dp_modc_action(const char *socket_path, const char *module_id, const char *action);
 
+/* Asks every module for its launch decision. Returns 0 when the call went
+ * through (allow is 1 or 0), -1 when the supervisor is unreachable (allow
+ * stays 1: modules are advisory, they must not block play when absent). */
+int dp_modc_launch(const char *socket_path, const char *system, const char *rom,
+                   int *allow);
+
 int dp_modc_call(const char *socket_path, const char *method, const char *params,
                  char *out, size_t out_len);
 

@@ -1,0 +1,18 @@
+# DEEPoS emulator commands.
+#
+# Every line maps a system id (the folder name under /storage/roms) to the
+# command that starts a game for it. %ROM% is replaced with the full path of
+# the selected ROM; the launcher waits for the process and returns to the list.
+#
+# The 0.1 prototype does not ship emulators yet: the default below documents the
+# expected shape and works as soon as RetroArch plus a core are installed, e.g.
+#   mkdir -p /data/emus && cp retroarch /data/emus/ &&
+#   cp genesis_plus_gx_libretro.so /data/emus/cores/
+# Without a mapping the launcher prints a clear error and exits (code 5).
+md = "/data/emus/retroarch -L /data/emus/cores/genesis_plus_gx_libretro.so %ROM%"
+snes = "/data/emus/retroarch -L /data/emus/cores/snes9x_libretro.so %ROM%"
+psx = "/data/emus/retroarch -L /data/emus/cores/swanstation_libretro.so %ROM%"
+gb = "/data/emus/retroarch -L /data/emus/cores/gambatte_libretro.so %ROM%"
+gba = "/data/emus/retroarch -L /data/emus/cores/mgba_libretro.so %ROM%"
+nes = "/data/emus/retroarch -L /data/emus/cores/mesen_libretro.so %ROM%"
+n64 = "/data/emus/retroarch -L /data/emus/cores/mupen64plus_next_libretro.so %ROM%"

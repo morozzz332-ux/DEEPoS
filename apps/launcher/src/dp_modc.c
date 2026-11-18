@@ -129,6 +129,22 @@ int dp_modc_action(const char *socket_path, const char *module_id, const char *a
     return strstr(payload, "\"ok\":true") ? 0 : -1;
 }
 
+int dp_modc_launch(const char *socket_path, const char *system, const char *rom,
+                   int *allow)
+{
+    char params[512];
+    char payload[MODC_MAX_LINE];
+    int n = snprintf(params, sizeof(params),
+                     "{\"system\":\"%s\",\"rom\":\"%s\"}", system, rom);
+    if (n <= 0 || n >= (int)sizeof(params))
+        return -1;
+    if (dp_modc_call(socket_path, "launch.before", params, payload, sizeof(payload)) != 0)
+        return -1;
+    if (allow)
+        *allow = strstr(payload, "\"allow\":false") ? 0 : 1;
+    return 0;
+}
+
 int dp_modc_status(const char *socket_path, struct dp_model *m)
 {
     char payload[MODC_MAX_LINE];

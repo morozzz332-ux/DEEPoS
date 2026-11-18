@@ -1,5 +1,7 @@
 /* DEEPoS launcher - prototype entry point (renders one screen to a PPM file). */
 #include <stdio.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -156,6 +158,80 @@ static int write_ppm(const char *path, const struct dp_canvas *cv)
     return fclose(f) == 0 ? 0 : -1;
 }
 
+
+/* ---- game launch: module hook + emulator command from emulators.toml ---- */
+
+struct dp_launch_cfg {
+    char cmd[512];
+};
+
+static int parse_emulators(const char *path, const char *system, struct dp_launch_cfg *cfg) {
+    FILE *f = fopen(path, "r");
+    char line[600];
+    if (!f)
+        return -1;
+    while (fgets(line, sizeof(line), f)) {
+        char *eq = strchr(line, '=');
+        char *key = line;
+        char *val;
+        char *end;
+        size_t klen;
+        if (!eq)
+            continue;
+        *eq = '\0';
+        val = eq + 1;
+        while (*key == ' ' || *key == '\t')
+            key++;
+        klen = strlen(key);
+        while (klen > 0 && (key[klen - 1] == ' ' || key[klen - 1] == '\t'))
+            key[--klen] = '\0';
+        while (*val == ' ' || *val == '\t')
+            val++;
+        end = val + strlen(val);
+        while (end > val && (end[-1] == '\n' || end[-1] == '\r' || end[-1] == ' '))
+            *--end = '\0';
+        if (*val == '"')
+            val++;
+        if (end > val && end[-1] == '"')
+            *--end = '\0';
+        if (strcmp(key, system) == 0) {
+            snprintf(cfg->cmd, sizeof(cfg->cmd), "%s", val);
+            fclose(f);
+            return 0;
+        }
+    }
+    fclose(f);
+    return 1;
+}
+
+static void expand_rom(const char *tmpl, const char *rom_path, char *out, size_t n) {
+    const char *tag = "%ROM%";
+    const char *at = strstr(tmpl, tag);
+    size_t head = at ? (size_t)(at - tmpl) : strlen(tmpl);
+    if (head >= n)
+        head = n - 1;
+    memcpy(out, tmpl, head);
+    out[head] = '\0';
+    if (at)
+        snprintf(out + head, n - head, "%s%s", rom_path, at + strlen(tag));
+}
+
+static int run_command(const char *cmd) {
+    pid_t pid = fork();
+    int status = 0;
+    if (pid < 0)
+        return -1;
+    if (pid == 0) {
+        execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+        _exit(127);
+    }
+    if (waitpid(pid, &status, 0) < 0)
+        return -1;
+    if (WIFEXITED(status))
+        return WEXITSTATUS(status);
+    return -1;
+}
+
 int main(int argc, char **argv)
 {
     const char *roms = "/storage/roms";
@@ -173,6 +249,8 @@ int main(int argc, char **argv)
     int print_modules = 0;
     const char *fb_path = NULL;
     const char *module_action = NULL;
+    const char *run_game = NULL;
+    const char *emulators_path = "/data/emulators.toml";
 
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
@@ -193,6 +271,8 @@ int main(int argc, char **argv)
         else if (strcmp(a, "--print-modules") == 0) print_modules = 1;
         else if (strcmp(a, "--fb") == 0) fb_path = NEED_ARG();
         else if (strcmp(a, "--module-action") == 0) module_action = NEED_ARG();
+        else if (strcmp(a, "--run-game") == 0) run_game = NEED_ARG();
+        else if (strcmp(a, "--emulators") == 0) emulators_path = NEED_ARG();
         else if (strcmp(a, "--list") == 0) {
             for (int s = 0; s < DP_SCR_COUNT; s++)
                 printf("%s\n", dp_screen_id((enum dp_screen)s));
@@ -234,6 +314,45 @@ int main(int argc, char **argv)
         fprintf(stderr, "launcher: cannot read ROMs at %s (empty library)\n", roms);
     dp_model_load_continue(m, data);
     dp_modc_status(mods_socket, m);
+
+    if (run_game) {
+        char spec[512];
+        char sys[32];
+        char rom[128];
+        char rom_path[1024];
+        char cmd[1200];
+        struct dp_launch_cfg cfg;
+        int allow = 1;
+        int child;
+        snprintf(spec, sizeof(spec), "%s", run_game);
+        char *colon = strchr(spec, ':');
+        if (!colon) {
+            fprintf(stderr, "launcher: --run-game needs SYSTEM:ROM\n");
+            dp_model_free(m);
+            return 2;
+        }
+        *colon = '\0';
+        snprintf(sys, sizeof(sys), "%s", spec);
+        snprintf(rom, sizeof(rom), "%s", colon + 1);
+
+        dp_modc_launch(mods_socket, sys, rom, &allow);
+        if (!allow) {
+            printf("blocked\t%s\t%s\n", sys, rom);
+            dp_model_free(m);
+            return 4;
+        }
+        if (parse_emulators(emulators_path, sys, &cfg) != 0) {
+            fprintf(stderr, "launcher: no emulator for '%s' in %s\n", sys, emulators_path);
+            dp_model_free(m);
+            return 5;
+        }
+        snprintf(rom_path, sizeof(rom_path), "%s/%s/%s", roms, sys, rom);
+        expand_rom(cfg.cmd, rom_path, cmd, sizeof(cmd));
+        child = run_command(cmd);
+        printf("launch\t%s\t%s\t%d\n", sys, rom, child);
+        dp_model_free(m);
+        return child == 0 ? 0 : 1;
+    }
 
     if (module_action) {
         char spec[128];

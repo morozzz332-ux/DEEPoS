@@ -94,8 +94,8 @@ def run() -> None:
             status = client.call("status")
             result = status.get("result", {})
             ids = sorted(m["id"] for m in result.get("modules", []))
-            check(ids == ["crash", "hang", "thermal"],
-                  f"status: modules {ids} != ['crash','hang','thermal']")
+            check(ids == ["crash", "hang", "hook", "thermal"],
+                  f"status: modules {ids} != ['crash','hang','hook','thermal']")
             check(result.get("version") == "0.1", "status: version mismatch")
 
             init = client.call("initialize", {"module": "thermal"})
@@ -130,6 +130,16 @@ def run() -> None:
                   f"crash module state {crash['state']} != disabled")
             check(crash["failures"] >= 3, f"crash failures {crash['failures']} < 3")
 
+            allow = client.call("launch.before", {"system": "md", "rom": "g0.md"})
+            allow_res = allow.get("result", {})
+            check(allow_res.get("allow") is True, f"launch.before allow: {allow}")
+            check(allow_res.get("asked", 0) >= 1,
+                  f"launch.before asked {allow_res.get('asked')} < 1")
+
+            deny = client.call("launch.before", {"system": "md", "rom": "blocked.md"})
+            check(deny.get("result", {}).get("allow") is False,
+                  f"launch.before must deny blocked rom: {deny}")
+
             bye = client.call("shutdown")
             check(bye.get("result", {}).get("stopped") is True, f"shutdown: {bye}")
             client.close()
@@ -152,7 +162,7 @@ def main() -> int:
         for f in failures:
             print("  -", f)
         return 1
-    print("PASS  modd: status, initialize, action.invoke, timeout, watchdog, shutdown")
+    print("PASS  modd: status, initialize, action.invoke, launch.before, timeout, watchdog, shutdown")
     return 0
 
 

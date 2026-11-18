@@ -1,0 +1,5 @@
+id = "hook"
+entry = "main.sh"
+runtime = "bash"
+memory_mb = 8
+enabled = true
