@@ -71,3 +71,6 @@
 | P0 handover (host) | `tests/board_test.py` | 8 проверок: readiness-строка, respawn лаунчера, overlay, exec-бит | PASS |
 | образ (0.9-dev) | 4 294 967 296 B, sha256 `95227b2595af00cc7ba07359f8edc360cd3a2c856505f6b743f1a83f85c51429` | ok |
 
+| P8 empty-state (host) | `tests/run.py` | подсказки на пустой библиотеке (systems/continue) | PASS |
+| образ (0.10-dev) | 4 294 967 296 B, sha256 `04e5df4738e8db991dd98aabab8c77d2c716d13036d5c0f845e47e90bb7a83bc` | ok |
+

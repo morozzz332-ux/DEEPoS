@@ -156,6 +156,17 @@ def run_tests(update: bool) -> None:
         check(help_run.returncode == 0, "--help: non-zero exit")
         check("--screen" in help_run.stdout, "--help: usage missing")
 
+        # Empty card: the UI must explain how to fill the library instead of
+        # drawing a blank page (first boot on a freshly flashed card).
+        empty = base / "roms-empty"
+        empty.mkdir()
+        for screen in ("systems", "continue"):
+            out = base / f"empty-{screen}.ppm"
+            render(empty, data, screen, out)
+            w, h, px = parse_ppm(out.read_bytes())
+            rows = ink_rows(px, w, 60, 260)
+            check(rows >= 6, f"{screen}: empty library shows no hint ({rows} rows)")
+
         bad = subprocess.run([str(LAUNCHER), "--roms", str(roms),
                               "--screen", "nope"],
                              capture_output=True, text=True)

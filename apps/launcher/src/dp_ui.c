@@ -210,15 +210,37 @@ static void dp_screen_continue(struct dp_canvas *cv, const struct dp_model *m)
         y += rh;
     }
 
+    if (m->ncont == 0) {
+        int y0 = DP_STATUS_H + DP_HEADER_H;
+        int cy = y0 + 70;
+        const char *h1 = "Нет недавних игр";
+        dp_text_small(cv, (DP_W - dp_text_small_w(h1, 1)) / 2, cy, h1, DP_COL_ACC, 1);
+        const char *h2 = "Запущенная игра появится здесь";
+        dp_text(cv, (DP_W - dp_text_w(h2, 1)) / 2, cy + 30, h2, DP_COL_FG2, 1);
+    }
+
     static const char *keys[] = { "A", "X", "SEL" };
     static const char *labels[] = { "Продолжить", "Без сейва", "Слот" };
     dp_hintbar(cv, keys, labels, 3, "B", "Назад");
 }
 
+static const char *dp_games_word(unsigned n)
+{
+    unsigned m100 = n % 100, m10 = n % 10;
+    if (m100 >= 11 && m100 <= 14)
+        return "игр";
+    if (m10 == 1)
+        return "игра";
+    if (m10 >= 2 && m10 <= 4)
+        return "игры";
+    return "игр";
+}
+
 static void dp_screen_systems(struct dp_canvas *cv, const struct dp_model *m)
 {
     char meta[64];
-    snprintf(meta, sizeof(meta), "%d систем · %u игры", m->nsys, m->total_games);
+    snprintf(meta, sizeof(meta), "%d систем · %u %s", m->nsys, m->total_games,
+             dp_games_word(m->total_games));
     dp_section(cv, "ИГРЫ / СИСТЕМЫ", meta);
 
     int y0 = DP_STATUS_H + DP_HEADER_H;
@@ -249,6 +271,23 @@ static void dp_screen_systems(struct dp_canvas *cv, const struct dp_model *m)
         snprintf(cnt, sizeof(cnt), "%u", m->systems[i].games);
         int cw = dp_text_small_w(cnt, 1);
         dp_text_small(cv, x + 300 - cw, y + 8, cnt, DP_COL_FG2, 1);
+    }
+
+    if (m->nsys == 0) {
+        /* Fresh card: explain how to fill the library instead of a blank page. */
+        static const char *hint[3] = {
+            "Библиотека пуста",
+            "Скопируйте папки систем на карту",
+            "ROM-раздел виден с ПК по USB",
+        };
+        int cy = y0 + 90;
+        for (int i = 0; i < 3; i++) {
+            int w = (i == 0) ? dp_text_small_w(hint[i], 1) : dp_text_w(hint[i], 1);
+            if (i == 0)
+                dp_text_small(cv, (DP_W - w) / 2, cy, hint[i], DP_COL_ACC, 1);
+            else
+                dp_text(cv, (DP_W - w) / 2, cy + i * 30, hint[i], DP_COL_FG2, 1);
+        }
     }
 
     static const char *keys[] = { "A", "Y" };
