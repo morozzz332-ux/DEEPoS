@@ -31,3 +31,4 @@
 | P4 launcher↔modd | host | 6 checks PASS, живой список модулей |
 | P4 display | host | 8 checks PASS, RGB565 blit = PPM |
 | P4b module action | host | launcher→modd→module, 2 checks |
+| P4 image | host | 4 311 744 512 B, sha256 e9a1d010… |

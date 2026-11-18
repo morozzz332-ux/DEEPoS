@@ -302,3 +302,16 @@
 - Сквозной тест: `launcher_mod_test.py` поднимает `modd` с фикстурами, дергает
   `thermal:eco` и проверяет строку в `$MODD_MODULE_DATA/actions.log`, затем
   `thermal` без действия → код 2. Всего 8 проверок в наборе.
+
+### Пересборка артефактов после fbdev
+
+- Ядро: `build/kernel/Image` 74 490 368 B, `kernel.config` sha256
+  `06daed84e9b8889bc564872ec26b0e64b1b15ce3841124309fb387366ea22d3a` — sha256 не
+  изменился, потому что `CONFIG_DRM_FBDEV_EMULATION=y` и так включён
+  (`DRM_ROCKCHIP` его выбирает); строка во фрагменте оставлена явно, чтобы
+  зависимость не потерялась при смене defconfig.
+- Userland: launcher/modd/saved/updatr статически (aarch64), rootfs
+  `build/rootfs.squashfs` 2 101 248 B, внутри `usr/bin/{launcher,modd,saved,updatr}`.
+- BOOT-дерево пересобрано (`MANIFEST.json` с sha256 каждого файла), образ:
+  `build/deepos-r36s-v20.img` 4 311 744 512 B,
+  sha256 `e9a1d0100c16ec0a1f602e0ce3b94c553c5594bce6914318d9f7e38a3b44f6ab`.

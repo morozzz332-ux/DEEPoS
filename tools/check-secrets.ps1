@@ -73,6 +73,11 @@ try {
             $lineNo++
             if ($line.Length -gt 4000) { continue }   # битые/минифицированные строки не разбираем
             foreach ($rule in $rules) {
+                # Published build hashes are not secrets: skip hex rules on
+                # lines that name them explicitly (sha256 / sha-256 / md5).
+                if ($rule.Name -like 'hex-token-*' -and $line -match '(?i)sha-?256|\bmd5\b') {
+                    continue
+                }
                 if ($line -match $rule.Rx) {
                     $problems.Add([pscustomobject]@{
                             File = $file; Line = $lineNo; Rule = $rule.Name
