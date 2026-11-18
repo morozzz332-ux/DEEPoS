@@ -32,3 +32,10 @@ fi
 
 echo 0 > /proc/sys/kernel/printk 2>/dev/null || true
 exit 0
+
+# A/B boot accounting: count this boot attempt and mark the slot good once
+# userspace has been running for a while (no init system, no watchdog daemon).
+if [ -x /usr/bin/updatr ] && [ -d /data ]; then
+    /usr/bin/updatr --state /data begin >/dev/null 2>&1 || true
+    ( sleep 20; /usr/bin/updatr --state /data good >/dev/null 2>&1 ) &
+fi

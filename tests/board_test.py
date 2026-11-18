@@ -156,7 +156,7 @@ def test_rootfs_builder():
     with tempfile.TemporaryDirectory() as tmp:
         stage = pathlib.Path(tmp) / "root"
         for rel in ["sbin/init", "bin/busybox", "apps/modd/modd", "apps/saved/saved",
-                    "apps/launcher/launcher", "etc/deepos/version"]:
+                    "apps/updatr/updatr", "apps/launcher/launcher", "etc/deepos/version"]:
             p = stage / rel
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text("#!/bin/sh\nexit 0\n")
@@ -171,7 +171,8 @@ def test_rootfs_builder():
             check("rootfs has squashfs magic", magic == b"hsqs", magic.hex())
             ls = run(["unsquashfs", "-l", str(out)]).stdout
             check("rootfs keeps busybox and init", "sbin/init" in ls and "bin/busybox" in ls)
-            check("rootfs keeps modd and saved", "apps/modd/modd" in ls and "apps/saved/saved" in ls)
+            check("rootfs keeps modd, saved and updatr",
+                  "apps/modd/modd" in ls and "apps/saved/saved" in ls and "apps/updatr/updatr" in ls)
 
         broken = pathlib.Path(tmp) / "broken"
         (broken / "sbin").mkdir(parents=True)

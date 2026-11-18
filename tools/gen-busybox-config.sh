@@ -46,9 +46,10 @@ for sym in \
     fi
 done
 
-# Keep the image lean: no cron, no syslog daemons, no kernel log reader.
+# Keep the image lean: no tc (does not build against 6.x headers), no cron/syslog.
 # DEEPoS logs to the kernel ring buffer and journald-less files only.
-for sym in CONFIG_CROND CONFIG_CRONTAB CONFIG_SYSLOGD CONFIG_KLOGD \
+for sym in CONFIG_TC CONFIG_FEATURE_TC_INGRESS \
+           CONFIG_CROND CONFIG_CRONTAB CONFIG_SYSLOGD CONFIG_KLOGD \
            CONFIG_LOGREAD CONFIG_FEATURE_IPC_SYSLOG CONFIG_FEATURE_KMSG_SYSLOG; do
     if grep -q "^${sym}=y" .config; then
         sed -i "s/^${sym}=y/# ${sym} is not set/" .config

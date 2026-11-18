@@ -209,3 +209,20 @@
 - Полный образ с загрузчиком: `build/deepos-r36s-v20.img` 4 311 744 512 B,
   sha256 `cabbf277…`; проверено: `RK33` по 32 KiB, FIT по 8 MiB (FDT 2617 B +
   1.3 MB данных), FAT32 `BOOT` по 16 MiB, `EFI PART` по LBA1.
+
+## 2026-11-18 · P6/P7 (updatr: A/B на устройстве без Python)
+
+- Новый `apps/updatr/src/updatr.c` — C-двойник `tools/update.py`: `status`,
+  `decide`, `begin`, `good`, `switch A|B` и `install --slot A|B --file IMG --dev TARGET`.
+  Состояние `boot.json` пишется атомарно (tmp → fsync → rename → fsync dir), битый
+  JSON не ломает запуск (значения падают в дефолт), коды возврата: 2 i/o, 3 аргументы,
+  4 цель меньше образа.
+- `tools/build-userland.sh` собирает `updatr` статически вместе с остальными;
+  rootfs-overlay `rcS` теперь делает `updatr begin` при старте и `updatr good`
+  через 20 с работы userspace (в образе нет init-системы/вотчдога).
+- `tests/updatr_test.py` — 21 проверка: дефолт слота A, три попытки держат слот,
+  четвёртая переключает и ставит `rollback`, `good` и `switch`, отказ на плохой слот,
+  установка образа в файл-заглушку, отказ на маленькую цель, терпимость к битому state.
+- Проводка: `make updatr`, `make updatr-test`, `docker-test` гоняет 8 наборов,
+  `board_test` требует `apps/updatr/updatr` в staging.
+- Итог: rootfs 2 097 152 B (с `updatr`), образ пересобран, все 8 наборов зелёные.

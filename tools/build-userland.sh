@@ -1,5 +1,5 @@
 #!/bin/sh
-# Cross-compile the DEEPoS aarch64 userland (launcher, modd, saved).
+# Cross-compile the DEEPoS aarch64 userland (launcher, modd, saved, updatr).
 #
 # Usage: build-userland.sh [--out DIR]
 #   --out DIR  copy the binaries into DIR (created if missing) and strip them
@@ -12,7 +12,7 @@ if [ "${1:-}" = "--out" ]; then
     OUT=$2
 fi
 
-APPS=${APPS:-launcher modd saved}
+APPS=${APPS:-launcher modd saved updatr}
 CROSS=${CROSS:-aarch64-linux-gnu-}
 REPO=${REPO:-$(cd "$(dirname "$0")/.." && pwd)}
 
