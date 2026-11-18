@@ -108,13 +108,51 @@ def main() -> int:
         (state / "boot.json").write_text("{not json", encoding="utf-8")
         out = run("--state", str(state), "status")
         check("corrupted state is tolerated", out.returncode == 0, out.stdout)
+            # --- bootloader side of A/B: extlinux.conf must follow the slot -------------
+        boot = tmp / "boot"
+        (boot / "extlinux").mkdir(parents=True)
+        conf = boot / "extlinux" / "extlinux.conf"
+        sample = (
+            "LABEL DEEPoS\n"
+            "LINUX /KERNEL\n"
+            "FDT /dtbs/rk3326-r36s-v20.dtb\n"
+            "APPEND root=LABEL=DEEPOS_A rootfstype=squashfs ro rootwait console=ttyS2,1500000n8\n"
+        )
+        conf.write_text(sample, encoding="utf-8")
+
+        run("--state", str(state), "--boot", str(boot), "switch", "B")
+        text = conf.read_text(encoding="utf-8")
+        check("extlinux points to B", "root=LABEL=DEEPOS_B" in text, text[:120])
+        check("extlinux keeps other lines", "LINUX /KERNEL" in text and "console=ttyS2" in text)
+        check("no temporary file", not (boot / "extlinux" / "extlinux.conf.tmp").exists())
+
+        run("--state", str(state), "--boot", str(boot), "switch", "A")
+        check("extlinux back to A", "root=LABEL=DEEPOS_A" in conf.read_text(encoding="utf-8"))
+
+        # 4th failed boot flips the slot and therefore the loader config too
+        run("--state", str(state), "switch", "A")
+        for _ in range(3):
+            run("--state", str(state), "begin")
+        before = conf.read_text(encoding="utf-8")
+        proc = run("--state", str(state), "--boot", str(boot), "begin")
+        after = conf.read_text(encoding="utf-8")
+        check("rollback switched the slot", '"slot": "B"' in proc.stdout, proc.stdout[-120:])
+        check("rollback rewrote extlinux", "root=LABEL=DEEPOS_B" in after and before != after)
+
+        # missing loader config: state is still saved, exit code is 2
+        proc = subprocess.run([str(BIN), "--state", str(state), "--boot", str(tmp / "noboot"),
+                               "switch", "A"], capture_output=True, text=True)
+        check("missing extlinux is an error", proc.returncode == 2, f"rc={proc.returncode}")
+
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
     if failures:
+        for f in failures:
+            print(f"  {f}")
         print(f"FAIL  updatr: {len(failures)} failure(s)")
         return 1
-    print("PASS  updatr: A/B state, rollback, switch, install, error codes")
+    print("PASS  updatr: A/B state, rollback, switch, extlinux sync, install, error codes")
     return 0
 
 

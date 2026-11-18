@@ -268,11 +268,84 @@ static int slot_install(const char *src, const char *dst)
     return 0;
 }
 
+/* Points extlinux.conf at the given slot. The bootloader cannot read JSON, so the
+ * only durable place for "which rootfs to mount" is the loader config itself. */
+static int sync_boot(const char *boot_dir, const char *slot)
+{
+    char path[1400];
+    char tmp[1400];
+    char want[32];
+    char text[8192];
+    size_t len = 0;
+
+    if (!boot_dir)
+        return 0;
+    snprintf(path, sizeof(path), "%s/extlinux/extlinux.conf", boot_dir);
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    snprintf(want, sizeof(want), "root=LABEL=DEEPOS_%s", slot);
+
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        fprintf(stderr, "updatr: %s: %s\n", path, strerror(errno));
+        return 2;
+    }
+    len = fread(text, 1, sizeof(text) - 1, f);
+    fclose(f);
+    text[len] = '\0';
+
+    int changed = 0;
+    const char *needles[2] = { "root=LABEL=DEEPOS_A", "root=LABEL=DEEPOS_B" };
+    for (int i = 0; i < 2; i++) {
+        char *at = strstr(text, needles[i]);
+        if (!at)
+            continue;
+        size_t nlen = strlen(needles[i]);
+        char out[8192];
+        size_t head = (size_t)(at - text);
+        if (head + strlen(want) >= sizeof(out))
+            return 2;
+        memcpy(out, text, head);
+        memcpy(out + head, want, strlen(want));
+        snprintf(out + head + strlen(want), sizeof(out) - head - strlen(want), "%s", at + nlen);
+        snprintf(text, sizeof(text), "%s", out);
+        changed = 1;
+        break;
+    }
+    if (!changed) {
+        fprintf(stderr, "updatr: %s has no root=LABEL=DEEPOS_A/B line\n", path);
+        return 2;
+    }
+
+    FILE *o = fopen(tmp, "wb");
+    if (!o) {
+        fprintf(stderr, "updatr: %s: %s\n", tmp, strerror(errno));
+        return 2;
+    }
+    size_t n = strlen(text);
+    if (fwrite(text, 1, n, o) != n) {
+        fclose(o);
+        return 2;
+    }
+    fflush(o);
+    if (fsync(fileno(o)) != 0) {
+        fclose(o);
+        return 2;
+    }
+    fclose(o);
+    if (rename(tmp, path) != 0) {
+        fprintf(stderr, "updatr: rename: %s\n", strerror(errno));
+        return 2;
+    }
+    printf("{\"boot\": \"%s\", \"slot\": \"%s\"}\n", path, slot);
+    return 0;
+}
+
 static void usage(void)
 {
     fprintf(stderr,
             "usage: updatr --state DIR {status|decide|begin|good|switch A|B}\n"
             "       updatr --state DIR begin [--max-attempts N]\n"
+            "       updatr --state DIR --boot DIR switch A|B\n"
             "       updatr --state DIR install --slot A|B --file IMG --dev TARGET\n");
 }
 
@@ -283,6 +356,7 @@ int main(int argc, char **argv)
     const char *slot = NULL;
     const char *file = NULL;
     const char *dev = NULL;
+    const char *boot_dir = NULL;
     int max_attempts = MAX_ATTEMPTS;
 
     for (int i = 1; i < argc; i++) {
@@ -296,6 +370,8 @@ int main(int argc, char **argv)
             file = argv[++i];
         } else if (strcmp(argv[i], "--dev") == 0 && i + 1 < argc) {
             dev = argv[++i];
+        } else if (strcmp(argv[i], "--boot") == 0 && i + 1 < argc) {
+            boot_dir = argv[++i];
         } else if (!cmd) {
             cmd = argv[i];
         } else if (!slot) {
@@ -326,6 +402,8 @@ int main(int argc, char **argv)
         state_begin(&st, max_attempts);
         if (state_save(state_dir, &st) != 0)
             return 2;
+        if (sync_boot(boot_dir, st.slot) != 0)
+            return 2;
         state_print(&st);
         return 0;
     }
@@ -347,6 +425,8 @@ int main(int argc, char **argv)
         st.rollback = 0;
         st.generation++;
         if (state_save(state_dir, &st) != 0)
+            return 2;
+        if (sync_boot(boot_dir, st.slot) != 0)
             return 2;
         state_print(&st);
         return 0;

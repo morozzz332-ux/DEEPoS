@@ -17,10 +17,21 @@ mount -t tmpfs    tmpfs    /tmp     -o mode=1777,nosuid,nodev
 # Device nodes for early accesses (devtmpfs covers most, mdev -s the rest).
 [ -x /sbin/mdev ] && mdev -s
 
-# Persistent state and the ROM library live on separate partitions.
-mkdir -p /storage /data
+# Boot partition, persistent state and the ROM library live on their own
+# partitions. /flash is needed by updatr to point the bootloader at the
+# slot that passed the boot attempt.
+mkdir -p /flash /storage /data
+[ -b /dev/mmcblk1p1 ] && mount -o noatime /dev/mmcblk1p1 /flash  2>/dev/null || true
 [ -b /dev/mmcblk1p4 ] && mount -o noatime /dev/mmcblk1p4 /storage 2>/dev/null || true
 [ -b /dev/mmcblk1p3 ] && mount -o noatime /dev/mmcblk1p3 /data    2>/dev/null || true
+
+# A/B boot accounting: count this boot attempt and mark the slot good once
+# userspace has been running for a while (no init system, no watchdog daemon).
+# The bootloader reads extlinux.conf, so the chosen slot must be written there.
+if [ -x /usr/bin/updatr ] && [ -d /data ]; then
+    /usr/bin/updatr --state /data --boot /flash begin >/dev/null 2>&1 || true
+    ( sleep 20; /usr/bin/updatr --state /data --boot /flash good >/dev/null 2>&1 ) &
+fi
 
 # Module supervisor: only started when at least one module is installed.
 if [ -x /usr/bin/modd ] && [ -d /storage/.config/deepos/modules ]; then
@@ -32,10 +43,3 @@ fi
 
 echo 0 > /proc/sys/kernel/printk 2>/dev/null || true
 exit 0
-
-# A/B boot accounting: count this boot attempt and mark the slot good once
-# userspace has been running for a while (no init system, no watchdog daemon).
-if [ -x /usr/bin/updatr ] && [ -d /data ]; then
-    /usr/bin/updatr --state /data begin >/dev/null 2>&1 || true
-    ( sleep 20; /usr/bin/updatr --state /data good >/dev/null 2>&1 ) &
-fi

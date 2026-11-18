@@ -195,6 +195,24 @@ def test_emulators_config():
           "; ".join(m for m in mappings if "%ROM%" not in m))
 
 
+def test_rcs_order():
+    """A/B bookkeeping must run before rcS exits, and BOOT must be mounted."""
+    rcs = ROOT / "board" / "r36s-v20" / "rootfs-overlay" / "etc" / "init.d" / "rcS"
+    text = rcs.read_text(encoding="utf-8")
+    check("rcS exists", rcs.is_file())
+    check("rcS mounts BOOT on /flash", "mmcblk1p1 /flash" in text)
+    check("rcS passes --boot /flash", "--boot /flash" in text)
+    exit_at = text.find("\nexit 0")
+    begin_at = text.find("updatr --state /data --boot /flash begin")
+    good_at = text.find("updatr --state /data --boot /flash good")
+    check("A/B begin runs before exit 0",
+          exit_at != -1 and begin_at != -1 and begin_at < exit_at,
+          f"exit@{exit_at} begin@{begin_at}")
+    check("A/B good scheduled before exit 0",
+          exit_at != -1 and good_at != -1 and good_at < exit_at,
+          f"exit@{exit_at} good@{good_at}")
+
+
 def main():
     print("board tests (R36S-V20):")
     test_dts()
@@ -203,11 +221,12 @@ def main():
     test_extlinux()
     test_rootfs_builder()
     test_emulators_config()
+    test_rcs_order()
     print()
     if fails:
         print("FAIL  board: " + ", ".join(fails))
         return 1
-    print("PASS  board: dtb, kernel config, busybox config, extlinux, emulators, rootfs builder")
+    print("PASS  board: dtb, kernel config, busybox config, extlinux, rcs order, emulators, rootfs builder")
     return 0
 
 

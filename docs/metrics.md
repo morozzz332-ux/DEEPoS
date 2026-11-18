@@ -48,3 +48,8 @@
 
 | P4 continue update | host | строки: 7 колонок, слот, `has_save`, без дублей и `.tmp` |
 | image (0.4-dev) | `build/deepos-r36s-v20.img` sha256 `3701b7211369ad273220662282c82ca7a43049ab217f9a4b654e2663e557f93f` | ok |
+
+| P6/P7 A/B (extlinux) | host | `begin`/`switch` переписывают `root=LABEL=DEEPOS_A|B`; rollback после 4-й неудачи | ok |
+| rcS порядок | host | `/flash` смонтирован, `begin`/`good` до `exit 0` | ok |
+| image (0.5-dev) | `build/deepos-r36s-v20.img` 4 311 744 512 B, sha256 `4f921aa551cc1020d9ffc9e5e4625bb81c2f97d1f4c78a0878db8bc4e2e14dc7` | ok |
+| тестовые наборы | 13 | PASS |
