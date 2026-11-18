@@ -67,8 +67,8 @@
 		};
 
 		usb20_otg: usb@ff300000 { };
-		u2phy0: phy@ff2e0000 {
-			u2phy0_otg: otg-port { };
+		u2phy: phy@ff2e0000 {
+			u2phy_otg: otg-port { };
 		};
 	};
 

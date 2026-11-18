@@ -1,0 +1,34 @@
+#!/bin/sh
+# DEEPoS early userspace bring-up (busybox init ::sysinit hook).
+#
+# Kept deliberately small: every process started here costs RAM that the
+# emulator will want later. Only what the launcher cannot live without is
+# started here - storage, /proc, /sys, devices and the module supervisor.
+set -e
+
+mount -t proc     proc     /proc
+mount -t sysfs    sysfs    /sys
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+mkdir -p /dev/pts /dev/shm
+mount -t devpts   devpts   /dev/pts 2>/dev/null || true
+mount -t tmpfs    shm      /dev/shm -o mode=1777,nosuid,nodev
+mount -t tmpfs    tmpfs    /tmp     -o mode=1777,nosuid,nodev
+
+# Device nodes for early accesses (devtmpfs covers most, mdev -s the rest).
+[ -x /sbin/mdev ] && mdev -s
+
+# Persistent state and the ROM library live on separate partitions.
+mkdir -p /storage /data
+[ -b /dev/mmcblk1p4 ] && mount -o noatime /dev/mmcblk1p4 /storage 2>/dev/null || true
+[ -b /dev/mmcblk1p3 ] && mount -o noatime /dev/mmcblk1p3 /data    2>/dev/null || true
+
+# Module supervisor: only started when at least one module is installed.
+if [ -x /usr/bin/modd ] && [ -d /storage/.config/deepos/modules ]; then
+    mkdir -p /run
+    /usr/bin/modd --modules /storage/.config/deepos/modules \
+                  --data /storage/.config/deepos/module-data \
+                  --socket /run/modd.sock &
+fi
+
+echo 0 > /proc/sys/kernel/printk 2>/dev/null || true
+exit 0

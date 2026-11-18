@@ -28,10 +28,12 @@ REQUIRED = [
     "bin/busybox",
 ]
 
+# App binaries are staged either next to their sources (test fixtures) or in
+# /usr/bin (the real rootfs); both layouts are valid for the checker.
 REQUIRED_ANY = [
-    ("apps/modd/modd", "modd"),
-    ("apps/saved/saved", "saved"),
-    ("apps/launcher/launcher", "launcher"),
+    (("apps/modd/modd", "usr/bin/modd"), "modd"),
+    (("apps/saved/saved", "usr/bin/saved"), "saved"),
+    (("apps/launcher/launcher", "usr/bin/launcher"), "launcher"),
 ]
 
 
@@ -54,9 +56,9 @@ def check_tree(root):
     init = os.path.join(root, "sbin/init")
     if os.path.isfile(init) and not os.access(init, os.X_OK):
         problems.append("sbin/init is not executable")
-    for rel, name in REQUIRED_ANY:
-        if not os.path.isfile(os.path.join(root, rel)):
-            problems.append(f"missing {rel} ({name})")
+    for candidates, name in REQUIRED_ANY:
+        if not any(os.path.isfile(os.path.join(root, rel)) for rel in candidates):
+            problems.append(f"missing {' or '.join(candidates)} ({name})")
     if problems:
         raise SystemExit("rootfs check failed:\n  " + "\n  ".join(problems))
     return True

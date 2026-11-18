@@ -1,0 +1,10 @@
+# /etc/inittab - DEEPoS init behaviour (busybox init reads this file).
+#
+# ::sysinit runs once before anything else; ::respawn keeps the launcher alive
+# (if it crashes we get it back instead of a black screen); ::ctrlaltdel and
+# ::shutdown keep the power button path clean.
+
+::sysinit:/etc/init.d/rcS
+::respawn:/usr/bin/launcher
+::ctrlaltdel:/sbin/reboot
+::shutdown:/bin/umount -a -r

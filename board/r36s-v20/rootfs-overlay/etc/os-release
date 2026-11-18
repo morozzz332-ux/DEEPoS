@@ -1,0 +1,7 @@
+NAME="DEEPoS"
+PRETTY_NAME="DEEPoS 0.1 (R36S-V20)"
+ID=deepos
+VERSION="0.1-dev"
+VERSION_ID=0.1
+ANSI_COLOR="1;36"
+HOME_URL="https://github.com/morozzz332-ux/DEEPoS"
