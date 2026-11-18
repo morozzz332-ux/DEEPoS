@@ -145,6 +145,7 @@ function Invoke-DeepOSFlash {
         }
         Log "dpflash exit=$code"
         if ($code -ne 0) { return $code }
+        Update-HostStorageCache -ErrorAction SilentlyContinue
         Log 'DONE: image written and verified'
         return 0
     } catch {

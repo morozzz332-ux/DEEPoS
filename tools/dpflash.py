@@ -174,6 +174,18 @@ def _device_ioctl(handle, code, size):
     return buf
 
 
+def _refresh_windows_disk(path):
+    handle = _open_windows(path, write=False)
+    try:
+        returned = wintypes.DWORD()
+        code = 0x00070140  # IOCTL_DISK_UPDATE_PROPERTIES
+        if not kernel.DeviceIoControl(handle, code, None, 0, None, 0,
+                                     ctypes.byref(returned), None):
+            raise OSError(f"refresh partition cache: win32={ctypes.get_last_error()}")
+    finally:
+        close(handle)
+
+
 def _require_blank_disk(handle, disk_size):
     length = _device_ioctl(handle, 0x7405C, 8)  # IOCTL_DISK_GET_LENGTH_INFO
     if struct.unpack_from("<Q", length)[0] != disk_size:
@@ -342,6 +354,12 @@ def flash(image_path, target_path, dry_run=False, defer_table=True, expected_sha
                 print("verified: whole card matches the image")
         finally:
             close(handle)
+    if raw:
+        try:
+            _refresh_windows_disk(path)
+        except OSError as exc:
+            print(f"warning: {exc}. Reconnect the card reader to refresh Windows.",
+                  file=sys.stderr)
     if expand:
         import expand_gpt
         expand_gpt.expand_target(target_path, card_size)

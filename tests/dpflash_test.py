@@ -69,9 +69,11 @@ class FlashTest(unittest.TestCase):
         # Route an emulated Windows disk to the ordinary temporary file.
         with patch.dict(sys.modules, {"expand_gpt": module}), \
                 patch.object(dpflash, "_checked_disk", return_value=str(self.card)), \
-                patch.object(dpflash, "_require_blank_disk"):
+                patch.object(dpflash, "_require_blank_disk"), \
+                patch.object(dpflash, "_refresh_windows_disk", create=True) as refresh:
             dpflash.flash(self.image, r"\\.\PhysicalDrive2", expected_sha=expected,
                           disk_path="emulated", disk_size=disk_size)
+        refresh.assert_called_once_with(str(self.card))
         card = self.card.read_bytes()
         self.assertEqual(card[:dpflash.TABLE_BYTES], new_head)
         self.assertEqual(card[-dpflash.BACKUP_BYTES:], new_tail)
