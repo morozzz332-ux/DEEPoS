@@ -201,3 +201,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\pull-report.ps1
 
 Файлы появятся в `build/device-report/`. Это же — основа для §7: вставьте содержимое
 `boot.txt`, `temps.txt`, `free.txt` и `selftest.txt` в отчёт.
+
+
+### 0.7. USB-консоль вместо UART
+
+После загрузки DEEPoS на OTG-кабеле поднимаются две функции gadget: CDC-ACM (COM-порт) и
+NCM (сеть `<console-ip>/16`).
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\usb-shell.ps1
+# затем
+plink -serial COMx -sercfg 115200,8,n,1,N          # интерактивно, login root, без пароля
+plink -serial COMx -sercfg 115200,8,n,1,N -batch -m tools\report-commands.sh
+```
+
+Вердикт первого буста лежит в `BOOT/report/checks.txt` (`verdict=PASS|FAIL`, `panel=`, `data=`,
+`input_events=`, `mem_available_mb=`).

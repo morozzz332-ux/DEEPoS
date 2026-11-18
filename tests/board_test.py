@@ -288,6 +288,51 @@ def test_boot_report() -> None:
               "|| true" in line)
 
 
+def test_usb_gadget() -> None:
+    overlay = ROOT / "board/r36s-v20/rootfs-overlay"
+    gadget = overlay / "usr/local/bin/usb-gadget.sh"
+    check("gadget script exists", gadget.exists())
+    if gadget.exists():
+        text = gadget.read_text(encoding="utf-8")
+        check("gadget mounts configfs", "mount -t configfs" in text)
+        check("gadget binds a UDC", "> UDC" in text or "echo \"$udc\" > UDC" in text)
+        check("gadget has acm function", "functions/acm.gs0" in text)
+        check("gadget has ncm function", "functions/ncm.usb0" in text)
+        check("gadget assigns link-local ip", "169.254.170.2/16" in text)
+        check("gadget is best-effort at boot", "|| true" in text)
+    getty = overlay / "usr/local/bin/gadget-getty.sh"
+    check("gadget getty helper exists", getty.exists())
+    if getty.exists():
+        gtext = getty.read_text(encoding="utf-8")
+        check("getty waits for the node", "/dev/ttyGS0" in gtext)
+        check("getty execs login", "getty -L /dev/ttyGS0" in gtext)
+    inittab = (overlay / "etc/inittab").read_text(encoding="utf-8")
+    check("inittab starts gadget getty", "ttyGS0::respawn:/usr/local/bin/gadget-getty.sh" in inittab)
+    rcs = (overlay / "etc/init.d/rcS").read_text(encoding="utf-8")
+    check("rcS calls the gadget script", "usb-gadget.sh" in rcs)
+    conf = (ROOT / "board/r36s-v20/linux.config").read_text(encoding="utf-8")
+    for sym in ("CONFIG_USB_CONFIGFS_ACM=y", "CONFIG_USB_CONFIGFS_NCM=y",
+                "CONFIG_USB_F_ACM=y", "CONFIG_USB_F_NCM=y"):
+        check(f"kernel has {sym}", sym in conf)
+
+
+def test_selfcheck() -> None:
+    script = ROOT / "board/r36s-v20/rootfs-overlay/usr/local/bin/selfcheck.sh"
+    check("selfcheck exists", script.exists())
+    if not script.exists():
+        return
+    text = script.read_text(encoding="utf-8")
+    for key in ("kernel=", "verdict=", "panel=", "input_events=", "battery=",
+                "charger=", "flash=", "data=", "roms=", "modd=", "launcher=",
+                "mem_available_mb=", "soc_c="):
+        check(f"selfcheck reports {key.rstrip('=')}", key in text)
+    check("verdict fails without panel", 'verdict=FAIL' in text)
+    check("checks /proc/mounts", "/proc/mounts" in text)
+    check("selfcheck never aborts boot", "exit 0" in text)
+    rcs = (ROOT / "board/r36s-v20/rootfs-overlay/etc/init.d/rcS").read_text(encoding="utf-8")
+    check("rcS runs selfcheck", "selfcheck.sh /flash/report/checks.txt" in rcs)
+
+
 def main():
     print("board tests (R36S-V20):")
     test_dts()
@@ -300,12 +345,14 @@ def main():
     test_rcs_robustness()
     test_boot_handover()
     test_boot_report()
+    test_usb_gadget()
+    test_selfcheck()
     test_rcs_order()
     print()
     if fails:
         print("FAIL  board: " + ", ".join(fails))
         return 1
-    print("PASS  board: dtb, kernel config, busybox config, extlinux, mounts, handover, report, rcs order, emulators, rootfs builder")
+    print("PASS  board: dtb, kernel config, busybox config, extlinux, mounts, handover, report, gadget, selfcheck, rcs order, emulators, rootfs builder")
     return 0
 
 

@@ -37,6 +37,17 @@ if (Test-Path $selftest) {
     Write-Host "--- selftest.txt ---"
     Get-Content $selftest
 }
+$checks = Join-Path $Out "checks.txt"
+if (Test-Path $checks) {
+    Write-Host "--- checks.txt ---"
+    Get-Content $checks
+    $verdict = (Get-Content $checks | Where-Object { $_ -like "verdict=*" } | Select-Object -First 1)
+    if ($verdict -eq "verdict=FAIL") {
+        Write-Host ""
+        Write-Host "VERDICT: FAIL - compare checks.txt with DEVICE-TEST-PLAN expectations" -ForegroundColor Yellow
+    }
+}
+
 $temps = Join-Path $Out "temps.txt"
 if (Test-Path $temps) {
     Write-Host "--- temps.txt ---"

@@ -27,7 +27,12 @@ if (-not $Python) {
 
 Set-Content -Path $log -Value "" -Encoding UTF8
 Log "start: disk=$Disk image=$Image"
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole("Administrator")
+$principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+$isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    # Locale-independent fallback: the built-in Administrators group SID.
+    $isAdmin = [bool](whoami /groups | Select-String "S-1-5-32-544" | Where-Object { $_ -notmatch "deny" })
+}
 Log ("admin=" + $isAdmin)
 if (-not $isAdmin) { Log "STOP: not elevated, run flash-deepos.cmd and accept the UAC prompt"; exit 2 }
 Log ("python=" + $Python)

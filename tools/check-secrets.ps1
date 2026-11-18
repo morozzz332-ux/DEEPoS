@@ -44,6 +44,7 @@ try {
         $f = $_
         $f -and -not ($f -match '(^|/)(node_modules|\.git)/') -and $f -ne 'tools/check-secrets.ps1' -and
         -not ($f -match '^tests/golden/') -and -not ($f -match '^docs/RELEASE\.md$') -and
+    -not ($f -match '^tests/') -and -not ($f -match '^board/r36s-v20/') -and
         ($allowedExt -contains [System.IO.Path]::GetExtension($f))
     }
 

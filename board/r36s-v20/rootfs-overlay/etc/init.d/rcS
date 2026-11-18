@@ -57,6 +57,12 @@ if [ -x /usr/bin/modd ] && [ -d /data/modules ]; then
                   --socket /run/modd.sock &
 fi
 
+# 6b. USB gadget: ACM serial console + NCM network on the OTG port.
+#     Gives a COM port (root shell) and 169.254.170.2 without UART or sshd.
+if [ -x /usr/local/bin/usb-gadget.sh ]; then
+    /usr/local/bin/usb-gadget.sh || true
+fi
+
 # 7. Quiet kernel console: the splash screen owns the panel.
 echo 0 > /proc/sys/kernel/printk 2>/dev/null || true
 
@@ -92,6 +98,11 @@ if is_mounted /flash; then
         fi
         sync 2>/dev/null || true
     fi
+fi
+
+# 7c. Human verdict for the first boot: /flash/report/checks.txt (key=value).
+if is_mounted /flash && [ -x /usr/local/bin/selfcheck.sh ]; then
+    /usr/local/bin/selfcheck.sh /flash/report/checks.txt >/dev/null 2>&1 || true
 fi
 
 # 8. Report readiness for the serial console. The UI itself is started by init

@@ -86,4 +86,7 @@
 | release report | `docs/RELEASE.md`, 7 артефактов, git `main` | `tests/release_test.py` | PASS |
 | boot report | `/flash/report/*` (8 файлов), `tools/pull-report.ps1` | `tests/board_test.py` | PASS |
 | образ (0.14-dev) | sha256 `0e418a5f8920679d807c936ba5499d8c1fa417d3678e89b50caef4cf67cea07a` | сборка + preflight | GO |
+| usb gadget | ACM + NCM, `usb0` <console-ip>/16 | `tests/board_test.py` | PASS |
+| selfcheck | `BOOT/report/checks.txt`, 16 ключей | `tests/board_test.py` | PASS |
+| образ (0.16-dev) | sha256 `f5f1e3c865b045602db22e8c9effe68f1e544ca29751288941bfb0bda5711896` | preflight + 16 наборов | GO |
 

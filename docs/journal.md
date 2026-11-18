@@ -683,3 +683,27 @@
 - Сборка: rootfs OK, BOOT `0.14-dev`, образ sha256 `0e418a5f…` (полный — в `docs/RELEASE.md`),
   `PREFLIGHT: GO (32 checks)`, 16 наборов PASS.
 
+## 2026-11-18 · P9 (USB-консоль и вердикт первого буста)
+
+- `board/r36s-v20/rootfs-overlay/usr/local/bin/usb-gadget.sh`: configfs-gadget `deepos`
+  с двумя функциями — `acm.gs0` (CDC-ACM → COM-порт на ПК) и `ncm.usb0` (сеть
+  `<console-ip>/16`). Биндится к первому UDC, адрес ставится через busybox `ip`.
+  Вызывается из `rcS` блоком 6b; без UART и без sshd даёт интерактивный root-шелл.
+- `gadget-getty.sh` + строка в `/etc/inittab`: `ttyGS0::respawn:/usr/local/bin/gadget-getty.sh`
+  (скрипт ждёт `/dev/ttyGS0`, затем `getty -L /dev/ttyGS0 115200`), чтобы не крутить respawn.
+- `tools/usb-shell.ps1` находит COM-порт консоли (VID 1D6B / "USB Serial"), печатает команду
+  `plink -serial COMx -sercfg 115200,8,n,1,N`; `tools/report-commands.sh` — готовый набор
+  команд для неинтерактивного отчёта (uname, mounts, free, PSI, температуры, A/B, selftest, dmesg).
+- `usr/local/bin/selfcheck.sh` → `BOOT/report/checks.txt` в формате `key=value`:
+  `kernel`, `verdict`, `panel`, `input_events`, `battery`, `charger`, `flash`, `data`, `roms`,
+  `modd`, `launcher`, `zram`, `swap_active`, `mem_total_mb`, `mem_available_mb`, `soc_c`.
+  `verdict=FAIL`, если панель не connected или DATA не rw. `tools/pull-report.ps1` печатает
+  checks.txt и предупреждает при FAIL.
+- Найден баг в `flash-deepos.ps1`: проверка прав `IsInRole("Administrator")` на русской Windows
+  возвращает False даже в elevated-окне (строка резолвится в локального пользователя, а группа
+  называется «Администраторы»). Заменено на `[WindowsBuiltInRole]::Administrator` + фолбэк по
+  SID `S-1-5-32-544`. Из-за этого скрипт отказывался писать при реальных правах администратора.
+- Тесты: `tests/board_test.py` + `test_usb_gadget` (14 проверок) и `test_selfcheck` (16 проверок).
+- Сборка: BOOT `0.16-dev`, образ sha256 `f5f1e3c865b045602db22e8c9effe68f1e544ca29751288941bfb0bda5711896`,
+  `PREFLIGHT: GO (32 checks)`, 16 наборов PASS.
+
