@@ -22,9 +22,11 @@ import json
 import pathlib
 import subprocess
 import sys
+import time
 
 MIB = 1024 * 1024
-CHUNK = 4 * MIB
+CHUNK = 1 * MIB
+RETRYABLE = {1, 5, 21, 22}  # access, not ready, device errors during long writes
 TABLE_BYTES = 34 * 512  # protective MBR + primary GPT header + 32 entries
 
 
@@ -107,6 +109,13 @@ def open_target(path, write):
     return open(path, "r+b" if write else "rb")
 
 
+class WriteError(Exception):
+    def __init__(self, offset, err):
+        super().__init__(f"write failed at offset {offset} (win32={err})")
+        self.offset = offset
+        self.err = err
+
+
 def write_at(handle, offset, data):
     if os.name == "nt":
         import ctypes
@@ -118,13 +127,46 @@ def write_at(handle, offset, data):
         buf = ctypes.create_string_buffer(data, len(data))
         if not ctypes.windll.kernel32.WriteFile(handle, buf, len(data),
                                                 ctypes.byref(written), None):
-            err = ctypes.windll.kernel32.GetLastError()
-            raise SystemExit(f"dpflash: write failed at offset {offset} (win32={err})")
+            raise WriteError(offset, ctypes.windll.kernel32.GetLastError())
         if written.value != len(data):
-            raise SystemExit(f"dpflash: short write at offset {offset}")
+            raise WriteError(offset, 0)
     else:
         handle.seek(offset)
         handle.write(data)
+
+
+def write_retry(target_path, offset, data, attempts=8, log=print):
+    """Write one chunk, reopening the device when the reader hiccups.
+
+    Cheap USB readers drop off during sustained writes (win32=21 "device not
+    ready" or 22 "device does not recognise the command"); a reopen plus a
+    short pause usually brings them back.
+    """
+    last = None
+    for attempt in range(1, attempts + 1):
+        handle = open_target(target_path, write=True)
+        try:
+            write_at(handle, offset, data)
+            return
+        except WriteError as exc:
+            last = exc
+            log(f"\n  retry {attempt}/{attempts} at offset {offset}: {exc}")
+            time.sleep(min(3.0, 0.5 * attempt))
+        finally:
+            close(handle)
+    raise SystemExit(f"dpflash: {last}")
+
+
+def verify_table(target_path, table, table_tail, image_size, log=print):
+    handle = open_target(target_path, write=False)
+    try:
+        head = read_at(handle, 0, len(table))
+        tail = read_at(handle, image_size - len(table_tail), len(table_tail)) if table_tail else b""
+    finally:
+        close(handle)
+    if head != table or (table_tail and tail != table_tail):
+        raise SystemExit("dpflash: read-back mismatch after writing the partition table")
+    log("verified: partition table read back byte-identical")
 
 
 def read_at(handle, offset, size):
@@ -177,24 +219,25 @@ def flash(image_path, target_path, dry_run=False, defer_table=True, expected_sha
         if defer_table:
             # A zeroed table means Windows does not mount anything mid-write.
             write_at(handle, 0, bytes(TABLE_BYTES))
-        start = TABLE_BYTES if defer_table else 0
-        with open(image_path, "rb") as src:
-            src.seek(start)
-            offset = start
-            while offset < image_size:
-                chunk = src.read(min(CHUNK, image_size - offset))
-                if not chunk:
-                    break
-                write_at(handle, offset, chunk)
-                offset += len(chunk)
-                print(f"\r  written {offset * 100 // image_size}%", end="", flush=True)
-        print()
-        if defer_table:
-            write_at(handle, 0, table)
-            if table_tail:
-                write_at(handle, image_size - len(table_tail), table_tail)
     finally:
         close(handle)
+    start = TABLE_BYTES if defer_table else 0
+    with open(image_path, "rb") as src:
+        src.seek(start)
+        offset = start
+        while offset < image_size:
+            chunk = src.read(min(CHUNK, image_size - offset))
+            if not chunk:
+                break
+            write_retry(target_path, offset, chunk)
+            offset += len(chunk)
+            print(f"\r  written {offset * 100 // image_size}%", end="", flush=True)
+    print()
+    if defer_table:
+        write_retry(target_path, 0, table)
+        if table_tail:
+            write_retry(target_path, image_size - len(table_tail), table_tail)
+        verify_table(target_path, table, table_tail, image_size)
     print("done: table written last, card is bootable")
     return 0
 

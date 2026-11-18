@@ -65,6 +65,20 @@ Get-Partition -DiskNumber $Disk -ErrorAction SilentlyContinue | ForEach-Object {
     }
 }
 
+# A half-written card can show up as a bogus partition; cleaning it also tells
+# Windows to release the volume objects before we open the raw device.
+Log "clearing partition table..."
+try {
+    Clear-Disk -Number $Disk -RemoveData -RemoveOEM -Confirm:$false -ErrorAction Stop
+    Log "Clear-Disk: OK"
+} catch {
+    Log ("Clear-Disk: " + $_.Exception.Message)
+}
+Update-HostStorageCache -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 2
+$d = Get-Disk -Number $Disk
+Log ("ready: style=" + $d.PartitionStyle + " partitions=" + $d.NumberOfPartitions + " size=" + $d.Size)
+
 Log "writing..."
 try {
     $out = & $Python (Join-Path $root "tools\dpflash.py") --image $img `

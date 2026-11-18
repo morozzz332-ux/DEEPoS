@@ -117,3 +117,13 @@
 | playdemo (static aarch64) | 597 944 B |
 | preflight / verify-image | GO (32 checks) / PASS (39 checks) |
 | Образ | 4 294 967 296 B, sha256 `c824889e9138e7f9aa1ec9e76aa9e17ea598250c86bcd35fe90ae2e16f65f6cd` |
+
+## 2026-11-18 · образ 0.20-dev
+
+| Проверка | Значение |
+| --- | --- |
+| Наборов тестов | 19 |
+| Кнопочных GPIO-линий | 19 (паритет со стоковым DTB) |
+| DTB | 46 836 B |
+| preflight / verify-image | GO (32) / PASS (39) |
+| Образ | 4 294 967 296 B, sha256 `4a647723d8d493a879ef28e0e7d46b39f76864fd26d43dcb675aae07649029cf` |

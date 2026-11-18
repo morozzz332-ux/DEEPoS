@@ -20,3 +20,4 @@ python3 tests/settings_test.py
 python3 tests/playdemo_test.py | grep -E "^(PASS|FAIL)"
 python3 tests/preflight_test.py
 python3 tests/release_test.py
+python3 tests/hardware_test.py | grep -E "^(PASS|FAIL)"
