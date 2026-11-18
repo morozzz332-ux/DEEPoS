@@ -47,7 +47,7 @@ def check_extlinux(path):
     return text
 
 
-def build(kernel, dtb, out, extlinux=None, logo=None, version="0.1"):
+def build(kernel, dtb, out, extlinux=None, logo=None, version="0.1", extra=None):
     kernel = pathlib.Path(kernel)
     dtb = pathlib.Path(dtb)
     out = pathlib.Path(out)
@@ -79,6 +79,14 @@ def build(kernel, dtb, out, extlinux=None, logo=None, version="0.1"):
         )
 
     files = {}
+    for item in (extra or []):
+        src = pathlib.Path(item)
+        if not src.is_file():
+            raise SystemExit(f"extra file not found: {src}")
+        dst = out / src.name
+        shutil.copyfile(src, dst)
+        files[src.name] = sha256_file(dst)
+
     if logo:
         logo = pathlib.Path(logo)
         if not logo.is_file():
@@ -108,10 +116,12 @@ def main(argv=None):
     ap.add_argument("--out", required=True, help="output directory")
     ap.add_argument("--extlinux", default=None, help="extlinux.conf to copy")
     ap.add_argument("--logo", default=None, help="640x480 24-bit BMP splash")
+    ap.add_argument("--extra", action="append", default=[],
+                    help="additional file for the BOOT volume (repeatable)")
     ap.add_argument("--version", default="0.1")
     args = ap.parse_args(argv)
 
-    manifest = build(args.kernel, args.dtb, args.out, args.extlinux, args.logo, args.version)
+    manifest = build(args.kernel, args.dtb, args.out, args.extlinux, args.logo, args.version, args.extra)
     for rel, size in sorted(manifest["sizes"].items()):
         print(f"  {rel}: {size} B")
     print(f"{args.out}: boot tree ready (version {args.version})")

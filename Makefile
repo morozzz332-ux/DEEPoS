@@ -116,6 +116,19 @@ kernel: docker-cross
 uboot: docker-cross
 	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(CROSS_IMAGE) -c "sh tools/build-uboot.sh"
 
+# BOOT volume: kernel, DTB, extlinux, splash and the owner's README.
+VERSION ?= 0.17-dev
+BOOT_EXTRA ?= board/r36s-v20/boot/README-FIRST.txt
+
+boot: docker-image
+	@test -f build/kernel/Image || (echo "missing build/kernel/Image - run 'make kernel' first" >&2; exit 1)
+	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) \
+		-c "python3 tools/mkboot.py --kernel build/kernel/Image \
+			--dtb build/kernel/rk3326-r36s-v20.dtb --out build/boot \
+			--extlinux board/r36s-v20/boot/extlinux/extlinux.conf \
+			--logo branding/deepos-boot.bmp \
+			--extra $(BOOT_EXTRA) --version $(VERSION)"
+
 image: docker-image
 	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "mkdir -p build/data && cp board/r36s-v20/data/emulators.toml build/data/emulators.toml && python3 tools/mkimage.py --out build/deepos-r36s-v20.img --size-mib $(SIZE_MIB) --boot build/boot --sys-a build/rootfs.squashfs --data build/data"
 	$(MAKE) verify-image

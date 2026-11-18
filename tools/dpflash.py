@@ -17,6 +17,7 @@ A plain file target is supported so the whole flow is testable on the host.
 import argparse
 import hashlib
 import os
+import re
 import json
 import pathlib
 import subprocess
@@ -44,21 +45,51 @@ def sha256_file(path, limit=None):
     return digest.hexdigest()
 
 
+DISK_NUMBER_RE = re.compile(r"^\\\\\.\\PhysicalDrive(\d+)$")
+
+
+def _windows_disk_size(number):
+    """Ask PowerShell for the length of a physical disk.
+
+    CreateFileW(..., GENERIC_READ) is denied for removable cards on some
+    systems and GetFileSizeEx() answers 0 for raw devices, so Get-Disk is the
+    reliable path here.
+    """
+    script = (f"(Get-Disk -Number {number}).Size")
+    out = subprocess.run(["powershell", "-NoProfile", "-Command", script],
+                         capture_output=True, text=True, timeout=30)
+    text = (out.stdout or "").strip().splitlines()
+    if text and text[-1].isdigit():
+        return int(text[-1])
+    return 0
+
+
 def target_size(path):
+    """Size of a regular file or of a raw disk/volume device."""
     try:
-        return os.path.getsize(path)
+        size = os.path.getsize(path)
     except OSError:
-        pass
-    if os.name == "nt":
-        import ctypes
-        handle = ctypes.windll.kernel32.CreateFileW(
-            path, 0, 3, None, 3, 0, None)  # GENERIC_READ, FILE_SHARE_RW, OPEN_EXISTING
-        if handle == -1:
-            raise SystemExit(f"dpflash: cannot open {path} for size query")
-        size = ctypes.c_ulonglong(0)
-        ctypes.windll.kernel32.GetFileSizeEx(handle, ctypes.byref(size))
-        ctypes.windll.kernel32.CloseHandle(handle)
-        return size.value
+        size = 0
+    if size > 0:
+        return size
+    if os.name != "nt":
+        raise SystemExit(f"dpflash: cannot determine size of {path}")
+
+    match = DISK_NUMBER_RE.match(path)
+    if match:
+        size = _windows_disk_size(int(match.group(1)))
+        if size:
+            return size
+        raise SystemExit(f"dpflash: cannot determine size of {path} "
+                         f"(Get-Disk returned nothing)")
+
+    import ctypes
+
+    free = ctypes.c_ulonglong(0)
+    total = ctypes.c_ulonglong(0)
+    if ctypes.windll.kernel32.GetDiskFreeSpaceExW(
+            path, ctypes.byref(free), ctypes.byref(total), None) and total.value:
+        return int(total.value)
     raise SystemExit(f"dpflash: cannot determine size of {path}")
 
 

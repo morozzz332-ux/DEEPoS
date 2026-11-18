@@ -9,6 +9,7 @@ Covers:
   flip to the other slot, `good` resets the counter, `switch` moves the slot.
 """
 
+import hashlib
 import json
 import pathlib
 import subprocess
@@ -66,6 +67,21 @@ def test_mkboot():
 
         tiny = tmp / "tiny.img"
         tiny.write_bytes(b"\x00" * 1024)
+
+        # --extra files land in BOOT and are listed in the manifest
+        extra = tmp / "README-FIRST.txt"
+        extra.write_text("put games into ROMS/\n", encoding="utf-8")
+        out_extra = tmp / "boot-extra"
+        p = run(MKBOOT, "--kernel", kernel, "--dtb", dtb, "--out", out_extra,
+                "--extlinux", EXTLINUX, "--extra", extra, "--version", "9.9-test")
+        check("mkboot accepts --extra", p.returncode == 0, (p.stderr or "").strip()[:200])
+        check("extra file copied into BOOT", (out_extra / "README-FIRST.txt").is_file())
+        manifest = json.loads((out_extra / "MANIFEST.json").read_text(encoding="utf-8"))
+        check("extra file listed in manifest", "README-FIRST.txt" in manifest["files"])
+        check("extra file sha256 recorded",
+              manifest["files"].get("README-FIRST.txt") == hashlib.sha256(
+                  extra.read_bytes()).hexdigest())
+
         p = run(MKBOOT, "--kernel", tiny, "--dtb", dtb, "--out", tmp / "boot2")
         check("mkboot refuses tiny kernel", p.returncode != 0 and "too small" in (p.stderr or ""))
 

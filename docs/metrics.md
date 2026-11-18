@@ -90,3 +90,12 @@
 | selfcheck | `BOOT/report/checks.txt`, 16 ключей | `tests/board_test.py` | PASS |
 | образ (0.16-dev) | sha256 `f5f1e3c865b045602db22e8c9effe68f1e544ca29751288941bfb0bda5711896` | preflight + 16 наборов | GO |
 
+## 2026-11-18 · образ 0.17-dev
+
+| Проверка | Значение |
+| --- | --- |
+| Наборов тестов | 16 |
+| preflight | GO (32 checks) |
+| verify-image | PASS (39 checks) |
+| Образ | `build/deepos-r36s-v20.img`, 4 294 967 296 B, sha256 `05598792dd1dd795fa332f467884903721f0c4ffd3d979659675d676ed70a2fe` |
+| BOOT | `0.17-dev`, KERNEL 74 490 368 B, dtb 46 564 B, `README-FIRST.txt` 1 533 B |
