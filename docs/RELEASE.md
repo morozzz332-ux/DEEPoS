@@ -1,30 +1,29 @@
 # DEEPoS release
 
-- image sha256: `0158ac69c0e71c504d989b915eedd69c454c0283a6dab5a41ff55acf0d18d195`
+- image sha256: `b5de8980dc9df69a180480cdbadc4ba37a96717a8e2cc0500539e0883b6e5cc5`
 - image size: 4294967296 bytes
-- BOOT version: `0.23-dev`
-- git: `main` at `9dfcea5`
+- BOOT version: `0.26-dev`
+- git: `?` at `?`
 
 | artefact | bytes | sha256 | path |
 |---|---|---|---|
 | kernel | 74490368 | `f91b62257a28c2369431e8e51c4058f7bffad6c7b267835dfac4b3829bd97729` | `build/kernel/Image` |
 | dtb | 46836 | `430540c59e7d1b1255faf6c58b929c97a2b6ddd271dbf4ef2f8345ed70044688` | `build/kernel/rk3326-r36s-v20.dtb` |
-| boot | 75461654 | `dir` | `build/boot` |
-| rootfs | 2355200 | `738d2f0699788ec06d4eef3e64b7063f7c5152a28406f9e6841fc15e6a5addc4` | `build/rootfs.squashfs` |
-| image | 4294967296 | `0158ac69c0e71c504d989b915eedd69c454c0283a6dab5a41ff55acf0d18d195` | `build/deepos-r36s-v20.img` |
-| idbloader | 113194 | `da92d9bb07fb8a635a661ddac22f965a35fdd8c118ce9823e22145eb391a42f0` | `build/uboot/idbloader.img` |
-| u-boot | 1304064 | `60bbe765838fddabc48a85dbc59bcd3cac42e186f1da20f5e090a1d02e8dfd8e` | `build/uboot/u-boot.itb` |
+| boot | 75461975 | `dir` | `build/boot-0.26-dev` |
+| rootfs | 2392064 | `7470bd6e6f66eb231c8ad6edd73e71ae4f16efe32be6e6463d1e43c05209a971` | `build/rootfs-final.squashfs` |
+| image | 4294967296 | `b5de8980dc9df69a180480cdbadc4ba37a96717a8e2cc0500539e0883b6e5cc5` | `build/deepos-r36s-v20-0.26-dev.img` |
+| Rockchip donor chain | 16744448 | `b80637ba27a996fec3ceff64a850af2a968f095ae1be0e1483b46551f67cdec0` | `<archr-clone-image>` |
 
 Проверки перед записью:
 
 ```sh
-python3 tools/preflight.py --root .
-python3 tools/verify-image.py --loader build/uboot build/deepos-r36s-v20.img
+python3 tools/preflight.py --root . --boot build/boot-0.26-dev --rootfs build/rootfs-final.squashfs --image build/deepos-r36s-v20-0.26-dev.img --loader-donor <archr-clone-image>
+python3 tools/verify-image.py --loader-donor <archr-clone-image> build/deepos-r36s-v20-0.26-dev.img
 python3 tools/dpflash.py --list          # номер карты, не гадать
 ```
 
 Из PowerShell с правами администратора, подставив номер карты и её образ:
 
 ```powershell
-.\flash-deepos.ps1 -Disk 2 -Image build/deepos-r36s-v20.img -Sha256 0158ac69c0e71c504d989b915eedd69c454c0283a6dab5a41ff55acf0d18d195
+.\flash-deepos.ps1 -Image build/deepos-r36s-v20-0.26-dev.img -Sha256 b5de8980dc9df69a180480cdbadc4ba37a96717a8e2cc0500539e0883b6e5cc5
 ```
