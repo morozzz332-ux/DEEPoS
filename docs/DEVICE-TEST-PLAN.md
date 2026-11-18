@@ -9,14 +9,38 @@
 
 | Артефакт | Путь | Проверка |
 |---|---|---|
-| Образ карты | `build/deepos-r36s-v20.img` | `sha256sum` совпадает с `build/image.json` |
+| Образ карты | `build/deepos-r36s-v20.img` | `sha256sum` совпадает со значением из `docs/metrics.md` |
 | Загрузчик | `build/uboot/idbloader.img`, `build/uboot/u-boot.itb` | `tools/build-uboot.sh` → `BUILD.txt` |
 | Ядро | `build/kernel/Image` | 74 490 368 B, версия 6.12.56 |
 | DTB платы | `build/kernel/rk3326-r36s-v20.dtb` | 46 564 B |
-| Rootfs | `build/rootfs.squashfs` | 1 867 776 B, `unsquashfs -l` → 439 записей |
+| Rootfs | `build/rootfs.squashfs` | размер и число записей — в `docs/metrics.md` |
 
 Образ без загрузчика не загрузится: `idbloader.img` пишется по смещению 32 KiB,
 `u-boot.itb` — по 8 MiB (Rockchip boot chain), это делает `tools/mkimage.py --loader`.
+
+## 0.5. Смоук-тест после первого буста
+
+Первое, что стоит запустить на устройстве — встроенный отчёт об окружении:
+
+```sh
+/usr/bin/launcher --selftest
+```
+
+Ожидаемые строки (ключ=значение, парсится глазами и скриптом):
+
+| Строка | Что значит | Норма на R36S-V20 |
+|---|---|---|
+| `version=0.4` | версия лаунчера | совпадает с `docs/metrics.md` |
+| `roms=… systems=N games=M` | найдены системы и игры | `systems>0` при непустом ROMS |
+| `data=… continue=N` | прочитанный `continue.tsv` | `N` равно числу строк файла |
+| `emulators=… emulators_present=1` | найден `emulators.toml` | 1 |
+| `modd=… modules=N` | связь с супервизором | `N` = число модулей в `/storage/.config/deepos/modules` |
+| `fb=… fb_present=1` | фреймбуфер | 1 (иначе смотреть `CONFIG_DRM_FBDEV_EMULATION`) |
+| `input_events=N` | устройства ввода | ≥1 (`gpio-keys` и/или `adc-joystick`) |
+| `status=ok` | отчёт дошёл до конца | ok |
+
+Если `input_events=0` — кнопки не заведены: проверить `dmesg | grep -i key` и DTS
+(`gpio-keys`/`adc-joystick`). Если `fb_present=0` — нет `/dev/fb0` (fbdev emulation).
 
 ## 1. Бэкап текущего состояния
 

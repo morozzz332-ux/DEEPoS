@@ -8,7 +8,7 @@ CROSS_IMAGE ?= deepos-cross:local
 PYTHON ?= python3
 KARCH  ?= linux-6.12.56
 
-.PHONY: help fonts launcher modd saved updatr updatr render test modd-test saved-test launch-test modules-test image-test board-test boot-test kconfig-check docker-image docker-cross docker-test kernel uboot image-full image clean
+.PHONY: help selftest-test fonts launcher modd saved updatr updatr render test modd-test saved-test launch-test modules-test image-test board-test boot-test kconfig-check docker-image docker-cross docker-test kernel uboot image-full image clean
 
 help:
 	@echo "make fonts        - regenerate bitmap fonts from tools/fonts/DejaVuSansMono.ttf"
@@ -83,6 +83,9 @@ launch-test: docker-image
 
 display-test: docker-image
 	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "make -C apps/launcher clean >/dev/null && make -C apps/launcher && python3 tests/display_test.py"
+
+selftest-test: docker-image
+	$(DOCKER) run --rm --entrypoint /bin/bash -v "$(CURDIR):/w" -w /w $(IMAGE) -c "make -C apps/launcher clean >/dev/null && make -C apps/launcher && python3 tests/selftest_test.py"
 
 input-test: docker-image
 	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "make -C apps/launcher clean >/dev/null && make -C apps/launcher && python3 tests/input_test.py && python3 tests/launcher_mod_test.py"

@@ -16,6 +16,28 @@
 
 ---
 
+## Быстрая проверка
+
+Хост-тесты (без консоли, в Docker-образе со всеми инструментами):
+
+```sh
+docker run --rm --entrypoint /bin/bash -v "$PWD:/w" -w /w deepos-build:local \
+  -c "make -C apps/launcher && make -C apps/modd && make -C apps/saved && make -C apps/updatr && sh build/run-tests.sh"
+```
+
+13 наборов: экраны/детерминизм/golden, `--selftest`, ввод, вывод на fbdev, список
+модулей, плата (DTS+конфиги), образ карты, супервизор `modd`, `saved`, протоколы
+модулей, BOOT/A-B, `updatr`, конвейер запуска игры.
+
+На только что прошитой консоли первым делом:
+
+```sh
+/usr/bin/launcher --selftest
+```
+
+Это печатает окружение (найденные ROM, `continue.tsv`, `emulators.toml`, связь с
+`modd`, `/dev/fb0`, число устройств ввода) — см. `docs/DEVICE-TEST-PLAN.md` §0.5.
+
 ## Что в этом репозитории
 
 | Путь | Что |

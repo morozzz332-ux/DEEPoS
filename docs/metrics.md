@@ -41,3 +41,7 @@
 
 | P4 continue-launch | host | `launch_test.py` 14 проверок, ROM+слот из `continue.tsv` |
 | image (0.4-dev) | `build/deepos-r36s-v20.img` 4 311 744 512 B, sha256 `2998da9941c4820c293577a0f1eadb5b5fb12d4e5da556d3a03ab52390450372` | ok |
+
+| P4 selftest | host | 1 набор, контракт `ключ=значение` + пустое окружение |
+| image (0.4-dev) | `build/deepos-r36s-v20.img` 4 311 744 512 B, sha256 `f19cc4ad9bdee3c564d5c3e887575144a1800b3d95788dedd0af36a7db6e579f` | ok |
+| тестовые наборы | 13 (screens, selftest, input, display, launcher+modd, board, image, modd, saved, modules, boot, updatr, launch) | PASS |

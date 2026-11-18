@@ -1,4 +1,5 @@
 /* DEEPoS launcher - prototype entry point (renders one screen to a PPM file). */
+#include <dirent.h>
 #include <stdio.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -29,7 +30,8 @@ static void usage(void)
          "  --keys LIST       apply synthetic keys (comma separated, for tests)\n"
          "  --print-state     print navigation state instead of rendering\n"
          "  --list            list available screens\n"
-         "  --list-roms       list detected ROM systems with game counts\n");
+         "  --selftest       print the device environment and exit\n"
+        "  --list-roms       list detected ROM systems with game counts\n");
 }
 
 #define TABS_COUNT 6
@@ -280,6 +282,45 @@ static int launch_game(const char *roms, const char *mods_socket, const char *em
     printf("launch\t%s\t%s\tslot=%d\t%d\n", sys, rom, slot, child);
     return child == 0 ? 0 : 1;
 }
+static int count_event_devices(void)
+{
+    DIR *d = opendir("/dev/input");
+    int n = 0;
+    struct dirent *e;
+    if (!d)
+        return 0;
+    while ((e = readdir(d)) != NULL) {
+        if (strncmp(e->d_name, "event", 5) == 0)
+            n++;
+    }
+    closedir(d);
+    return n;
+}
+
+/* Prints the environment the launcher is about to work in; first thing to run
+ * on a new device. */
+static int selftest(const char *roms, const char *data, const char *emulators_path,
+                    const char *mods_socket, const char *fb_path)
+{
+    struct dp_model *m = dp_model_new();
+    if (!m)
+        return 1;
+    dp_model_scan(m, roms);
+    dp_model_load_continue(m, data);
+    dp_modc_status(mods_socket, m);
+
+    printf("version=0.4\n");
+    printf("roms=%s systems=%d games=%u\n", roms, m->nsys, m->total_games);
+    printf("data=%s continue=%d\n", data, m->ncont);
+    printf("emulators=%s emulators_present=%d\n", emulators_path,
+           access(emulators_path, R_OK) == 0 ? 1 : 0);
+    printf("modd=%s modules=%d\n", mods_socket, m->nmods);
+    printf("fb=%s fb_present=%d\n", fb_path, access(fb_path, F_OK) == 0 ? 1 : 0);
+    printf("input_events=%d\n", count_event_devices());
+    printf("status=ok\n");
+    dp_model_free(m);
+    return 0;
+}
 int main(int argc, char **argv)
 {
     const char *roms = "/storage/roms";
@@ -327,6 +368,9 @@ int main(int argc, char **argv)
             for (int s = 0; s < DP_SCR_COUNT; s++)
                 printf("%s\n", dp_screen_id((enum dp_screen)s));
             return 0;
+        } else if (strcmp(a, "--selftest") == 0) {
+            return selftest(roms, data, emulators_path, mods_socket,
+                            fb_path ? fb_path : "/dev/fb0");
         } else if (strcmp(a, "--list-roms") == 0) {
             struct dp_model *lm = dp_model_new();
             if (!lm)
