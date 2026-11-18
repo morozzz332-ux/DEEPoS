@@ -1,0 +1,5 @@
+id = "thermal"
+entry = "sh main.sh"
+runtime = "bash"
+memory_mb = 16
+enabled = true

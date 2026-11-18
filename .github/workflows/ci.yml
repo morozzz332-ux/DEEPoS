@@ -26,6 +26,11 @@ jobs:
           docker run --rm -v "$PWD:/w" -w /w deepos-build:local \
             -c "python3 tests/run.py"
 
+      - name: Build modd and run supervisor tests
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w deepos-build:local \
+            -c "make -C apps/modd && python3 tests/modd_test.py"
+
       - name: Secret scan
         shell: pwsh
         run: ./tools/check-secrets.ps1

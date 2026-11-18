@@ -45,3 +45,30 @@
 Следующий шаг: `apps/modd` (супервизор модулей + JSON-RPC-транспорт с тестовым лаунчером),
 `apps/saved` (сейвы и resume), перенос модулей `thermal`/`saves` в `modules/` с юнит-тестами,
 затем `board/r36s-v20` и `tools/flash.ps1`.
+## 2026-11-18 · P4b (modd, супервизор модулей)
+
+Сделано:
+
+- `apps/modd` — C11, без зависимостей: `dp_json` (минимальные хелперы разбора/экранирования),
+  `dp_module` (манифест `module.toml`, spawn через `/bin/sh -c`, NDJSON-транспорт с id-матчингом,
+  таймауты, SIGTERM→SIGKILL, учёт падений), `modd` (UNIX-сокет `--socket`, методы `status`,
+  `initialize`, `action.invoke`, `shutdown`; ре-ап при необходимости, лог в stderr).
+- Протокол совместим по форме с Arch-R modules api 3: `{"jsonrpc":"2.0","id":N,"method":…,"params":…}`,
+  ответы `{"id":N,"result":…}` / `{"id":N,"error":{…}}`; модулю выставляются `MODD_MODULE_DATA`
+  и `ARCHR_MODULE_DATA` (каталог `--data/<id>`, 0700).
+- Наблюдатель: 3 падения за 10 минут → `disabled`; таймауты по умолчанию 10 000 мс на
+  `initialize` и 1 000 мс на `action.invoke`, переопределяются `MODD_INIT_MS` / `MODD_ACTION_MS`
+  (в тестах 400/300 мс).
+- `tests/fixtures/modd/{thermal,hang,crash}` — модули-заглушки: рабочий, «молчащий» и падающий.
+- `tests/modd_test.py` — гоняет modd по сокету: `status` (три модуля), `initialize`,
+  два `action.invoke` (`eco`, `balanced`) с проверкой файла действий, неизвестный модуль,
+  таймаут «молчащего» (<3 с при бюджете 0.4 с), watchdog (3 падения → `disabled`), `shutdown`.
+- `Makefile`: цели `modd`, `modd-test`, `docker-test` теперь гоняет оба набора; CI — отдельный шаг.
+
+Что сломалось и как починено:
+
+- musl/Alpine со `-std=c11 -Werror` не видел `setenv/kill/nanosleep` — добавлены
+  `-D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L`; удалена неиспользуемая переменная `deadline`.
+
+Метрики: бинарь modd 33 152 B, `tests/modd_test.py` ~0.64 с, профиль ОЗУ модуля — по манифесту
+(`memory_mb`), реальный cgroup-учёт появится на этапе сборки образа (systemd-run).

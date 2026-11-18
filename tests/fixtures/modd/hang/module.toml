@@ -1,0 +1,5 @@
+id = "hang"
+entry = "sh main.sh"
+runtime = "bash"
+memory_mb = 8
+enabled = true
