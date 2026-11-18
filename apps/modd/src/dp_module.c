@@ -49,6 +49,7 @@ int dp_module_load(struct dp_module *m, const char *dir)
     m->fd_out = -1;
     m->state = MODD_STOPPED;
     m->memory_mb = 32;
+    m->enabled = 1; /* enabled unless the manifest says otherwise */
     snprintf(m->dir, sizeof(m->dir), "%s", dir);
 
     if (snprintf(path, sizeof(path), "%s/module.toml", dir) >= (int)sizeof(path))
@@ -57,11 +58,26 @@ int dp_module_load(struct dp_module *m, const char *dir)
     if (!f)
         return -1;
 
+    char section[64] = "";
+
     while (fgets(line, sizeof(line), f)) {
         char *eq;
         trim(line);
-        if (!line[0] || line[0] == '#' || line[0] == '[')
+        if (!line[0] || line[0] == '#')
             continue;
+        if (line[0] == '[') {
+            /* Section headers gate the keys below them: only [run] and [limits]
+             * carry module fields, anything else (tiles, pages) is UI metadata
+             * and may repeat "id". */
+            size_t k = 0;
+            char *cursor = line;
+            while (*cursor == '[')
+                cursor++;
+            while (*cursor && *cursor != ']' && k + 1 < sizeof(section))
+                section[k++] = *cursor++;
+            section[k] = '\0';
+            continue;
+        }
         eq = strchr(line, '=');
         if (!eq)
             continue;
@@ -73,16 +89,27 @@ int dp_module_load(struct dp_module *m, const char *dir)
         trim(value);
         unquote(value);
 
-        if (!strcmp(line, "id"))
-            snprintf(m->id, sizeof(m->id), "%s", value);
-        else if (!strcmp(line, "entry"))
-            snprintf(m->entry, sizeof(m->entry), "%s", value);
-        else if (!strcmp(line, "runtime"))
-            snprintf(m->runtime, sizeof(m->runtime), "%s", value);
-        else if (!strcmp(line, "memory_mb"))
-            m->memory_mb = atoi(value);
-        else if (!strcmp(line, "enabled"))
-            m->enabled = strcmp(value, "false") != 0;
+        if (!section[0] || !strcmp(section, "module")) {
+            /* Legacy flat manifests keep entry/runtime/memory_mb at top level. */
+            if (!strcmp(line, "id"))
+                snprintf(m->id, sizeof(m->id), "%s", value);
+            else if (!strcmp(line, "enabled"))
+                m->enabled = strcmp(value, "false") != 0;
+            else if (!strcmp(line, "entry"))
+                snprintf(m->entry, sizeof(m->entry), "%s", value);
+            else if (!strcmp(line, "runtime"))
+                snprintf(m->runtime, sizeof(m->runtime), "%s", value);
+            else if (!strcmp(line, "memory_mb"))
+                m->memory_mb = atoi(value);
+        } else if (!strcmp(section, "run")) {
+            if (!strcmp(line, "entry"))
+                snprintf(m->entry, sizeof(m->entry), "%s", value);
+            else if (!strcmp(line, "runtime"))
+                snprintf(m->runtime, sizeof(m->runtime), "%s", value);
+        } else if (!strcmp(section, "limits")) {
+            if (!strcmp(line, "memory_mb"))
+                m->memory_mb = atoi(value);
+        }
     }
     fclose(f);
 
@@ -136,7 +163,13 @@ int dp_module_start(struct dp_module *m, const char *data_dir)
         setenv("MODD_MODULE_DIR", m->dir, 1);
         setenv("MODD_MODULE_DATA", data_path, 1);
         setenv("ARCHR_MODULE_DATA", data_path, 1);
-        execl("/bin/sh", "sh", "-c", m->entry, (char *)NULL);
+        if (!strchr(m->entry, '/') && !strchr(m->entry, ' ')) {
+            char cmd[400];
+            snprintf(cmd, sizeof(cmd), "./%s", m->entry);
+            execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+        } else {
+            execl("/bin/sh", "sh", "-c", m->entry, (char *)NULL);
+        }
         _exit(127);
     }
 

@@ -31,6 +31,10 @@ jobs:
           docker run --rm -v "$PWD:/w" -w /w deepos-build:local \
             -c "make -C apps/modd && python3 tests/modd_test.py"
 
+      - name: Build modules and run protocol tests
+        run: |
+          make -C apps/modd
+          python3 tests/modules_test.py
       - name: Build saved and run save-store tests
         run: |
           docker run --rm -v "$PWD:/w" -w /w deepos-build:local \

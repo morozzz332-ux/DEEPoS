@@ -16,3 +16,4 @@
 - прогон тестов (`tests/run.py --no-build`): **993 мс**;
 - golden-хэши: 565 B (`tests/golden/hashes.json`), 7 записей;
 - шрифты: 181 глиф × 2 размера (13/17 px box, 11/14 px box), `dp_font.c` 28 869 B + `dp_font_small.c` 24 585 B.
+- P4b+ modules (host): thermal + saves protocol, helpers, modd handshake, rotation — PASS (python3 tests/modules_test.py)

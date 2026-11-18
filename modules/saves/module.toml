@@ -1,0 +1,22 @@
+# DEEPoS module manifest (api 3, Arch-R compatible shape).
+id = "saves"
+name = "Бэкап сейвов"
+api_version = 3
+version = "0.1.0"
+
+[run]
+runtime = "bash"
+entry = "main.sh"
+mode = "daemon"
+
+[limits]
+memory_mb = 12
+
+[[start.tiles]]
+id = "saves"
+label = "Сейвы"
+open = "main"
+
+[[pages]]
+id = "main"
+title = "Бэкап сейвов"
