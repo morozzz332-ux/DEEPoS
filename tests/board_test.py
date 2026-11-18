@@ -145,7 +145,7 @@ def test_extlinux():
     check("extlinux has DEEPoS label", re.search(r"(?m)^LABEL\s+DEEPoS$", conf) is not None)
     check("extlinux boots /KERNEL", re.search(r"(?m)^\s*LINUX\s+/KERNEL$", conf) is not None)
     check("extlinux uses board dtb", "FDT /dtbs/rk3326-r36s-v20.dtb" in conf)
-    check("extlinux root is the A slot device", "root=/dev/mmcblk1p2" in conf)
+    check("extlinux root is the A slot label", "root=PARTLABEL=DEEPOS_A" in conf)
     check("extlinux rootfstype is squashfs", "rootfstype=squashfs" in conf)
     check("no label-based root (needs an initramfs we do not ship)", "root=LABEL=" not in conf)
     check("extlinux mounts read-only", re.search(r"(?m)^\s+.*\bro\b", conf) is not None)

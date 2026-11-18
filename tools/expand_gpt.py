@@ -31,7 +31,8 @@ def crc32(data):
 
 
 def header_crc(header):
-    raw = bytearray(header)
+    size = struct.unpack_from("<I", header, 12)[0]
+    raw = bytearray(header[:size] if 92 <= size <= len(header) else header)
     raw[16:20] = b"\x00\x00\x00\x00"
     return crc32(bytes(raw))
 
