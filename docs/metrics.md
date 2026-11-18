@@ -83,4 +83,5 @@
 | P7 preflight test | `tests/preflight_test.py` | GO/NO-GO на синтетике (missing fdt, missing launcher) | PASS |
 | P8 render timings (host) | `tests/ci/measure.py` | 7 экранов: 9.4–10.7 мс/кадр, бинарь 85 208 B | PASS |
 | образ (0.13-dev) | 4 294 967 296 B, sha256 `349a900d6b318888851e35a2260893db2b7eadfb4ec99e08b194935e0d4bf2c3` | UART getty + passwd | ok |
+| release report | `docs/RELEASE.md`, 7 артефактов, git `main` | `tests/release_test.py` | PASS |
 

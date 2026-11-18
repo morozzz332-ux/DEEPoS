@@ -650,3 +650,17 @@
 - **SD-карты в картридере нет** (`Get-Disk` видит только NVMe и внешний HDD) — для записи
   DEEPoS карту нужно вставить в картридер.
 
+## 2026-11-18 · P9 (release-отчёт и безопасный выбор карты)
+
+- `tools/dpflash.py --list`: номер `PhysicalDriveN` больше не угадывается. На Windows
+  список берётся из `Get-Disk` (Number / FriendlyName / Size / BusType / PartitionStyle),
+  на Linux — из `/sys/block` (пропускает loop/ram/zram, печатает removable и модель).
+- `tools/release.py`: пишет `docs/RELEASE.md` — sha256 и размеры образа, ядра, DTB,
+  rootfs, загрузчиков, версию BOOT из `build/boot/MANIFEST.json` и git-ветку/коммит,
+  плюс блок команд, которые надо выполнить перед записью на карту.
+- `tests/release_test.py`: синтетическое дерево → sha256/размер/версия в отчёте,
+  отсутствие байтов артефактов, guard `exit 2` при пропавшем образе и `--allow-missing`.
+- В `tests/ci/Dockerfile` добавлен `git` (без него в отчёте было `git: ?`).
+- Проверка: 16 наборов PASS, отчёт `docs/RELEASE.md` соответствует образу
+  sha256 `349a900d…` (0.13-dev; полный хэш — в `docs/RELEASE.md`).
+

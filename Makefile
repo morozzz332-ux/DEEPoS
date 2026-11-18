@@ -10,7 +10,7 @@ SIZE_MIB ?= 4096
 IMG      ?= build/deepos-r36s-v20.img
 KARCH  ?= linux-6.12.56
 
-.PHONY: config-test help selftest-test fonts launcher modd saved updatr updatr render test modd-test saved-test launch-test modules-test image-test board-test boot-test kconfig-check verify-image docker-image docker-cross docker-test kernel uboot image-full image clean
+.PHONY: preflight preflight-test release release-test config-test help selftest-test fonts launcher modd saved updatr updatr render test modd-test saved-test launch-test modules-test image-test board-test boot-test kconfig-check verify-image docker-image docker-cross docker-test kernel uboot image-full image clean
 
 help:
 	@echo "make fonts        - regenerate bitmap fonts from tools/fonts/DejaVuSansMono.ttf"
@@ -32,6 +32,8 @@ help:
 	@echo "make kconfig-check- merge linux.config into a real 6.12 kernel tree and verify"
 	@echo "make kernel       - cross-build Image + board DTB into build/kernel"
 	@echo "make uboot        - cross-build the Rockchip boot chain into build/uboot"
+	@echo "make preflight    - GO/NO-GO check of kernel, dtb, boot tree, rootfs, loaders"
+	@echo "make release      - write docs/RELEASE.md with sha256 of every artefact"
 	@echo "make verify-image - verify the built image (GPT CRCs, loader, payloads) before flashing"
 	@echo "make image-full   - full image with real kernel, DTB, boot chain and rootfs"
 	@echo "make docker-test  - run every test suite inside the image (recommended)"
@@ -140,6 +142,12 @@ clean:
 
 preflight:
 	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "python3 tools/preflight.py --root /w"
+
+release:
+	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "python3 tools/release.py --root ."
+
+release-test:
+	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "python3 tests/release_test.py"
 
 preflight-test:
 	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "python3 tests/preflight_test.py"
