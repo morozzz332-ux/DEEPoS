@@ -1,0 +1,9 @@
+#!/bin/sh
+# DEEPoS: block sensitive data before it reaches history.
+# Setup: powershell -File tools/setup-dev.ps1
+root=$(git rev-parse --show-toplevel) || exit 1
+script="$root/tools/check-secrets.ps1"
+if command -v cygpath >/dev/null 2>&1; then
+    script=$(cygpath -w "$script")
+fi
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$script" -Staged
