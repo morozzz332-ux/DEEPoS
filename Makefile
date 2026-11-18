@@ -6,6 +6,8 @@ DOCKER ?= docker
 IMAGE  ?= deepos-build:local
 CROSS_IMAGE ?= deepos-cross:local
 PYTHON ?= python3
+SIZE_MIB ?= 4096
+IMG      ?= build/deepos-r36s-v20.img
 KARCH  ?= linux-6.12.56
 
 .PHONY: help selftest-test fonts launcher modd saved updatr updatr render test modd-test saved-test launch-test modules-test image-test board-test boot-test kconfig-check verify-image docker-image docker-cross docker-test kernel uboot image-full image clean
@@ -111,19 +113,21 @@ uboot: docker-cross
 
 image: docker-image
 	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "mkdir -p build/data && cp board/r36s-v20/data/emulators.toml build/data/emulators.toml && python3 tools/mkimage.py --out build/deepos-r36s-v20.img --size-mib $(SIZE_MIB) --boot build/boot --sys-a build/rootfs.squashfs --data build/data"
+	$(MAKE) verify-image
 
 # Full image: real kernel + DTB (build/kernel), boot chain (build/uboot) and the
 # staged BOOT tree. Fails loudly when a piece is missing instead of silently
 # producing an unbootable card.
 verify-image: docker-image
 	@echo "==> verifying $(IMG) before writing it to a card"
-	docker run --rm --entrypoint /bin/bash -v "$(CURDIR):/w" -w /w $(DOCKER_IMAGE) \
-		python3 tools/verify-image.py --loader build/uboot $(IMG)
+	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) \
+		-c "python3 tools/verify-image.py --loader build/uboot $(IMG)"
 
 image-full: docker-image
 	@test -f build/kernel/Image || (echo "missing build/kernel/Image - run 'make kernel' first" >&2; exit 1)
 	@test -f build/uboot/idbloader.img || (echo "missing build/uboot/idbloader.img - run 'make uboot' first" >&2; exit 1)
 	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "mkdir -p build/data && cp board/r36s-v20/data/emulators.toml build/data/emulators.toml && python3 tools/mkimage.py --out build/deepos-r36s-v20.img --size-mib $(SIZE_MIB) --boot build/boot --sys-a build/rootfs.squashfs --data build/data --loader build/uboot"
+	$(MAKE) verify-image
 
 clean:
 	$(MAKE) -C apps/launcher clean
