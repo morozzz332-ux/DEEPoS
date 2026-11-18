@@ -152,3 +152,42 @@
 - Разведка: в mainline U-Boot v2025.10 **нет rk3326** (`configs/`, `arch/arm/dts`, `board/rockchip`
   содержат только rk3308/rk3328/…), поэтому загрузчик для этой платы собирается из вендорского
   форка `rockchip-linux/u-boot` (`evb-rk3326_defconfig`, BL31 из `rkbin`).
+
+## 2026-11-18 · P2/P3 (rootfs: busybox, userland, squashfs)
+
+- `tools/build-userland.sh` — кросс-сборка `launcher`, `modd`, `saved` под
+  `aarch64-linux-gnu` со статической линковкой (в образе нет glibc помимо busybox).
+  Флаги: `-D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L`, `-U_FORTIFY_SOURCE`
+  (Ubuntu-заголовки включают fortify и валят сборку на `-Wformat-truncation`).
+- `tools/gen-busybox-config.sh` — пересборка `board/r36s-v20/busybox.config` из
+  `defconfig` плюс нужные апплеты (mdev, ash, mount, ip, udhcpc, tar). `CONFIG_TC`
+  отключён: busybox 1.36.1 не собирается против заголовков 6.x (`struct tc_cbq_wrropt`).
+- `tools/build-rootfs.sh` — busybox (static) → `/bin/busybox` с апплетами, наши
+  бинарники в `/usr/bin`, overlay (`/etc/os-release`, `inittab`, `init.d/rcS`,
+  `fstab`), модули в `/usr/share/deepos/modules`, упаковка в `build/rootfs.squashfs`.
+- Артефакт: `build/rootfs.squashfs` 1 867 776 B, 439 записей; `/sbin/init` →
+  busybox, `/usr/bin/{launcher,modd,saved}` присутствуют.
+- Уроки: `python`-скрипты на Windows пишут CRLF — shell-скрипты портились
+  (`set: Illegal option -`), поэтому все `tools/*.sh` пишутся с `newline='\n'`;
+  правки C-файлов через PowerShell-`.Replace` с `\n` внутри одинарных кавычек
+  дают литеральные ``\n`` в коде — надёжнее править Python-скриптом.
+
+## 2026-11-18 · P0/P2/P3 (ядро 6.12.56, rootfs, образ карты)
+
+- Ядро: mainline 6.12.56, фрагмент `board/r36s-v20/linux.config` (113/113 символов
+  выживают `merge_config`), кросс-сборка `aarch64-linux-gnu-` в `deepos-cross:local`.
+  Итог: `build/kernel/Image` 74 490 368 B, DTB 46 564 B (собран из реальных
+  `rk3326.dtsi`/`px30.dtsi`), sha256 конфига `06daed84…`.
+- DTS пришлось выправить под реальные биндинги: `dt-bindings/input/linux-event-codes.h`,
+  `&display_subsystem`/`&vopb_out` в `rk3326.dtsi`, метки `&u2phy`/`&u2phy_otg`.
+- Rootfs: static busybox 1.36.1 (lean: без cron/syslog/tc) + наши бинарники
+  (launcher 598 216 B, modd 597 960 B, saved 663 480 B, static aarch64) +
+  overlay (`inittab`, `rcS`, `os-release`) + модули → `build/rootfs.squashfs`
+  1 867 776 B (439 записей).
+- Образ: `build/deepos-r36s-v20.img` 4 296 015 872 B, sha256 `19130fdb…`,
+  GPT 5 разделов (BOOT 256 MiB / DEEPOS_A 700 / DEEPOS_B 700 / DATA 1.5 GiB /
+  ROMS ~904 MiB), `mdir` видит KERNEL 74 490 368 B, `dtbs/`, `extlinux/`, `logo.bmp`.
+- Открытый блокер: загрузчик. В mainline U-Boot нет RK3326 (только rk3308/rk3328),
+  нужен вендорский `rockchip-linux/u-boot` (ветка `next-dev`, `evb-rk3326_defconfig`)
+  + BL31 из `rkbin`; `tools/build-uboot.sh` написан, запущен в контейнере, результат
+  в `build/uboot.log`. Без `idbloader.img`/`u-boot.itb` образ не стартует на железе.

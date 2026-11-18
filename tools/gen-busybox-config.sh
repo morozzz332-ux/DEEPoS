@@ -46,6 +46,15 @@ for sym in \
     fi
 done
 
+# Keep the image lean: no cron, no syslog daemons, no kernel log reader.
+# DEEPoS logs to the kernel ring buffer and journald-less files only.
+for sym in CONFIG_CROND CONFIG_CRONTAB CONFIG_SYSLOGD CONFIG_KLOGD \
+           CONFIG_LOGREAD CONFIG_FEATURE_IPC_SYSLOG CONFIG_FEATURE_KMSG_SYSLOG; do
+    if grep -q "^${sym}=y" .config; then
+        sed -i "s/^${sym}=y/# ${sym} is not set/" .config
+    fi
+done
+
 make -s ARCH=arm64 CROSS_COMPILE="$CROSS" oldconfig >/dev/null
 cp .config "$REPO/board/r36s-v20/busybox.config"
 

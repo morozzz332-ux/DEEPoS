@@ -21,3 +21,6 @@
 - P0/P1 board (host): DTB 9 316 B, dtc+kernel/busybox configs+extlinux+rootfs builder — PASS (python3 tests/board_test.py, 306 мс)- P6/P7 boot (host): mkboot layout/manifest + A/B attempts/rollback — PASS (python3 tests/boot_test.py)
 - P1 kconfig (6.12.56, host): 113/113 fragment symbols satisfied, 0 unknown — PASS (sh tools/kconfig-check.sh)
 | P0 kernel | build-kernel.sh | Image + DTB из исходников, BUILD.txt с sha конфига |
+| P3 rootfs | build-rootfs.sh | squashfs 1.87 MB, 439 entries, static busybox + 3 apps |
+| P0 kernel | 6.12.56 aarch64 | Image 74.5 MB, DTB 46.6 KB, config 113/113 |
+| P3 image | mkimage 4096 MiB | 4 296 015 872 B, sha256 19130fdb…, 5 partitions |
