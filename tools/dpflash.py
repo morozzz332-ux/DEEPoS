@@ -227,7 +227,7 @@ def close(handle):
 
 
 def flash(image_path, target_path, dry_run=False, defer_table=True, expected_sha=None,
-          resume=False, verify=False):
+          resume=False, verify=False, expand=False):
     image_size = os.path.getsize(image_path)
     card_size = target_size(target_path)
     if card_size < image_size:
@@ -290,6 +290,9 @@ def flash(image_path, target_path, dry_run=False, defer_table=True, expected_sha
         if got != digest:
             raise SystemExit(f"dpflash: card sha256 mismatch ({got})")
         print("verified: whole card matches the image")
+    if expand:
+        import expand_gpt
+        expand_gpt.expand_target(target_path, card_size)
     print("done: table written last, card is bootable")
     return 0
 
@@ -358,6 +361,8 @@ def main(argv=None):
     parser.add_argument("--expect-sha256", default=None)
     parser.add_argument("--resume", action="store_true",
                         help="skip chunks that already match the image (retry after a reader hiccup)")
+    parser.add_argument("--expand", action="store_true",
+                        help="grow the last partition to the real card size after writing")
     parser.add_argument("--verify", action="store_true",
                         help="after writing, read the whole card back and compare sha256")
     args = parser.parse_args(argv)
@@ -367,7 +372,7 @@ def main(argv=None):
         parser.error("--image and --target are required unless --list is used")
     return flash(args.image, args.target, dry_run=args.dry_run,
                  defer_table=not args.no_defer_table, expected_sha=args.expect_sha256,
-                 resume=args.resume, verify=args.verify)
+                 resume=args.resume, verify=args.verify, expand=args.expand)
 
 
 if __name__ == "__main__":

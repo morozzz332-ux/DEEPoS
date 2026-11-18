@@ -92,7 +92,7 @@ Log "writing..."
 try {
     $flashArgs = @((Join-Path $root "tools\dpflash.py"), "--image", $img,
                    "--target", ("\\.\PhysicalDrive" + $Disk),
-                   "--expect-sha256", $Sha256, "--resume")
+                   "--expect-sha256", $Sha256, "--resume", "--expand")
     if (-not $SkipVerify) { $flashArgs += "--verify" }
     $out = & $Python @flashArgs 2>&1
     $code = $LASTEXITCODE
