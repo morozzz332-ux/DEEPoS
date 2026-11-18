@@ -21,13 +21,13 @@ jobs:
             -c "python3 tools/gen-font.py"
           git diff --exit-code -- apps/launcher/src/dp_font.c apps/launcher/src/dp_font_small.c
 
-      # One step, one entry point: build/run-tests.sh runs every host suite
+      # One step, one entry point: tests/run-all.sh runs every host suite
       # (screens, selftest, input, display, modules UI, board, image, modd,
       # saved, modules, boot, updatr, launch) inside the same image CI uses.
       - name: Run every host test suite
         run: |
           docker run --rm --entrypoint /bin/bash -v "$PWD:/w" -w /w deepos-build:local \
-            -c "make -C apps/launcher && make -C apps/modd && make -C apps/saved && make -C apps/updatr && sh build/run-tests.sh"
+            -c "make -C apps/launcher && make -C apps/modd && make -C apps/saved && make -C apps/updatr && sh tests/run-all.sh"
 
       - name: Secret scan
         shell: pwsh
