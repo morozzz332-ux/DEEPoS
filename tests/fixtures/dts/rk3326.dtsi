@@ -1,0 +1,81 @@
+/*
+ * Minimal stand-in for the kernel's arch/arm64/boot/dts/rockchip/rk3326.dtsi.
+ *
+ * Host tests compile board DTS files without the kernel tree, so they need the
+ * labels that the board file references. This stub only declares those labels;
+ * on a real build the kernel's rk3326.dtsi is used instead (same label names).
+ */
+/dts-v1/;
+
+/ {
+	#address-cells = <2>;
+	#size-cells = <2>;
+
+	aliases { };
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+	};
+
+	soc {
+		#address-cells = <2>;
+		#size-cells = <2>;
+
+		gpio0: gpio@ff210000 {
+			#gpio-cells = <2>;
+			#interrupt-cells = <2>;
+			gpio-controller;
+			interrupt-controller;
+		};
+		gpio1: gpio@ff220000 {
+			#gpio-cells = <2>;
+			#interrupt-cells = <2>;
+			gpio-controller;
+			interrupt-controller;
+		};
+		gpio2: gpio@ff230000 {
+			#gpio-cells = <2>;
+			#interrupt-cells = <2>;
+			gpio-controller;
+			interrupt-controller;
+		};
+		gpio3: gpio@ff240000 {
+			#gpio-cells = <2>;
+			#interrupt-cells = <2>;
+			gpio-controller;
+			interrupt-controller;
+		};
+
+		cru: clock-controller@ff2b0000 { };
+
+		sdmmc: mmc@ff370000 { };
+		i2s1_2ch: i2s@ff300000 { };
+		saradc: saradc@ff288000 { };
+		pwm4: pwm@ff1f0030 { };
+		i2c1: i2c@ff160000 { };
+		uart2: serial@ff158000 { };
+
+		dsi: dsi@ff450000 {
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				dsi_in_vopb: endpoint@0 { reg = <0>; };
+				dsi_out: endpoint@1 { reg = <1>; };
+			};
+		};
+
+		usb20_otg: usb@ff300000 { };
+		u2phy0: phy@ff2e0000 {
+			u2phy0_otg: otg-port { };
+		};
+	};
+
+	pinctrl: pinctrl {
+		sdmmc_clk: sdmmc-clk { };
+		pcfg_pull_up: pcfg-pull-up {
+			drive-strength = <8>;
+		};
+	};
+};

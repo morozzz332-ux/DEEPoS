@@ -37,3 +37,5 @@ tests/out/
 *.ppm
 __pycache__/
 *.pyc
+.tmp/
+build/
