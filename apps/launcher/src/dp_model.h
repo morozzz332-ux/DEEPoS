@@ -25,6 +25,8 @@ struct dp_continue_item {
     char meta[24];            /* "12 мин", "вчера" */
     int slot;                 /* -1 = no save */
     int has_save;
+    char sys_id[32];          /* folder id, e.g. "md" */
+    char rom[64];             /* file name inside the system folder */
 };
 
 struct dp_module_info {

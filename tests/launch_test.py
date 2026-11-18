@@ -128,6 +128,34 @@ def main() -> int:
               f"slot not passed: {argv!r}")
         check("slot=3" in res.stdout, f"stdout: {res.stdout!r}")
 
+
+        # 7. Continue screen: A on a saved row launches with its slot
+        data_dir = tmp / "data"
+        data_dir.mkdir()
+        (data_dir / "continue.tsv").write_text(
+            "Sonic 3 & Knuckles\tmega drive\t12 мин\t2\t1\tmd\tg0.md\n"
+            "Crash Bandicoot 2\tplaystation\t1 ч 04\t-1\t0\tpsx\tg1.cue\n",
+            encoding="utf-8",
+        )
+        marker.unlink(missing_ok=True)
+        emu_slot.write_text(f'md = "sh {stub} %ROM% %SLOT%"\n')
+        res = run_launcher(["--roms", str(roms), "--data", str(data_dir),
+                            "--emulators", str(emu_slot), "--keys", "A"])
+        check(res.returncode == 0, f"continue launch exit {res.returncode}: {res.stderr}")
+        argv = marker.read_text() if marker.exists() else ""
+        check(str(roms / "md" / "g0.md") in argv, f"continue launched wrong rom: {argv!r}")
+        check("2" in argv.split(), f"continue slot not passed: {argv!r}")
+        check("slot=2" in res.stdout, f"stdout: {res.stdout!r}")
+
+        # 8. Continue row without a rom (older continue.tsv) must not launch
+        (data_dir / "continue.tsv").write_text(
+            "Sonic 3 & Knuckles\tmega drive\t12 мин\t2\t1\n", encoding="utf-8")
+        marker.unlink(missing_ok=True)
+        res = run_launcher(["--roms", str(roms), "--data", str(data_dir),
+                            "--emulators", str(emu_slot), "--keys", "A", "--print-state"])
+        check(res.returncode == 0, f"no-rom continue exit {res.returncode}")
+        check(not marker.exists(), "continue row without rom must not launch")
+
         # 5. module hook: allow and deny through a real modd
         proc, sock = start_modd(tmp)
         try:
@@ -157,7 +185,7 @@ def main() -> int:
         for f in failures:
             print("  -", f)
         return 1
-    print("PASS  launch: emulators.toml, %ROM%/%SLOT% expansion, hook allow/deny, exit codes")
+    print("PASS  launch: emulators.toml, %ROM%/%SLOT%, hook, continue screen, exit codes")
     return 0
 
 

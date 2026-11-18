@@ -161,11 +161,11 @@ int dp_model_load_continue(struct dp_model *m, const char *data_dir)
             line[--len] = '\0';
         if (!len || line[0] == '#')
             continue;
-        char *fields[5] = { 0 };
+        char *fields[7] = { 0 };
         int nf = 0;
         char *p = line;
         fields[nf++] = p;
-        for (; *p && nf < 5; p++) {
+        for (; *p && nf < 7; p++) {
             if (*p == '\t') {
                 *p = '\0';
                 fields[nf++] = p + 1;
@@ -180,6 +180,10 @@ int dp_model_load_continue(struct dp_model *m, const char *data_dir)
             snprintf(it->meta, sizeof(it->meta), "%s", fields[2]);
         it->slot = (nf > 3 && fields[3]) ? atoi(fields[3]) : -1;
         it->has_save = (nf > 4 && fields[4]) ? atoi(fields[4]) : (it->slot >= 0);
+        if (nf > 5 && fields[5])
+            snprintf(it->sys_id, sizeof(it->sys_id), "%s", fields[5]);
+        if (nf > 6 && fields[6])
+            snprintf(it->rom, sizeof(it->rom), "%s", fields[6]);
         m->ncont++;
     }
     fclose(f);

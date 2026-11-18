@@ -39,6 +39,10 @@ struct dp_nav {
     int level;      /* games tab: 0 = system list, 1 = game list */
     int sel;
     int system;
+    int launch;     /* set when the user asked to start a game */
+    char lsys[32];
+    char lrom[64];
+    int lslot;
 };
 
 static int tab_screen(const struct dp_nav *nav)
@@ -118,6 +122,14 @@ static int nav_key(struct dp_nav *nav, const struct dp_model *m, enum dp_key key
             nav->system = nav->sel < m->nsys ? nav->sel : 0;
             nav->level = 1;
             nav->sel = 0;
+        } else if (scr == DP_SCR_CONTINUE && nav->sel < m->ncont) {
+            const struct dp_continue_item *it = &m->cont[nav->sel];
+            if (it->rom[0]) {
+                snprintf(nav->lsys, sizeof(nav->lsys), "%s", it->sys_id);
+                snprintf(nav->lrom, sizeof(nav->lrom), "%s", it->rom);
+                nav->lslot = it->slot;
+                nav->launch = 1;
+            }
         }
         break;
     case DP_KEY_B:
@@ -244,6 +256,30 @@ static int run_command(const char *cmd) {
     return -1;
 }
 
+static int launch_game(const char *roms, const char *mods_socket, const char *emulators_path,
+                       const char *sys, const char *rom, int slot)
+{
+    struct dp_launch_cfg cfg;
+    char rom_path[1024];
+    char cmd[1200];
+    int allow = 1;
+    int child;
+
+    dp_modc_launch(mods_socket, sys, rom, &allow);
+    if (!allow) {
+        printf("blocked\t%s\t%s\n", sys, rom);
+        return 4;
+    }
+    if (parse_emulators(emulators_path, sys, &cfg) != 0) {
+        fprintf(stderr, "launcher: no emulator for '%s' in %s\n", sys, emulators_path);
+        return 5;
+    }
+    snprintf(rom_path, sizeof(rom_path), "%s/%s/%s", roms, sys, rom);
+    expand_rom(cfg.cmd, rom_path, slot, cmd, sizeof(cmd));
+    child = run_command(cmd);
+    printf("launch\t%s\t%s\tslot=%d\t%d\n", sys, rom, slot, child);
+    return child == 0 ? 0 : 1;
+}
 int main(int argc, char **argv)
 {
     const char *roms = "/storage/roms";
@@ -333,11 +369,7 @@ int main(int argc, char **argv)
         char spec[512];
         char sys[32];
         char rom[128];
-        char rom_path[1024];
-        char cmd[1200];
-        struct dp_launch_cfg cfg;
-        int allow = 1;
-        int child;
+        int rc_game;
         snprintf(spec, sizeof(spec), "%s", run_game);
         char *colon = strchr(spec, ':');
         if (!colon) {
@@ -348,24 +380,9 @@ int main(int argc, char **argv)
         *colon = '\0';
         snprintf(sys, sizeof(sys), "%s", spec);
         snprintf(rom, sizeof(rom), "%s", colon + 1);
-
-        dp_modc_launch(mods_socket, sys, rom, &allow);
-        if (!allow) {
-            printf("blocked\t%s\t%s\n", sys, rom);
-            dp_model_free(m);
-            return 4;
-        }
-        if (parse_emulators(emulators_path, sys, &cfg) != 0) {
-            fprintf(stderr, "launcher: no emulator for '%s' in %s\n", sys, emulators_path);
-            dp_model_free(m);
-            return 5;
-        }
-        snprintf(rom_path, sizeof(rom_path), "%s/%s/%s", roms, sys, rom);
-        expand_rom(cfg.cmd, rom_path, save_slot, cmd, sizeof(cmd));
-        child = run_command(cmd);
-        printf("launch\t%s\t%s\tslot=%d\t%d\n", sys, rom, save_slot, child);
+        rc_game = launch_game(roms, mods_socket, emulators_path, sys, rom, save_slot);
         dp_model_free(m);
-        return child == 0 ? 0 : 1;
+        return rc_game;
     }
 
     if (module_action) {
@@ -404,7 +421,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    struct dp_nav nav;
+    struct dp_nav nav = { 0 };
     nav.tab = tab_from_screen(scr);
     nav.level = 0;
     nav.sel = system_index;
@@ -414,7 +431,8 @@ int main(int argc, char **argv)
     if (keys) {
         char buf[512];
         snprintf(buf, sizeof(buf), "%s", keys);
-        for (char *tok = strtok(buf, ", ;"); tok && !quit; tok = strtok(NULL, ", ;")) {
+        for (char *tok = strtok(buf, ", ;"); tok && !quit && !nav.launch;
+             tok = strtok(NULL, ", ;")) {
             enum dp_key k = dp_key_from_name(tok);
             if (k == DP_KEY_NONE) {
                 fprintf(stderr, "launcher: unknown key '%s'\n", tok);
@@ -424,6 +442,14 @@ int main(int argc, char **argv)
             }
             quit = nav_key(&nav, m, k);
         }
+    }
+
+    if (nav.launch) {
+        int rc_game = launch_game(roms, mods_socket, emulators_path, nav.lsys, nav.lrom,
+                                  nav.lslot);
+        dp_canvas_free(&cv);
+        dp_model_free(m);
+        return rc_game;
     }
 
     if (print_state || (keys && !out && !fb_path)) {
@@ -458,7 +484,7 @@ int main(int argc, char **argv)
     if (!out && !fb_path) {
         struct dp_input in;
         if (dp_input_open(&in) == 0) {
-            while (!quit) {
+            while (!quit && !nav.launch) {
                 enum dp_key k = dp_input_poll(&in, 250);
                 if (k == DP_KEY_NONE)
                     continue;

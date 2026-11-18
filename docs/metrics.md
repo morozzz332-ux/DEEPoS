@@ -38,3 +38,6 @@
 
 | launch slot | `--save-slot N` + `%SLOT%`, проверено заглушкой | PASS |
 | DATA content | `debugfs` читает файл из раздела DATA тестового образа | PASS |
+
+| P4 continue-launch | host | `launch_test.py` 14 проверок, ROM+слот из `continue.tsv` |
+| image (0.4-dev) | `build/deepos-r36s-v20.img` 4 311 744 512 B, sha256 `2998da9941c4820c293577a0f1eadb5b5fb12d4e5da556d3a03ab52390450372` | ok |
