@@ -116,6 +116,19 @@ static int take_string(const char *p, char *dst, size_t dst_len, const char **ne
     return 0;
 }
 
+int dp_modc_action(const char *socket_path, const char *module_id, const char *action)
+{
+    char params[256];
+    int n = snprintf(params, sizeof(params), "{\"module\":\"%s\",\"action\":\"%s\"}",
+                     module_id, action);
+    if (n <= 0 || n >= (int)sizeof(params))
+        return -1;
+    char payload[MODC_MAX_LINE];
+    if (dp_modc_call(socket_path, "action.invoke", params, payload, sizeof(payload)) != 0)
+        return -1;
+    return strstr(payload, "\"ok\":true") ? 0 : -1;
+}
+
 int dp_modc_status(const char *socket_path, struct dp_model *m)
 {
     char payload[MODC_MAX_LINE];

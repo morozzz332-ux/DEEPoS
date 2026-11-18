@@ -292,3 +292,13 @@
 - `tests/display_test.py` — 8 проверок: полный кадр 640×480×2 для трёх экранов,
   побайтовое совпадение с PPM→RGB565, кадр после `--keys`, отказ при недоступном
   фреймбуфере.
+
+## 2026-11-18 · P4b (лаунчер вызывает действия модулей)
+
+- `dp_modc_action(sock, module_id, action)` — вызов `action.invoke` через `modd`
+  (`params {"module":…,"action":…}`), успех = `"ok":true` в `result`.
+- CLI: `--module-action ID:ACTION` (`launcher --module-action thermal:eco`).
+  Неверный формат → код 2 и подсказка, отказ модуля/таймаут → код 1.
+- Сквозной тест: `launcher_mod_test.py` поднимает `modd` с фикстурами, дергает
+  `thermal:eco` и проверяет строку в `$MODD_MODULE_DATA/actions.log`, затем
+  `thermal` без действия → код 2. Всего 8 проверок в наборе.

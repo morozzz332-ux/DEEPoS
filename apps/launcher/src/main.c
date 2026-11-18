@@ -172,6 +172,7 @@ int main(int argc, char **argv)
     const char *mods_socket = "/run/modd.sock";
     int print_modules = 0;
     const char *fb_path = NULL;
+    const char *module_action = NULL;
 
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
@@ -191,6 +192,7 @@ int main(int argc, char **argv)
         else if (strcmp(a, "--modules-socket") == 0) mods_socket = NEED_ARG();
         else if (strcmp(a, "--print-modules") == 0) print_modules = 1;
         else if (strcmp(a, "--fb") == 0) fb_path = NEED_ARG();
+        else if (strcmp(a, "--module-action") == 0) module_action = NEED_ARG();
         else if (strcmp(a, "--list") == 0) {
             for (int s = 0; s < DP_SCR_COUNT; s++)
                 printf("%s\n", dp_screen_id((enum dp_screen)s));
@@ -232,6 +234,22 @@ int main(int argc, char **argv)
         fprintf(stderr, "launcher: cannot read ROMs at %s (empty library)\n", roms);
     dp_model_load_continue(m, data);
     dp_modc_status(mods_socket, m);
+
+    if (module_action) {
+        char spec[128];
+        snprintf(spec, sizeof(spec), "%s", module_action);
+        char *colon = strchr(spec, ':');
+        if (!colon) {
+            fprintf(stderr, "launcher: --module-action needs ID:ACTION\n");
+            dp_model_free(m);
+            return 2;
+        }
+        *colon = '\0';
+        int ok = dp_modc_action(mods_socket, spec, colon + 1) == 0;
+        printf("%s\t%s\t%s\n", spec, colon + 1, ok ? "ok" : "failed");
+        dp_model_free(m);
+        return ok ? 0 : 1;
+    }
 
     if (print_modules) {
         for (int i = 0; i < m->nmods; i++)

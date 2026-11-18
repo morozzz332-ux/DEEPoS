@@ -95,6 +95,23 @@ def main():
 
             p = subprocess.run(
                 [str(LAUNCHER), "--roms", str(tmpdir / "roms"), "--data", str(data),
+                 "--modules-socket", str(sock), "--module-action", "thermal:eco"],
+                capture_output=True, text=True)
+            actions = (data / "thermal" / "actions.log").read_text(encoding="utf-8", errors="replace") \
+                if (data / "thermal" / "actions.log").exists() else ""
+            check("memory action reaches the module",
+                  p.returncode == 0 and "eco" in actions and "ok" in p.stdout,
+                  (p.returncode, p.stdout[:120], actions[-80:]))
+
+            p = subprocess.run(
+                [str(LAUNCHER), "--roms", str(tmpdir / "roms"), "--data", str(data),
+                 "--modules-socket", str(sock), "--module-action", "thermal"],
+                capture_output=True, text=True)
+            check("malformed module action is rejected", p.returncode == 2 and "ID:ACTION" in (p.stderr or ""),
+                  (p.returncode, (p.stderr or "")[:80]))
+
+            p = subprocess.run(
+                [str(LAUNCHER), "--roms", str(tmpdir / "roms"), "--data", str(data),
                  "--modules-socket", str(tmpdir / "no-such.sock"), "--print-modules"],
                 capture_output=True, text=True)
             check("missing modd socket degrades gracefully", p.returncode == 0 and not p.stdout.strip(),

@@ -30,3 +30,4 @@
 | P4 input | host | 17 checks PASS, evdev-независимая навигация |
 | P4 launcher↔modd | host | 6 checks PASS, живой список модулей |
 | P4 display | host | 8 checks PASS, RGB565 blit = PPM |
+| P4b module action | host | launcher→modd→module, 2 checks |
