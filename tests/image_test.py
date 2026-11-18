@@ -157,6 +157,28 @@ def flash(image, tmp):
                           capture_output=True, text=True, timeout=120)
     check("sha mismatch refused", proc.returncode != 0)
 
+    # Resume: a reader hiccup leaves the card half written; the second run must
+    # skip the good prefix instead of rewriting everything.
+    partial = tmp / "card-partial.img"
+    blob = image.read_bytes()
+    half = len(blob) // 2
+    partial.write_bytes(blob[:half] + b"\x00" * (len(blob) - half))
+    proc = subprocess.run([sys.executable, str(DPFLASH), "--image", str(image),
+                           "--target", str(partial), "--resume"],
+                          capture_output=True, text=True, timeout=300)
+    check("resume exits 0", proc.returncode == 0, proc.stderr.strip()[-300:])
+    check("resume reports skipped prefix", "resume:" in proc.stdout, proc.stdout[-200:])
+    check("resume finishes byte identical",
+          hashlib.sha256(partial.read_bytes()).hexdigest()
+          == hashlib.sha256(blob).hexdigest())
+
+    proc = subprocess.run([sys.executable, str(DPFLASH), "--image", str(image),
+                           "--target", str(partial), "--resume", "--verify"],
+                          capture_output=True, text=True, timeout=300)
+    check("second resume exits 0", proc.returncode == 0, proc.stderr.strip()[-200:])
+    check("second resume rewrites nothing", "rewritten 0 MiB" in proc.stdout, proc.stdout[-200:])
+    check("full card verify passes", "verified: whole card matches" in proc.stdout, proc.stdout[-200:])
+
     small = tmp / "card-small.img"
     small.write_bytes(b"\x00" * 1024)
     proc = subprocess.run([sys.executable, str(DPFLASH), "--image", str(image),

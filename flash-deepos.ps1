@@ -2,6 +2,7 @@
 # Run through Start-Process -Verb RunAs (or flash-deepos.cmd) so \\.\PhysicalDriveN is writable.
 param(
     [int]$Disk = 2,
+    [switch]$SkipVerify,
     [string]$Image = "build/deepos-r36s-v20.img",
     [string]$Sha256 = "",
     [string]$Python = ""
@@ -74,6 +75,14 @@ try {
 } catch {
     Log ("Clear-Disk: " + $_.Exception.Message)
 }
+# Clear-Disk leaves a raw volume object behind; Windows then refuses the raw
+# write with 32 (sharing violation). Drop any partition that reappeared.
+Get-Partition -DiskNumber $Disk -ErrorAction SilentlyContinue | ForEach-Object {
+    Log ("dropping leftover partition " + $_.PartitionNumber)
+    try { Remove-Partition -DiskNumber $Disk -PartitionNumber $_.PartitionNumber -Confirm:$false -ErrorAction Stop }
+    catch { Log ("  remove-partition: " + $_.Exception.Message) }
+}
+Start-Sleep -Seconds 1
 Update-HostStorageCache -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
 $d = Get-Disk -Number $Disk
@@ -81,8 +90,11 @@ Log ("ready: style=" + $d.PartitionStyle + " partitions=" + $d.NumberOfPartition
 
 Log "writing..."
 try {
-    $out = & $Python (Join-Path $root "tools\dpflash.py") --image $img `
-        --target ("\\.\PhysicalDrive" + $Disk) --expect-sha256 $Sha256 2>&1
+    $flashArgs = @((Join-Path $root "tools\dpflash.py"), "--image", $img,
+                   "--target", ("\\.\PhysicalDrive" + $Disk),
+                   "--expect-sha256", $Sha256, "--resume")
+    if (-not $SkipVerify) { $flashArgs += "--verify" }
+    $out = & $Python @flashArgs 2>&1
     $code = $LASTEXITCODE
     foreach ($line in @($out)) { Log ("  " + $line) }
     Log "dpflash exit=$code"

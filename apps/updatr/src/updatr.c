@@ -282,7 +282,7 @@ static int sync_boot(const char *boot_dir, const char *slot)
         return 0;
     snprintf(path, sizeof(path), "%s/extlinux/extlinux.conf", boot_dir);
     snprintf(tmp, sizeof(tmp), "%s.tmp", path);
-    snprintf(want, sizeof(want), "root=LABEL=DEEPOS_%s", slot);
+    snprintf(want, sizeof(want), "root=/dev/mmcblk1p%s", strcmp(slot, "A") == 0 ? "2" : "3");
 
     FILE *f = fopen(path, "rb");
     if (!f) {
@@ -294,8 +294,9 @@ static int sync_boot(const char *boot_dir, const char *slot)
     text[len] = '\0';
 
     int changed = 0;
-    const char *needles[2] = { "root=LABEL=DEEPOS_A", "root=LABEL=DEEPOS_B" };
-    for (int i = 0; i < 2; i++) {
+    const char *needles[4] = { "root=/dev/mmcblk1p2", "root=/dev/mmcblk1p3",
+                               "root=LABEL=DEEPOS_A", "root=LABEL=DEEPOS_B" };
+    for (int i = 0; i < 4; i++) {
         char *at = strstr(text, needles[i]);
         if (!at)
             continue;
@@ -312,7 +313,7 @@ static int sync_boot(const char *boot_dir, const char *slot)
         break;
     }
     if (!changed) {
-        fprintf(stderr, "updatr: %s has no root=LABEL=DEEPOS_A/B line\n", path);
+        fprintf(stderr, "updatr: %s has no root=/dev/mmcblk1p2|p3 or root=LABEL=DEEPOS_A/B line\n", path);
         return 2;
     }
 

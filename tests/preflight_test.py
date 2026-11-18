@@ -38,7 +38,7 @@ def make_tree(base: Path) -> dict[str, Path]:
         "LABEL DEEPoS\n"
         "  LINUX /KERNEL\n"
         "  FDT /dtbs/rk3326-r36s-v20.dtb\n"
-        "  APPEND root=LABEL=DEEPOS_A\n",
+        "  APPEND root=/dev/mmcblk1p2\n",
         encoding="utf-8")
     shutil.copyfile(kernel, boot / "KERNEL")
     shutil.copyfile(dtb, boot / "dtbs/rk3326-r36s-v20.dtb")

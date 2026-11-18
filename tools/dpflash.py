@@ -99,12 +99,22 @@ def open_target(path, write):
     if os.name == "nt":
         import ctypes
         access = 0x80000000 | 0x40000000 if write else 0x80000000
-        share = 0  # exclusive: nothing else may hold the device
-        handle = ctypes.windll.kernel32.CreateFileW(path, access, share, None, 3, 0, None)
-        if handle == -1:
-            err = ctypes.windll.kernel32.GetLastError()
-            raise SystemExit(f"dpflash: cannot open {path} (win32={err}); close Explorer/disk tools and retry")
-        return handle
+        # Windows keeps a volume handle open for a while after Clear-Disk, which
+        # makes an exclusive open fail with 32 (sharing violation). Try shared
+        # modes first and retry for a few seconds before giving up.
+        last = 0
+        for attempt in range(12):
+            for share in (0x1 | 0x2, 0x1 | 0x2 | 0x4, 0):
+                handle = ctypes.windll.kernel32.CreateFileW(path, access, share,
+                                                            None, 3, 0, None)
+                if handle != -1:
+                    return handle
+                last = ctypes.windll.kernel32.GetLastError()
+                if last not in (5, 32):  # access denied / sharing violation
+                    break
+            time.sleep(1.0)
+        raise SystemExit(f"dpflash: cannot open {path} (win32={last}); "
+                         "close Explorer/disk tools and retry")
 
     return open(path, "r+b" if write else "rb")
 
@@ -185,6 +195,29 @@ def read_at(handle, offset, size):
     return handle.read(size)
 
 
+def compare_at(handle, offset, data):
+    """True when the device already holds exactly these bytes at this offset."""
+    got = read_at(handle, offset, len(data))
+    return got == data
+
+
+def hash_target(target_path, size):
+    """sha256 of the first `size` bytes of a target (file or raw device)."""
+    handle = open_target(target_path, write=False)
+    digest = hashlib.sha256()
+    try:
+        offset = 0
+        while offset < size:
+            block = read_at(handle, offset, min(8 * MIB, size - offset))
+            if not block:
+                break
+            digest.update(block)
+            offset += len(block)
+    finally:
+        close(handle)
+    return digest.hexdigest()
+
+
 def close(handle):
     if os.name == "nt":
         import ctypes
@@ -193,7 +226,8 @@ def close(handle):
         handle.close()
 
 
-def flash(image_path, target_path, dry_run=False, defer_table=True, expected_sha=None):
+def flash(image_path, target_path, dry_run=False, defer_table=True, expected_sha=None,
+          resume=False, verify=False):
     image_size = os.path.getsize(image_path)
     card_size = target_size(target_path)
     if card_size < image_size:
@@ -222,22 +256,40 @@ def flash(image_path, target_path, dry_run=False, defer_table=True, expected_sha
     finally:
         close(handle)
     start = TABLE_BYTES if defer_table else 0
-    with open(image_path, "rb") as src:
-        src.seek(start)
-        offset = start
-        while offset < image_size:
-            chunk = src.read(min(CHUNK, image_size - offset))
-            if not chunk:
-                break
-            write_retry(target_path, offset, chunk)
-            offset += len(chunk)
-            print(f"\r  written {offset * 100 // image_size}%", end="", flush=True)
+    skipped = 0
+    probe = open_target(target_path, write=False) if resume else None
+    try:
+        with open(image_path, "rb") as src:
+            src.seek(start)
+            offset = start
+            while offset < image_size:
+                chunk = src.read(min(CHUNK, image_size - offset))
+                if not chunk:
+                    break
+                if probe is not None and compare_at(probe, offset, chunk):
+                    skipped += len(chunk)
+                else:
+                    write_retry(target_path, offset, chunk)
+                offset += len(chunk)
+                print(f"\r  written {offset * 100 // image_size}% "
+                      f"(skipped {skipped // MIB} MiB)", end="", flush=True)
+    finally:
+        if probe is not None:
+            close(probe)
     print()
+    if skipped:
+        print(f"resume: {skipped // MIB} MiB were already correct, rewritten {(((image_size - start) - skipped) // MIB)} MiB")
     if defer_table:
         write_retry(target_path, 0, table)
         if table_tail:
             write_retry(target_path, image_size - len(table_tail), table_tail)
         verify_table(target_path, table, table_tail, image_size)
+    if verify:
+        print("verifying whole card...")
+        got = hash_target(target_path, image_size)
+        if got != digest:
+            raise SystemExit(f"dpflash: card sha256 mismatch ({got})")
+        print("verified: whole card matches the image")
     print("done: table written last, card is bootable")
     return 0
 
@@ -304,13 +356,18 @@ def main(argv=None):
     parser.add_argument("--no-defer-table", action="store_true",
                         help="write the table first (files/testing only)")
     parser.add_argument("--expect-sha256", default=None)
+    parser.add_argument("--resume", action="store_true",
+                        help="skip chunks that already match the image (retry after a reader hiccup)")
+    parser.add_argument("--verify", action="store_true",
+                        help="after writing, read the whole card back and compare sha256")
     args = parser.parse_args(argv)
     if args.list:
         return list_disks()
     if not args.image or not args.target:
         parser.error("--image and --target are required unless --list is used")
     return flash(args.image, args.target, dry_run=args.dry_run,
-                 defer_table=not args.no_defer_table, expected_sha=args.expect_sha256)
+                 defer_table=not args.no_defer_table, expected_sha=args.expect_sha256,
+                 resume=args.resume, verify=args.verify)
 
 
 if __name__ == "__main__":
