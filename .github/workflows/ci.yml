@@ -40,6 +40,8 @@ jobs:
           docker run --rm -v "$PWD:/w" -w /w deepos-build:local \
             -c "make -C apps/saved && python3 tests/saved_test.py"
 
+      - name: Build test image and run layout/flash tests
+        run: python3 tests/image_test.py
       - name: Secret scan
         shell: pwsh
         run: ./tools/check-secrets.ps1

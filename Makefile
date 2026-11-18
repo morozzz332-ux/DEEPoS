@@ -5,7 +5,7 @@ DOCKER ?= docker
 IMAGE  ?= deepos-build:local
 PYTHON ?= python3
 
-.PHONY: help fonts launcher modd saved render test modd-test saved-test modules-test docker-image docker-test image clean
+.PHONY: help fonts launcher modd saved render test modd-test saved-test modules-test image-test docker-image docker-test image clean
 
 help:
 	@echo "make fonts        - regenerate bitmap fonts from tools/fonts/DejaVuSansMono.ttf"
@@ -17,6 +17,8 @@ help:
 	@echo "make modd-test    - build + run the module supervisor tests"
 	@echo "make saved-test   - build + run the save-store tests"
 	@echo "make modules-test - run thermal/saves module protocol tests (docker)"
+	@echo "make image-test   - build a small test image and check GPT + filesystems"
+	@echo "make image        - build a full card image into build/"
 	@echo "make docker-image - build the reproducible toolchain image"
 	@echo "make docker-test  - run every test suite inside the image (recommended)"
 
@@ -51,9 +53,13 @@ docker-image:
 	$(DOCKER) build -t $(IMAGE) -f tests/ci/Dockerfile .
 
 docker-test: docker-image
-	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "python3 tests/run.py && python3 tests/modd_test.py && python3 tests/saved_test.py && python3 tests/modules_test.py"
+	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "python3 tests/run.py && python3 tests/modd_test.py && python3 tests/saved_test.py && python3 tests/modules_test.py && python3 tests/image_test.py"
+
+image-test: docker-image
+	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "python3 tests/image_test.py"
 
 image: docker-image
+	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "python3 tools/mkimage.py --out build/deepos-r36s-v20.img --boot build/boot --sys-a build/rootfs --data build/data"
 
 clean:
 	$(MAKE) -C apps/launcher clean

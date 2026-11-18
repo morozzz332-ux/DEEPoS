@@ -1,0 +1,13 @@
+{
+  "name": "r36s-v20-small",
+  "sector": 512,
+  "align_mib": 1,
+  "note": "Test layout: same partition list and filesystems, small sizes so CI stays fast.",
+  "partitions": [
+    { "name": "BOOT", "label": "BOOT", "type": "fat32", "size_mib": 16 },
+    { "name": "SYS_A", "label": "DEEPOS_A", "type": "squashfs", "size_mib": 20 },
+    { "name": "SYS_B", "label": "DEEPOS_B", "type": "squashfs", "size_mib": 20 },
+    { "name": "DATA", "label": "DATA", "type": "ext4", "size_mib": 16 },
+    { "name": "ROMS", "label": "ROMS", "type": "exfat", "size_mib": 0, "fill": true }
+  ]
+}

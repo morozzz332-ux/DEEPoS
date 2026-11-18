@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""Host tests for the image builder and flasher (no device involved).
+
+Builds a small but real image with the same GPT layout and filesystems as the
+production one, then checks the structures byte by byte and flashes the image
+into a plain file to prove the writer is lossless.
+"""
+import hashlib
+import json
+import os
+import pathlib
+import struct
+import subprocess
+import sys
+import tempfile
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+MKIMAGE = ROOT / "tools" / "mkimage.py"
+DPFLASH = ROOT / "tools" / "dpflash.py"
+LAYOUT = ROOT / "board" / "r36s-v20" / "layout.json"
+SMALL_LAYOUT = ROOT / "tests" / "fixtures" / "layout-small.json"
+
+failures = []
+
+
+def check(name, cond, detail=""):
+    if cond:
+        print(f"  ok   {name}")
+    else:
+        print(f"  FAIL {name} {detail}")
+        failures.append(name)
+
+
+def read_gpt(image_path):
+    with open(image_path, "rb") as handle:
+        handle.seek(512)
+        header = handle.read(92)
+        if header[:8] != b"EFI PART":
+            return None, []
+        (entries_lba,) = struct.unpack_from("<Q", header, 72)
+        (count,) = struct.unpack_from("<I", header, 80)
+        (size,) = struct.unpack_from("<I", header, 84)
+        handle.seek(entries_lba * 512)
+        blob = handle.read(count * size)
+    parts = []
+    for index in range(count):
+        entry = blob[index * size:(index + 1) * size]
+        if not any(entry[:16]):
+            continue
+        first, last = struct.unpack_from("<QQ", entry, 32)
+        name = entry[56:128].decode("utf-16-le").rstrip("\x00")
+        parts.append({"name": name, "first": first, "last": last})
+    return header, parts
+
+
+def build(tmp):
+    rootfs = tmp / "rootfs"
+    (rootfs / "etc").mkdir(parents=True)
+    (rootfs / "etc" / "os-release").write_text('NAME="DEEPoS"\n', encoding="utf-8")
+    boot = tmp / "boot"
+    boot.mkdir()
+    (boot / "KERNEL").write_bytes(b"\x00" * 4096)
+    (boot / "extlinux.conf").write_text("LABEL DEEPoS\nLINUX /KERNEL\n", encoding="utf-8")
+    data = tmp / "data"
+    data.mkdir()
+    (data / "profile").write_text("balanced\n", encoding="utf-8")
+    image = tmp / "deepos-test.img"
+    proc = subprocess.run([
+        sys.executable, str(MKIMAGE), "--layout", str(SMALL_LAYOUT), "--out", str(image),
+        "--size-mib", "128", "--boot", str(boot), "--sys-a", str(rootfs), "--data", str(data),
+    ], capture_output=True, text=True, timeout=300)
+    if proc.returncode != 0:
+        print(proc.stdout)
+        print(proc.stderr, file=sys.stderr)
+    check("mkimage exits 0", proc.returncode == 0, proc.stderr.strip()[-300:])
+    if proc.returncode != 0:
+        raise SystemExit("mkimage failed, see output above")
+    return image
+
+
+def probe(image):
+    header, parts = read_gpt(image)
+    check("GPT header present", header is not None)
+    check("5 partitions", len(parts) == 5, str([p["name"] for p in parts]))
+    names = [p["name"] for p in parts]
+    check("partition names", names == ["BOOT", "DEEPOS_A", "DEEPOS_B", "DATA", "ROMS"], str(names))
+    aligned = all((p["first"] * 512) % (1024 * 1024) == 0 for p in parts)
+    check("1 MiB alignment", aligned)
+    ordered = all(parts[i]["last"] < parts[i + 1]["first"] for i in range(len(parts) - 1))
+    check("partitions ordered", ordered)
+
+    with open(image, "rb") as handle:
+        def at(offset, size):
+            handle.seek(offset)
+            return handle.read(size)
+
+        fat = at(parts[0]["first"] * 512, 512)
+        check("FAT32 signature", fat[510:512] == b"\x55\xaa")
+        label = fat[0x47:0x47 + 11].decode("ascii", "replace").strip()
+        check("FAT32 label BOOT", label == "BOOT", repr(label))
+
+        squash_a = at(parts[1]["first"] * 512, 4)
+        squash_b = at(parts[2]["first"] * 512, 4)
+        check("SYS_A squashfs magic", squash_a == b"hsqs", repr(squash_a))
+        check("SYS_B squashfs magic", squash_b == b"hsqs", repr(squash_b))
+
+        ext4 = at(parts[3]["first"] * 512 + 1080, 2)
+        check("DATA ext4 magic", struct.unpack("<H", ext4)[0] == 0xEF53, repr(ext4))
+
+        exfat = at(parts[4]["first"] * 512 + 3, 8)
+        check("ROMS exFAT signature", exfat == b"EXFAT   ", repr(exfat))
+
+
+
+    return parts
+
+
+def flash(image, tmp):
+    target = tmp / "card.img"
+    size = image.stat().st_size
+    target.write_bytes(b"\x00" * size)
+    proc = subprocess.run([sys.executable, str(DPFLASH), "--image", str(image),
+                           "--target", str(target)], capture_output=True, text=True, timeout=300)
+    check("dpflash exits 0", proc.returncode == 0, proc.stderr.strip()[-300:])
+    expected = hashlib.sha256(image.read_bytes()).hexdigest()
+    actual = hashlib.sha256(target.read_bytes()).hexdigest()
+    check("flash is byte identical", expected == actual)
+
+    dry_target = tmp / "card-dry.img"
+    dry_target.write_bytes(b"\xAA" * size)
+    proc = subprocess.run([sys.executable, str(DPFLASH), "--image", str(image),
+                           "--target", str(dry_target), "--dry-run"],
+                          capture_output=True, text=True, timeout=120)
+    check("dry-run exits 0", proc.returncode == 0, proc.stderr.strip()[-200:])
+    check("dry-run writes nothing", dry_target.read_bytes() == b"\xAA" * size)
+
+    proc = subprocess.run([sys.executable, str(DPFLASH), "--image", str(image),
+                           "--target", str(target), "--expect-sha256", "0" * 64],
+                          capture_output=True, text=True, timeout=120)
+    check("sha mismatch refused", proc.returncode != 0)
+
+    small = tmp / "card-small.img"
+    small.write_bytes(b"\x00" * 1024)
+    proc = subprocess.run([sys.executable, str(DPFLASH), "--image", str(image),
+                           "--target", str(small)], capture_output=True, text=True, timeout=120)
+    check("small target refused", proc.returncode != 0)
+
+
+def main():
+    if not SMALL_LAYOUT.exists():
+        print("missing tests/fixtures/layout-small.json")
+        return 1
+    with tempfile.TemporaryDirectory(prefix="deepos-img-") as raw:
+        tmp = pathlib.Path(raw)
+        print("build image")
+        image = build(tmp)
+        print("probe layout")
+        parts = probe(image)
+        print("flash")
+        flash(image, tmp)
+
+    if failures:
+        print(f"\nFAIL  image: {len(failures)} problem(s)")
+        for item in failures:
+            print(f"  - {item}")
+        return 1
+    print("\nPASS  image: GPT layout, FAT32/squashfs/ext4/exFAT signatures, flash is lossless")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
