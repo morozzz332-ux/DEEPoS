@@ -350,13 +350,27 @@ static void dp_screen_settings(struct dp_canvas *cv, const struct dp_model *m)
 {
     dp_section(cv, "НАСТРОЙКИ", "импорт с Arch-R: 24 из 24");
 
-    static const struct dp_setting_card cards[] = {
+    char sub_display[48];
+    char sub_sound[48];
+    char sub_power[48];
+    if (m->cfg_brightness > 0)
+        snprintf(sub_display, sizeof(sub_display), "яркость %d%%", m->cfg_brightness);
+    else
+        snprintf(sub_display, sizeof(sub_display), "не задана");
+    if (m->cfg_volume > 0)
+        snprintf(sub_sound, sizeof(sub_sound), "динамик · %d%%", m->cfg_volume);
+    else
+        snprintf(sub_sound, sizeof(sub_sound), "не задан");
+    snprintf(sub_power, sizeof(sub_power), "%s · CPU",
+             m->cfg_profile[0] ? m->cfg_profile : "авто");
+
+    const struct dp_setting_card cards[] = {
         { "Регион и язык", "Русский · UTC+5" },
         { "Управление", "A/B исправлены" },
-        { "Дисплей", "яркость 60%" },
-        { "Звук", "динамик · 55%" },
+        { "Дисплей", sub_display },
+        { "Звук", sub_sound },
         { "Сеть", "USB-сеть · SSH вкл" },
-        { "Питание", "balanced · 1416 МГц" },
+        { "Питание", sub_power },
         { "Обновления", "stable · 20261116" },
         { "Модули", "4 включено" },
         { "Сведения", "SoC 48 °C · RAM 212 МБ" },

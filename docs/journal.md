@@ -552,3 +552,21 @@
   sha256 `04e5df4738e8db991dd98aabab8c77d2c716d13036d5c0f845e47e90bb7a83bc`,
   `PASS verify-image: 39 checks`.
 
+## 2026-11-18 · P8 (экран настроек показывает реальный settings.toml)
+
+- `model_load_config(struct dp_model *, const char *config_path)` в `apps/launcher/src/main.c`:
+  грузит `/data/config/settings.toml` (или `--config`) в поля модели `cfg_brightness`,
+  `cfg_volume`, `cfg_profile` — теперь значения видны и в рендере, и в `--selftest`
+  (строка `config=… brightness=… volume=… profile=…`). Раньше настройки загружались
+  только в CLI-ветке `--apply`, а экран оставался статичным.
+- Карточки «Дисплей», «Звук», «Питание» собирают подпись из модели: `яркость N%` /
+  `не задана`, `динамик · N%` / `не задан`, `eco|balanced|max · CPU` / `авто · CPU`
+  (короткие фразы выбраны так, чтобы не вылезать за 200 px карточки).
+- `tests/selftest_test.py`: новый кейс с `settings.toml` (`brightness = 40`,
+  `volume = 55`, `profile = eco`) — проверяются `config`, `brightness`, `volume`, `profile`.
+- Найден и закрыт ловкий NPE в проверке: мой рендер экрана шёл не через `run.py`, а через
+  устаревший `tests/out/*.ppm` от `tests/ci/render-all.sh`, поэтому визуальная проверка
+  показывала старый текст. Правило: **визуальные кадры обновляет только
+  `sh tests/ci/render-all.sh <root> <out>`, а `tests/run.py` рендерит во временный каталог**.
+- Все 14 наборов PASS, golden обновлены осознанно (подписи карточек).
+

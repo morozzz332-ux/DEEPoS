@@ -49,6 +49,11 @@ struct dp_model {
     int ncont;
 
     struct dp_module_info mods[DP_MAX_MODULES];
+
+    /* settings.toml, loaded by main(); 0 / "" mean "not set" */
+    int cfg_brightness;
+    int cfg_volume;
+    char cfg_profile[16];
     int nmods;
 
     struct dp_status st;

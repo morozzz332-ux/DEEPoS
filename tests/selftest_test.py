@@ -65,6 +65,20 @@ def main() -> int:
     if not got.get("input_events", "").isdigit():
         print(f"FAIL  selftest input_events={got.get('input_events')!r}")
         ok = False
+    # settings file is reported with the values the UI will show
+    cfg = tmp / "settings.toml"
+    cfg.write_text("brightness = 40\nvolume = 55\nprofile = eco\n", encoding="utf-8")
+    res = run(["--roms", str(roms), "--data", str(data), "--config", str(cfg),
+               "--modules-socket", str(tmp / "nope.sock"), "--selftest"])
+    got = kv(res.stdout)
+    for key, want in (("brightness", "40"), ("volume", "55"), ("profile", "eco")):
+        if got.get(key) != want:
+            print(f"FAIL  selftest config {key}={got.get(key)!r}, want {want!r}")
+            ok = False
+    if got.get("config") != str(cfg):
+        print(f"FAIL  selftest config path={got.get('config')!r}")
+        ok = False
+
     for need in ("roms", "data", "emulators", "modd", "fb", "input_events", "version"):
         if need not in got:
             print(f"FAIL  selftest misses key {need}")

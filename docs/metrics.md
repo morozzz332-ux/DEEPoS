@@ -74,3 +74,6 @@
 | P8 empty-state (host) | `tests/run.py` | подсказки на пустой библиотеке (systems/continue) | PASS |
 | образ (0.10-dev) | 4 294 967 296 B, sha256 `04e5df4738e8db991dd98aabab8c77d2c716d13036d5c0f845e47e90bb7a83bc` | ok |
 
+| P8 settings UI (host) | `tests/run.py` + `tests/selftest_test.py` | карточки читают settings.toml, selftest печатает config | PASS |
+| образ (0.11-dev) | 4 294 967 296 B, sha256 `f5bdb6c1a59070c319af6dc1da50181e56ebf1f676c532453ddf442341ccdd9e` | ok |
+

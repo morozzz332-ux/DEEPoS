@@ -386,8 +386,19 @@ static int count_event_devices(void)
 
 /* Prints the environment the launcher is about to work in; first thing to run
  * on a new device. */
+static void model_load_config(struct dp_model *m, const char *config_path)
+{
+    struct dp_config cfg;
+    dp_config_init(&cfg);
+    dp_config_load(&cfg, config_path);
+    m->cfg_brightness = cfg.brightness;
+    m->cfg_volume = cfg.volume;
+    snprintf(m->cfg_profile, sizeof(m->cfg_profile), "%s", cfg.profile);
+}
+
 static int selftest(const char *roms, const char *data, const char *emulators_path,
-                    const char *mods_socket, const char *fb_path)
+                    const char *mods_socket, const char *fb_path,
+                    const char *config_path)
 {
     struct dp_model *m = dp_model_new();
     if (!m)
@@ -395,6 +406,7 @@ static int selftest(const char *roms, const char *data, const char *emulators_pa
     dp_model_scan(m, roms);
     dp_model_load_continue(m, data);
     dp_modc_status(mods_socket, m);
+    model_load_config(m, config_path);
 
     printf("version=0.4\n");
     printf("roms=%s systems=%d games=%u\n", roms, m->nsys, m->total_games);
@@ -403,6 +415,9 @@ static int selftest(const char *roms, const char *data, const char *emulators_pa
            access(emulators_path, R_OK) == 0 ? 1 : 0);
     printf("modd=%s modules=%d\n", mods_socket, m->nmods);
     printf("fb=%s fb_present=%d\n", fb_path, access(fb_path, F_OK) == 0 ? 1 : 0);
+    printf("config=%s brightness=%d volume=%d profile=%s\n", config_path,
+           m->cfg_brightness, m->cfg_volume,
+           m->cfg_profile[0] ? m->cfg_profile : "balanced");
     printf("input_events=%d\n", count_event_devices());
     printf("status=ok\n");
     dp_model_free(m);
@@ -467,7 +482,7 @@ int main(int argc, char **argv)
             return 0;
         } else if (strcmp(a, "--selftest") == 0) {
             return selftest(roms, data, emulators_path, mods_socket,
-                            fb_path ? fb_path : "/dev/fb0");
+                            fb_path ? fb_path : "/dev/fb0", config_path);
         } else if (strcmp(a, "--list-roms") == 0) {
             struct dp_model *lm = dp_model_new();
             if (!lm)
@@ -537,6 +552,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "launcher: cannot read ROMs at %s (empty library)\n", roms);
     dp_model_load_continue(m, data);
     dp_modc_status(mods_socket, m);
+    model_load_config(m, config_path);
 
     if (run_game) {
         char spec[512];
