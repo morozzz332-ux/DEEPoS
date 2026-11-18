@@ -27,3 +27,11 @@ local/
 
 # Скриншоты-черновики
 ui/shots/_*.png
+
+# Хост-сборка лаунчера и артефакты тестов
+*.o
+apps/launcher/launcher
+tests/out/
+*.ppm
+__pycache__/
+*.pyc

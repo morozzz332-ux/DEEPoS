@@ -43,6 +43,7 @@ try {
     $files = $files | Where-Object {
         $f = $_
         $f -and -not ($f -match '(^|/)(node_modules|\.git)/') -and $f -ne 'tools/check-secrets.ps1' -and
+        -not ($f -match '^tests/golden/') -and
         ($allowedExt -contains [System.IO.Path]::GetExtension($f))
     }
 

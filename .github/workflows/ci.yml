@@ -1,0 +1,31 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build toolchain image
+        run: docker build -t deepos-build:local -f tests/ci/Dockerfile .
+
+      - name: Verify generated fonts are up to date
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w deepos-build:local \
+            -c "python3 tools/gen-font.py"
+          git diff --exit-code -- apps/launcher/src/dp_font.c apps/launcher/src/dp_font_small.c
+
+      - name: Build launcher and run tests
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w deepos-build:local \
+            -c "python3 tests/run.py"
+
+      - name: Secret scan
+        shell: pwsh
+        run: ./tools/check-secrets.ps1
