@@ -147,6 +147,34 @@ def main() -> int:
         check("2" in argv.split(), f"continue slot not passed: {argv!r}")
         check("slot=2" in res.stdout, f"stdout: {res.stdout!r}")
 
+        # 9. After a successful launch the Continue list is updated (atomically)
+        upd = tmp / "data-upd"
+        upd.mkdir()
+        (upd / "continue.tsv").write_text(
+            "Crash Bandicoot 2\tplaystation\tвчера\t1\t1\tpsx\tg1.cue\n",
+            encoding="utf-8")
+        res = run_launcher(["--roms", str(roms), "--data", str(upd),
+                            "--emulators", str(emu_slot),
+                            "--run-game", "md:g0.md", "--save-slot", "2"])
+        check(res.returncode == 0, f"continue update launch failed: {res.stderr}")
+        rows = (upd / "continue.tsv").read_text(encoding="utf-8").splitlines()
+        check(bool(rows), "continue.tsv not written")
+        cols = rows[0].split("\t")
+        check(len(cols) == 7, f"first row has {len(cols)} columns: {rows[0]!r}")
+        check(cols[5] == "md" and cols[6] == "g0.md", f"first row rom wrong: {rows[0]!r}")
+        check(cols[3] == "2" and cols[4] == "1", f"slot/has_save wrong: {rows[0]!r}")
+        check(any("psx" in r for r in rows[1:]), "previous row was dropped")
+        check(not (upd / "continue.tsv.tmp").exists(), "temporary file left behind")
+
+        # 10. Repeat launch must not duplicate the row
+        run_launcher(["--roms", str(roms), "--data", str(upd),
+                      "--emulators", str(emu_slot),
+                      "--run-game", "md:g0.md", "--save-slot", "1"])
+        rows = (upd / "continue.tsv").read_text(encoding="utf-8").splitlines()
+        same = [r for r in rows if r.split("\t")[5:7] == ["md", "g0.md"]]
+        check(len(same) == 1, f"duplicate rows: {rows}")
+        check(same[0].split("\t")[3] == "1", f"slot not updated: {same[0]!r}")
+
         # 8. Continue row without a rom (older continue.tsv) must not launch
         (data_dir / "continue.tsv").write_text(
             "Sonic 3 & Knuckles\tmega drive\t12 мин\t2\t1\n", encoding="utf-8")
@@ -185,7 +213,7 @@ def main() -> int:
         for f in failures:
             print("  -", f)
         return 1
-    print("PASS  launch: emulators.toml, %ROM%/%SLOT%, hook, continue screen, exit codes")
+    print("PASS  launch: emulators.toml, %ROM%/%SLOT%, hook, continue screen, continue.tsv update, exit codes")
     return 0
 
 

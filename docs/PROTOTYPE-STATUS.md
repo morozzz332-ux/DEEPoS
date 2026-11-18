@@ -17,7 +17,7 @@
 | Модули | `modd` (NDJSON, таймауты, watchdog), thermal/saves протокол, действия из UI | `tests/modd_test.py`, `tests/modules_test.py`, `tests/launcher_mod_test.py` |
 | Сейвы | атомарное хранилище `saved`, журнал, recover | `tests/saved_test.py` |
 | A/B | `updatr` (begin/good/switch, rollback на 4-й попытке) | `tests/updatr_test.py` |
-| Запуск игры | `emulators.toml`, `%ROM%`/`%SLOT%`, hook allow/deny, «Продолжить» | `tests/launch_test.py` |
+| Запуск игры | `emulators.toml`, `%ROM%`/`%SLOT%`, hook allow/deny, «Продолжить», обновление `continue.tsv` после сессии | `tests/launch_test.py` |
 | Диагностика | `launcher --selftest` (ROM/continue/emulators/modd/fb/input) | `tests/selftest_test.py` |
 
 ## Не проверено (этап 2 — реальная консоль)

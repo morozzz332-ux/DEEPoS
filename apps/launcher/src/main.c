@@ -1,5 +1,6 @@
 /* DEEPoS launcher - prototype entry point (renders one screen to a PPM file). */
 #include <dirent.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -258,6 +259,86 @@ static int run_command(const char *cmd) {
     return -1;
 }
 
+/* Keeps /data/continue.tsv honest after a game exits: the row for this ROM is
+ * moved to the top with the slot we actually used, so "Продолжить" always
+ * reflects the last session. Written atomically (tmp + fsync + rename). */
+static void continue_update(const char *data_dir, const struct dp_model *m, const char *sys,
+                            const char *rom, int slot)
+{
+    char path[1024];
+    char tmp[1060];
+    char lines[DP_MAX_CONTINUE][512];
+    int nline = 0;
+
+    snprintf(path, sizeof(path), "%s/continue.tsv", data_dir);
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+
+    const char *title = rom;
+    const char *system_name = sys;
+    for (int i = 0; i < m->nsys; i++) {
+        if (strcmp(m->systems[i].id, sys) == 0) {
+            system_name = m->systems[i].name;
+            break;
+        }
+    }
+
+    FILE *f = fopen(path, "r");
+    if (f) {
+        char line[512];
+        while (fgets(line, sizeof(line), f) && nline < DP_MAX_CONTINUE) {
+            size_t len = strlen(line);
+            while (len && (line[len - 1] == '\n' || line[len - 1] == '\r'))
+                line[--len] = '\0';
+            if (!len || line[0] == '#')
+                continue;
+            /* drop the row we are about to rewrite */
+            char copy[512];
+            snprintf(copy, sizeof(copy), "%s", line);
+            char *fields[7] = { 0 };
+            int nf = 0;
+            char *q = copy;
+            fields[nf++] = q;
+            for (; *q && nf < 7; q++) {
+                if (*q == '\t') {
+                    *q = '\0';
+                    fields[nf++] = q + 1;
+                }
+            }
+            if (nf >= 7 && strcmp(fields[5], sys) == 0 && strcmp(fields[6], rom) == 0)
+                continue;
+            snprintf(lines[nline], sizeof(lines[nline]), "%s", line);
+            nline++;
+        }
+        fclose(f);
+    }
+
+    FILE *out = fopen(tmp, "w");
+    if (!out) {
+        fprintf(stderr, "launcher: cannot write %s\n", tmp);
+        return;
+    }
+    fprintf(out, "%s\t%s\tнедавно\t%d\t%d\t%s\t%s\n", title, system_name, slot,
+            slot >= 0 ? 1 : 0, sys, rom);
+    int total = 1;
+    for (int i = 0; i < nline && total < DP_MAX_CONTINUE; i++, total++)
+        fprintf(out, "%s\n", lines[i]);
+    fflush(out);
+    fsync(fileno(out));
+    fclose(out);
+
+    if (rename(tmp, path) != 0) {
+        fprintf(stderr, "launcher: cannot rename %s\n", tmp);
+        return;
+    }
+    char dir[1024];
+    snprintf(dir, sizeof(dir), "%s", data_dir);
+    int dfd = open(dir, O_RDONLY);
+    if (dfd >= 0) {
+        fsync(dfd);
+        close(dfd);
+    }
+}
+
 static int launch_game(const char *roms, const char *mods_socket, const char *emulators_path,
                        const char *sys, const char *rom, int slot)
 {
@@ -425,6 +506,8 @@ int main(int argc, char **argv)
         snprintf(sys, sizeof(sys), "%s", spec);
         snprintf(rom, sizeof(rom), "%s", colon + 1);
         rc_game = launch_game(roms, mods_socket, emulators_path, sys, rom, save_slot);
+        if (rc_game == 0)
+            continue_update(data, m, sys, rom, save_slot);
         dp_model_free(m);
         return rc_game;
     }
@@ -491,6 +574,8 @@ int main(int argc, char **argv)
     if (nav.launch) {
         int rc_game = launch_game(roms, mods_socket, emulators_path, nav.lsys, nav.lrom,
                                   nav.lslot);
+        if (rc_game == 0)
+            continue_update(data, m, nav.lsys, nav.lrom, nav.lslot);
         dp_canvas_free(&cv);
         dp_model_free(m);
         return rc_game;

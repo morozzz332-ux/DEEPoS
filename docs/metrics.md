@@ -45,3 +45,6 @@
 | P4 selftest | host | 1 набор, контракт `ключ=значение` + пустое окружение |
 | image (0.4-dev) | `build/deepos-r36s-v20.img` 4 311 744 512 B, sha256 `f19cc4ad9bdee3c564d5c3e887575144a1800b3d95788dedd0af36a7db6e579f` | ok |
 | тестовые наборы | 13 (screens, selftest, input, display, launcher+modd, board, image, modd, saved, modules, boot, updatr, launch) | PASS |
+
+| P4 continue update | host | строки: 7 колонок, слот, `has_save`, без дублей и `.tmp` |
+| image (0.4-dev) | `build/deepos-r36s-v20.img` sha256 `3701b7211369ad273220662282c82ca7a43049ab217f9a4b654e2663e557f93f` | ok |
