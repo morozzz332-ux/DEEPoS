@@ -183,6 +183,18 @@ def test_rootfs_builder():
               p.returncode != 0 and "missing bin/busybox" in (p.stderr or ""))
 
 
+def test_emulators_config():
+    path = ROOT / "board" / "r36s-v20" / "data" / "emulators.toml"
+    if not path.exists():
+        check("emulators.toml", False, str(path))
+        return
+    lines = [ln.strip() for ln in path.read_text(encoding="utf-8").splitlines()]
+    mappings = [ln for ln in lines if ln and not ln.startswith("#") and " = " in ln]
+    check("emulators.toml mappings", len(mappings) >= 3, str(len(mappings)))
+    check("emulators.toml %ROM%", all("%ROM%" in m for m in mappings),
+          "; ".join(m for m in mappings if "%ROM%" not in m))
+
+
 def main():
     print("board tests (R36S-V20):")
     test_dts()
@@ -190,11 +202,12 @@ def main():
     test_busybox_config()
     test_extlinux()
     test_rootfs_builder()
+    test_emulators_config()
     print()
     if fails:
         print("FAIL  board: " + ", ".join(fails))
         return 1
-    print("PASS  board: dtb, kernel config, busybox config, extlinux, rootfs builder")
+    print("PASS  board: dtb, kernel config, busybox config, extlinux, emulators, rootfs builder")
     return 0
 
 

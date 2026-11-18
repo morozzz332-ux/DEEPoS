@@ -204,16 +204,28 @@ static int parse_emulators(const char *path, const char *system, struct dp_launc
     return 1;
 }
 
-static void expand_rom(const char *tmpl, const char *rom_path, char *out, size_t n) {
-    const char *tag = "%ROM%";
-    const char *at = strstr(tmpl, tag);
-    size_t head = at ? (size_t)(at - tmpl) : strlen(tmpl);
+static void replace_tag(const char *in, const char *tag, const char *value, char *out, size_t n) {
+    const char *at = strstr(in, tag);
+    size_t head;
+    if (!at) {
+        snprintf(out, n, "%s", in);
+        return;
+    }
+    head = (size_t)(at - in);
     if (head >= n)
         head = n - 1;
-    memcpy(out, tmpl, head);
+    memcpy(out, in, head);
     out[head] = '\0';
-    if (at)
-        snprintf(out + head, n - head, "%s%s", rom_path, at + strlen(tag));
+    snprintf(out + head, n - head, "%s%s", value, at + strlen(tag));
+}
+
+static void expand_rom(const char *tmpl, const char *rom_path, int save_slot, char *out,
+                       size_t n) {
+    char slot[16];
+    char step[1200];
+    snprintf(slot, sizeof(slot), "%d", save_slot < 0 ? 0 : save_slot);
+    replace_tag(tmpl, "%ROM%", rom_path, step, sizeof(step));
+    replace_tag(step, "%SLOT%", slot, out, n);
 }
 
 static int run_command(const char *cmd) {
@@ -251,6 +263,7 @@ int main(int argc, char **argv)
     const char *module_action = NULL;
     const char *run_game = NULL;
     const char *emulators_path = "/data/emulators.toml";
+    int save_slot = -1;
 
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
@@ -273,6 +286,7 @@ int main(int argc, char **argv)
         else if (strcmp(a, "--module-action") == 0) module_action = NEED_ARG();
         else if (strcmp(a, "--run-game") == 0) run_game = NEED_ARG();
         else if (strcmp(a, "--emulators") == 0) emulators_path = NEED_ARG();
+        else if (strcmp(a, "--save-slot") == 0) save_slot = atoi(NEED_ARG());
         else if (strcmp(a, "--list") == 0) {
             for (int s = 0; s < DP_SCR_COUNT; s++)
                 printf("%s\n", dp_screen_id((enum dp_screen)s));
@@ -347,9 +361,9 @@ int main(int argc, char **argv)
             return 5;
         }
         snprintf(rom_path, sizeof(rom_path), "%s/%s/%s", roms, sys, rom);
-        expand_rom(cfg.cmd, rom_path, cmd, sizeof(cmd));
+        expand_rom(cfg.cmd, rom_path, save_slot, cmd, sizeof(cmd));
         child = run_command(cmd);
-        printf("launch\t%s\t%s\t%d\n", sys, rom, child);
+        printf("launch\t%s\t%s\tslot=%d\t%d\n", sys, rom, save_slot, child);
         dp_model_free(m);
         return child == 0 ? 0 : 1;
     }

@@ -115,6 +115,24 @@ def probe(image):
     return parts
 
 
+def data_files_test(image, tmp):
+    """The DATA partition must really contain the staged files (emulators.toml)."""
+    _, parts = read_gpt(image)
+    data = next((p for p in parts if p["name"] == "DATA"), None)
+    check("DATA partition found", data is not None)
+    if data is None:
+        return
+    with open(image, "rb") as handle:
+        handle.seek(data["first"] * 512)
+        blob = handle.read((data["last"] - data["first"] + 1) * 512)
+    part = tmp / "data-part.img"
+    part.write_bytes(blob)
+    for name, expected in (("profile", "balanced"),):
+        proc = subprocess.run(["debugfs", "-R", f"cat /{name}", str(part)],
+                              capture_output=True, text=True, timeout=60)
+        check(f"DATA/{name} readable", proc.returncode == 0, proc.stderr.strip()[-200:])
+        check(f"DATA/{name} content", proc.stdout.strip() == expected, proc.stdout[:100])
+
 def flash(image, tmp):
     target = tmp / "card.img"
     size = image.stat().st_size
@@ -204,7 +222,7 @@ def main():
         for item in failures:
             print(f"  - {item}")
         return 1
-    print("\nPASS  image: GPT layout, filesystem signatures, loader placement, flash is lossless")
+    print("\nPASS  image: GPT layout, filesystem signatures, DATA files, loader placement, flash is lossless")
     return 0
 
 

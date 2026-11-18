@@ -96,7 +96,7 @@ def main() -> int:
         check(marker.exists(), "emulator stub did not run")
         check(marker.exists() and str(roms / "md" / "g0.md") in marker.read_text(),
               "emulator did not get the rom path")
-        check("launch\tmd\tg0.md\t0" in res.stdout, f"stdout: {res.stdout!r}")
+        check("launch\tmd\tg0.md\tslot=-1\t0" in res.stdout, f"stdout: {res.stdout!r}")
 
         # 2. unknown system -> code 5
         res = run_launcher(["--roms", str(roms), "--emulators", str(emu),
@@ -113,7 +113,20 @@ def main() -> int:
         res = run_launcher(["--roms", str(roms), "--emulators", str(emu),
                             "--run-game", "md:g0.md"], {"STUB_RC": "3"})
         check(res.returncode == 1, f"child failure exit {res.returncode}")
-        check("launch\tmd\tg0.md\t3" in res.stdout, f"stdout: {res.stdout!r}")
+        check("launch\tmd\tg0.md\tslot=-1\t3" in res.stdout, f"stdout: {res.stdout!r}")
+
+
+        # 6. save slot is passed to the emulator (%SLOT%)
+        emu_slot = tmp / "emulators-slot.toml"
+        emu_slot.write_text(f'md = "sh {stub} %ROM% %SLOT%"\n')
+        marker.unlink(missing_ok=True)
+        res = run_launcher(["--roms", str(roms), "--emulators", str(emu_slot),
+                            "--save-slot", "3", "--run-game", "md:g0.md"])
+        check(res.returncode == 0, f"slot exit {res.returncode}: {res.stderr}")
+        argv = marker.read_text() if marker.exists() else ""
+        check(str(roms / "md" / "g0.md") in argv and "3" in argv.split(),
+              f"slot not passed: {argv!r}")
+        check("slot=3" in res.stdout, f"stdout: {res.stdout!r}")
 
         # 5. module hook: allow and deny through a real modd
         proc, sock = start_modd(tmp)
@@ -144,7 +157,7 @@ def main() -> int:
         for f in failures:
             print("  -", f)
         return 1
-    print("PASS  launch: emulators.toml, %ROM% expansion, hook allow/deny, exit codes")
+    print("PASS  launch: emulators.toml, %ROM%/%SLOT% expansion, hook allow/deny, exit codes")
     return 0
 
 

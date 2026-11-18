@@ -35,3 +35,6 @@
 
 | P4/P7 launch pipeline | 12 проверок `launch_test.py`, hook allow/deny, `%ROM%`-подстановка | PASS |
 | image (0.2-dev) | `build/deepos-r36s-v20.img` 4 311 744 512 B, sha256 `7b403aa9e80c0fc71e5df8c8232aa8a518a343fd1c421dc05b3063e1adfe0a6c` | ok |
+
+| launch slot | `--save-slot N` + `%SLOT%`, проверено заглушкой | PASS |
+| DATA content | `debugfs` читает файл из раздела DATA тестового образа | PASS |
