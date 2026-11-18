@@ -6,6 +6,47 @@
 # partition or a re-run must leave the system usable: errexit is not enabled and every
 # mount is best-effort.
 
+is_mounted() { grep -q " $1 " /proc/mounts 2>/dev/null; }
+
+mount_part() {
+    partition="$1/$2"; dev="/dev/$2"; dir="$3"
+    if [ ! -r "$partition/partition" ]; then
+        echo "DEEPoS: $dev missing for $dir" >&2
+        return 1
+    fi
+    if is_mounted "$dir"; then
+        grep -q "^$dev $dir " /proc/mounts 2>/dev/null && return 0
+        echo "DEEPoS: $dir already mounted from another device" >&2
+        return 1
+    fi
+    mount -o noatime "$dev" "$dir" 2>/dev/null && return 0
+    echo "DEEPoS: cannot mount $dev on $dir" >&2
+    return 1
+}
+
+mount_boot_card() {
+    boot_slot=; flash_mounted=no; data_mounted=no; roms_mounted=no
+    root_dev=$(awk '$5 == "/" && / - squashfs / { print $3; exit }' "$1" 2>/dev/null)
+    root_part=
+    [ -n "$root_dev" ] && root_part=$(readlink -f "$2/$root_dev" 2>/dev/null)
+    card_path=${root_part%/*}
+    card=${card_path##*/}
+    if [ -r "$root_part/partition" ] && [ -n "$card" ]; then
+        case "${root_part##*/}" in
+            "$card"p2) boot_slot=A ;;
+            "$card"p3) boot_slot=B ;;
+        esac
+    fi
+    case "$card" in mmcblk[0-9]*) ;; *) boot_slot= ;; esac
+    if [ -z "$boot_slot" ]; then
+        echo "DEEPoS: cannot identify the MMC card for the squashfs root" >&2
+        return 0
+    fi
+    mount_part "$card_path" "${card}p1" /flash && flash_mounted=yes
+    mount_part "$card_path" "${card}p4" /data && data_mounted=yes
+    mount_part "$card_path" "${card}p5" /storage && roms_mounted=yes
+}
+
 # 1. Kernel filesystems. All best-effort: init may run on a re-exec or with
 #    devtmpfs already mounted by the kernel.
 mount -t proc     proc     /proc                 2>/dev/null || true
@@ -15,6 +56,8 @@ mkdir -p /dev/pts /dev/shm
 mount -t devpts   devpts   /dev/pts              2>/dev/null || true
 mount -t tmpfs    shm      /dev/shm -o mode=1777,nosuid,nodev 2>/dev/null || true
 mount -t tmpfs    tmpfs    /tmp     -o mode=1777,nosuid,nodev 2>/dev/null || true
+is_mounted /run || mount -t tmpfs tmpfs /run     -o mode=0755,nosuid,nodev 2>/dev/null ||
+    echo "DEEPoS: cannot mount /run" >&2
 
 # 2. Device nodes for early accesses (devtmpfs covers most, mdev -s the rest).
 [ -x /sbin/mdev ] && mdev -s 2>/dev/null || true
@@ -26,64 +69,56 @@ mount -t tmpfs    tmpfs    /tmp     -o mode=1777,nosuid,nodev 2>/dev/null || tru
 #      p5 ROMS (exFAT)  -> /storage ROM library shared with the PC
 #    Missing partitions (broken card, no card) are not fatal: the launcher
 #    still starts and shows an empty library.
-mkdir -p /flash /storage /data
-is_mounted() { grep -q " $1 " /proc/mounts 2>/dev/null; }
-mount_part() {
-    dev="$1"; dir="$2"
-    [ -b "$dev" ] || return 0
-    is_mounted "$dir" && return 0
-    mount -o noatime "$dev" "$dir" 2>/dev/null || true
-}
-mount_part /dev/mmcblk1p1 /flash
-mount_part /dev/mmcblk1p4 /data
-mount_part /dev/mmcblk1p5 /storage
+mount_boot_card /proc/self/mountinfo /sys/dev/block
 
 # 4. Writable places the launcher expects even on a fresh card.
-mkdir -p /data/config /data/saves 2>/dev/null || true
-
-# 5. A/B boot accounting. Only when DATA really is mounted - otherwise the
-#    counter would be lost on every boot and could roll the slot for nothing.
-#    The bootloader reads extlinux.conf, so the chosen slot is written there.
-if [ -x /usr/bin/updatr ] && is_mounted /data; then
-    /usr/bin/updatr --state /data --boot /flash begin >/dev/null 2>&1 || true
-    ( sleep 20; /usr/bin/updatr --state /data --boot /flash good >/dev/null 2>&1 ) &
+if [ "$data_mounted" = yes ]; then
+    mkdir -p /data/config /data/saves 2>/dev/null || true
 fi
 
-# 6. Module supervisor: only when at least one module is installed. Modules
-#    live on DATA (the ROM volume is shared with the PC and stays clean).
-if [ -x /usr/bin/modd ] && [ -d /data/modules ]; then
-    mkdir -p /run 2>/dev/null || true
-    /usr/bin/modd --modules /data/modules --data /data/module-data \
-                  --socket /run/modd.sock &
+# 5. Record this boot before init starts the launcher. The ticket is valid only
+#    for this boot and is consumed after the first hardware framebuffer blit.
+if [ -x /usr/bin/updatr ] && [ "$data_mounted" = yes ] &&
+   [ "$flash_mounted" = yes ] && is_mounted /run; then
+    /usr/bin/updatr --state /data --boot /flash begin \
+        --slot "$boot_slot" --boot-ticket /run/deepos-boot >/dev/null ||
+        echo "DEEPoS: cannot record boot attempt" >&2
 fi
 
 # 6b. USB gadget: ACM serial console + NCM network on the OTG port.
 #     Gives a COM port (root shell) and 169.254.170.2 without UART or sshd.
 if [ -x /usr/local/bin/usb-gadget.sh ]; then
-    /usr/local/bin/usb-gadget.sh || true
+    /usr/local/bin/usb-gadget.sh &
 fi
 
 # 7. Quiet kernel console: the splash screen owns the panel.
 echo 0 > /proc/sys/kernel/printk 2>/dev/null || true
 
 # 7a. First-boot provisioning: bundled modules and the demo port.
-if is_mounted /data && [ ! -d /data/modules ]; then
+if [ "$data_mounted" = yes ] && [ ! -d /data/modules ]; then
     mkdir -p /data/modules 2>/dev/null || true
     cp -a /usr/share/deepos/modules/. /data/modules/ 2>/dev/null || true
 fi
-if is_mounted /storage && [ ! -d /storage/ports ]; then
+if [ "$roms_mounted" = yes ] && [ ! -d /storage/ports ]; then
     mkdir -p /storage/ports 2>/dev/null || true
     cp -a /usr/share/deepos/roms/. /storage/ 2>/dev/null || true
 fi
 
+# Start modd after provisioning so its socket is available on the first boot.
+if [ "$data_mounted" = yes ] && is_mounted /run &&
+   [ -x /usr/bin/modd ] && [ -d /data/modules ]; then
+    /usr/bin/modd --modules /data/modules --data /data/module-data \
+                  --socket /run/modd.sock &
+fi
+
 # 7a2. Apply the saved brightness / volume / cpu profile before the UI starts.
-if [ -x /usr/bin/launcher ] && is_mounted /data; then
+if [ -x /usr/bin/launcher ] && [ "$data_mounted" = yes ]; then
     /usr/bin/launcher --apply --data /data >/dev/null 2>&1 || true
 fi
 
 # 7b. Boot report on the BOOT partition (FAT32): the only channel that works
 #     without UART or SSH - the card can be pulled and read from a PC.
-if is_mounted /flash; then
+if [ "$flash_mounted" = yes ]; then
     rep=/flash/report
     mkdir -p $rep 2>/dev/null || true
     if [ -d $rep ]; then
@@ -116,13 +151,16 @@ if is_mounted /flash; then
 fi
 
 # 7c. Human verdict for the first boot: /flash/report/checks.txt (key=value).
-if is_mounted /flash && [ -x /usr/local/bin/selfcheck.sh ]; then
+if [ "$flash_mounted" = yes ] && [ -x /usr/local/bin/selfcheck.sh ]; then
     /usr/local/bin/selfcheck.sh /flash/report/checks.txt >/dev/null 2>&1 || true
+    if is_mounted /run; then
+        touch /run/deepos-boot-report 2>/dev/null || true
+    fi
 fi
 
 # 8. Report readiness for the serial console. The UI itself is started by init
 #    from /etc/inittab (::respawn) so a crashed launcher comes back by itself.
-st=missing; is_mounted /storage && st=ok
-dt=missing; is_mounted /data && dt=ok
+st=missing; [ "$roms_mounted" = yes ] && st=ok
+dt=missing; [ "$data_mounted" = yes ] && dt=ok
 echo "DEEPoS: storage=$st data=$dt"
 exit 0

@@ -1,5 +1,6 @@
 /* DEEPoS launcher - prototype entry point (renders one screen to a PPM file). */
 #include <dirent.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <sys/wait.h>
@@ -489,6 +490,35 @@ static int selftest(const char *roms, const char *data, const char *emulators_pa
     dp_model_free(m);
     return 0;
 }
+static void boot_first_frame(void)
+{
+    static const char ticket[] = "/run/deepos-boot";
+    puts("DEEPoS: launcher first frame");
+    fflush(stdout);
+    if (access("/run/deepos-boot-report", F_OK) == 0) {
+        run_command("(/usr/local/bin/selfcheck.sh /flash/report/checks.txt --first-frame "
+                    "&& rm -f /run/deepos-boot-report) </dev/null >/dev/null 2>&1 &");
+    }
+    if (access(ticket, R_OK) != 0)
+        return;
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        execl("/usr/bin/updatr", "updatr", "--state", "/data", "good",
+              "--boot-ticket", ticket, (char *)NULL);
+        _exit(127);
+    }
+    int status;
+    pid_t done = -1;
+    if (pid > 0) {
+        do {
+            done = waitpid(pid, &status, 0);
+        } while (done < 0 && errno == EINTR);
+    }
+    if (done < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0)
+        fprintf(stderr, "launcher: cannot confirm boot after first frame\n");
+}
+
 int main(int argc, char **argv)
 {
     const char *roms = "/storage";
@@ -749,6 +779,8 @@ int main(int argc, char **argv)
         if (dp_display_present(&disp, &cv) != 0) {
             fprintf(stderr, "launcher: cannot present the frame\n");
             rc = 1;
+        } else if (argc == 1 && !disp.fake) {
+            boot_first_frame();
         }
     }
 

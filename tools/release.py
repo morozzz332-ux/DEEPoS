@@ -11,6 +11,8 @@ import pathlib
 import subprocess
 import sys
 
+from loader_donor import donor_region
+
 REQUIRED = ("kernel", "dtb", "boot", "rootfs", "image")
 
 
@@ -52,9 +54,10 @@ def collect(args):
         "boot": root / args.boot,
         "rootfs": root / args.rootfs,
         "image": root / args.image,
-        "idbloader": root / args.loader / "idbloader.img",
-        "u-boot": root / args.loader / "u-boot.itb",
     }
+    if not args.loader_donor:
+        paths["idbloader"] = root / args.loader / "idbloader.img"
+        paths["u-boot"] = root / args.loader / "u-boot.itb"
     missing = [name for name in REQUIRED if not paths[name].exists()]
     if missing and not args.allow_missing:
         print("missing artefacts: " + ", ".join(missing), file=sys.stderr)
@@ -73,7 +76,18 @@ def collect(args):
             digits = sha256_of(path)
         rows.append((name, f"{size}", digits, str(path.relative_to(root))))
 
+    if args.loader_donor:
+        try:
+            chain = donor_region(root / args.loader_donor)
+        except (OSError, ValueError, EOFError) as exc:
+            print(f"donor loader: {exc}", file=sys.stderr)
+            return 2
+        rows.append(("Rockchip donor chain", str(len(chain)),
+                     hashlib.sha256(chain).hexdigest(), "<archr-clone-image>"))
+
     commit, branch = git_info(root)
+    loader_args = ("--loader-donor <archr-clone-image>" if args.loader_donor
+                   else f"--loader {args.loader}")
     lines = [
         "# DEEPoS release",
         "",
@@ -92,10 +106,16 @@ def collect(args):
         "Проверки перед записью:",
         "",
         "```sh",
-        "python3 tools/preflight.py --root .",
-        "python3 tools/verify-image.py --loader build/uboot build/deepos-r36s-v20.img",
+        f"python3 tools/preflight.py --root . --boot {args.boot} --rootfs {args.rootfs} "
+        f"--image {args.image} {loader_args}",
+        f"python3 tools/verify-image.py {loader_args} {args.image}",
         "python3 tools/dpflash.py --list          # номер карты, не гадать",
-        "python3 tools/dpflash.py --image build/deepos-r36s-v20.img --target \\\\.\\PhysicalDriveN --expect-sha256 <sha выше>",
+        "```",
+        "",
+        "Из PowerShell с правами администратора, подставив номер карты и её образ:",
+        "",
+        "```powershell",
+        f".\\flash-deepos.ps1 -Image {args.image} -Sha256 {rows[4][2]}",
         "```",
         "",
     ]
@@ -111,7 +131,9 @@ def main(argv=None):
     parser.add_argument("--boot", default="build/boot")
     parser.add_argument("--rootfs", default="build/rootfs.squashfs")
     parser.add_argument("--image", default="build/deepos-r36s-v20.img")
-    parser.add_argument("--loader", default="build/uboot")
+    loader = parser.add_mutually_exclusive_group()
+    loader.add_argument("--loader", default="build/uboot")
+    loader.add_argument("--loader-donor")
     parser.add_argument("--allow-missing", action="store_true",
                         help="still write the report when an artefact is absent (tests)")
     parser.add_argument("--stdout", action="store_true", help="print instead of writing")

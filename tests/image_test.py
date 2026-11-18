@@ -94,6 +94,14 @@ def probe(image):
             handle.seek(offset)
             return handle.read(size)
 
+        backup_lba = image.stat().st_size // 512 - 1
+        backup = at(backup_lba * 512, 92)
+        check("backup header points to primary", struct.unpack_from("<QQ", backup, 24)
+              == (backup_lba, 1))
+        check("GPT reserves a full 16 KiB entry array", struct.unpack_from("<I", header, 80)[0] == 128)
+        last_usable, = struct.unpack_from("<Q", header, 48)
+        check("ROMS stops before backup GPT", parts[-1]["last"] == last_usable)
+
         fat = at(parts[0]["first"] * 512, 512)
         check("FAT32 signature", fat[510:512] == b"\x55\xaa")
         label = fat[0x47:0x47 + 11].decode("ascii", "replace").strip()
@@ -243,7 +251,8 @@ def verify_checks(tmp: pathlib.Path) -> None:
     kernel = b"\x4d\x5a" + b"\x00" * 2048
     (boot / "KERNEL").write_bytes(kernel)
     (boot / "extlinux").mkdir()
-    (boot / "extlinux" / "extlinux.conf").write_text("LABEL DEEPoS\n", encoding="utf-8")
+    config = (ROOT / "board/r36s-v20/boot/extlinux/extlinux.conf").read_bytes()
+    (boot / "extlinux/extlinux.conf").write_bytes(config)
     dtb = b"\xd0\x0d\xfe\xed" + b"\x00" * 512
     (boot / "dtbs").mkdir()
     (boot / "dtbs" / "rk3326-r36s-v20.dtb").write_bytes(dtb)
@@ -251,6 +260,7 @@ def verify_checks(tmp: pathlib.Path) -> None:
         "board": "verify-test",
         "version": "test",
         "files": {"KERNEL": hashlib.sha256(kernel).hexdigest(),
+                  "extlinux/extlinux.conf": hashlib.sha256(config).hexdigest(),
                   "dtbs/rk3326-r36s-v20.dtb": hashlib.sha256(dtb).hexdigest()},
         "sizes": {"KERNEL": len(kernel), "dtbs/rk3326-r36s-v20.dtb": len(dtb)},
     }, indent=2) + "\n", encoding="utf-8")
@@ -282,6 +292,21 @@ def verify_checks(tmp: pathlib.Path) -> None:
 
     good = verify_tool(image, loader)
     check("verify-image accepts a good image", good.returncode == 0, good.stdout[-400:])
+
+    donor = build_dir / "donor.img"
+    with image.open("rb") as src:
+        donor.write_bytes(src.read(16 * 1024 * 1024))
+    verify_donor = [sys.executable, str(ROOT / "tools/verify-image.py"),
+                    "--loader-donor", str(donor), str(image)]
+    result = subprocess.run(verify_donor, capture_output=True, text=True)
+    check("donor image without boot.scr is rejected", result.returncode == 1
+          and "FAIL BOOT contains a valid boot.scr" in result.stdout, result.stdout[-200:])
+    with donor.open("r+b") as fh:
+        fh.seek(32768)
+        fh.write(b"x")
+    result = subprocess.run(verify_donor, capture_output=True, text=True)
+    check("mismatching donor loader is rejected", result.returncode == 1
+          and "FAIL Rockchip loader matches donor" in result.stdout, result.stdout[-200:])
 
     blob = bytearray(image.read_bytes())
     blob[1024 + 60] ^= 0xFF

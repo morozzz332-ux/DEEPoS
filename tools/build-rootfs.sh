@@ -60,8 +60,10 @@ sh "$REPO/tools/build-userland.sh" --out "$STAGE/usr/bin"
 echo "applying rootfs overlay"
 cp -a "$REPO/board/r36s-v20/rootfs-overlay/." "$STAGE/"
 mkdir -p "$STAGE/proc" "$STAGE/sys" "$STAGE/dev" "$STAGE/run" "$STAGE/tmp" \
-         "$STAGE/data" "$STAGE/storage" "$STAGE/usr/share/deepos" "$STAGE/sbin"
+         "$STAGE/flash" "$STAGE/data" "$STAGE/storage" "$STAGE/usr/share/deepos" "$STAGE/sbin"
 chmod 1777 "$STAGE/tmp"
+chmod 0755 "$STAGE/etc/init.d/rcS" "$STAGE/usr/local/bin/"*.sh \
+           "$STAGE/usr/share/deepos/roms/ports/demo.sh"
 [ -e "$STAGE/init" ] || ln -sf /bin/busybox "$STAGE/init"
 [ -e "$STAGE/sbin/init" ] || ln -sf ../bin/busybox "$STAGE/sbin/init"
 [ -e "$STAGE/linuxrc" ] || ln -sf /bin/busybox "$STAGE/linuxrc"

@@ -3,6 +3,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/fb.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/ioctl.h>
@@ -10,53 +11,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-/* Minimum of the kernel fb API we need (avoids pulling in <linux/fb.h>). */
-struct dp_fb_bitfield {
-    unsigned int offset;
-    unsigned int length;
-    unsigned int msb_right;
-};
-
-struct dp_fb_var_screeninfo {
-    unsigned int xres;
-    unsigned int yres;
-    unsigned int xres_virtual;
-    unsigned int yres_virtual;
-    unsigned int xoffset;
-    unsigned int yoffset;
-    unsigned int bits_per_pixel;
-    unsigned int grayscale;
-    struct dp_fb_bitfield red;
-    struct dp_fb_bitfield green;
-    struct dp_fb_bitfield blue;
-    struct dp_fb_bitfield transp;
-};
-
-struct dp_fb_fix_screeninfo {
-    char id[16];
-    unsigned long smem_start;
-    unsigned int smem_len;
-    unsigned int type;
-    unsigned int type_aux;
-    unsigned int visual;
-    unsigned short xpanstep;
-    unsigned short ypanstep;
-    unsigned short ywrapstep;
-    unsigned int line_length;
-};
-
-#define DP_FBIOGET_VSCREENINFO 0x4600
-#define DP_FBIOGET_FSCREENINFO 0x4602
-
 #define DP_FB_FALLBACK_W 640
 #define DP_FB_FALLBACK_H 480
 #define DP_FB_FALLBACK_BPP 16
-
-static int is_device_path(const char *path)
-{
-    struct stat st;
-    return path && stat(path, &st) == 0 && !S_ISREG(st.st_mode);
-}
 
 int dp_display_open(struct dp_display *d, const char *path)
 {
@@ -64,29 +21,31 @@ int dp_display_open(struct dp_display *d, const char *path)
     memset(d, 0, sizeof(*d));
     d->fd = -1;
 
-    d->fd = open(target, O_RDWR);
-    if (d->fd < 0 && !is_device_path(target))
-        d->fd = open(target, O_RDWR | O_CREAT, 0644); /* test surface */
+    d->fd = open(target, O_RDWR | O_CLOEXEC);
+    if (d->fd < 0 && path && errno == ENOENT)
+        d->fd = open(target, O_RDWR | O_CREAT | O_CLOEXEC, 0644);
     if (d->fd < 0)
         return -1;
 
-    struct dp_fb_var_screeninfo var;
-    struct dp_fb_fix_screeninfo fix;
-    memset(&var, 0, sizeof(var));
-    memset(&fix, 0, sizeof(fix));
-
-    int have_var = ioctl(d->fd, DP_FBIOGET_VSCREENINFO, &var) == 0;
-    int have_fix = ioctl(d->fd, DP_FBIOGET_FSCREENINFO, &fix) == 0;
-
-    if (have_var && var.xres > 0 && var.yres > 0 && var.bits_per_pixel > 0) {
+    struct fb_var_screeninfo var;
+    struct fb_fix_screeninfo fix;
+    struct stat st;
+    if (ioctl(d->fd, FBIOGET_VSCREENINFO, &var) == 0 &&
+        ioctl(d->fd, FBIOGET_FSCREENINFO, &fix) == 0) {
+        if (!var.xres || !var.yres || !fix.line_length ||
+            (var.bits_per_pixel != 16 && var.bits_per_pixel != 24 && var.bits_per_pixel != 32))
+            goto fail;
+        size_t pixels_end = ((size_t)var.xoffset + var.xres) * (var.bits_per_pixel / 8);
+        size_t frame_end = ((size_t)var.yoffset + var.yres - 1) * fix.line_length + pixels_end;
+        if (pixels_end > fix.line_length || frame_end > fix.smem_len)
+            goto fail;
         d->w = (int)var.xres;
         d->h = (int)var.yres;
         d->bpp = (int)var.bits_per_pixel;
-        d->stride = have_fix && fix.line_length ? (int)fix.line_length : d->w * d->bpp / 8;
-        d->len = (size_t)d->stride * (size_t)d->h;
-        if (have_fix && fix.smem_len > d->len)
-            d->len = fix.smem_len;
-    } else if (!is_device_path(target)) {
+        d->stride = (int)fix.line_length;
+        d->len = fix.smem_len;
+        d->offset = (size_t)var.yoffset * fix.line_length + (size_t)var.xoffset * (var.bits_per_pixel / 8);
+    } else if (path && fstat(d->fd, &st) == 0 && S_ISREG(st.st_mode)) {
         /* Test surface: a regular file stands in for the framebuffer. */
         d->w = DP_FB_FALLBACK_W;
         d->h = DP_FB_FALLBACK_H;
@@ -94,25 +53,20 @@ int dp_display_open(struct dp_display *d, const char *path)
         d->stride = d->w * d->bpp / 8;
         d->len = (size_t)d->stride * (size_t)d->h;
         d->fake = 1;
-        if (ftruncate(d->fd, (off_t)d->len) != 0) {
-            close(d->fd);
-            d->fd = -1;
-            return -1;
-        }
+        if (ftruncate(d->fd, (off_t)d->len) != 0)
+            goto fail;
     } else {
-        close(d->fd);
-        d->fd = -1;
-        return -1;
+        goto fail;
     }
 
     d->mem = mmap(NULL, d->len, PROT_READ | PROT_WRITE, MAP_SHARED, d->fd, 0);
-    if (d->mem == MAP_FAILED) {
-        close(d->fd);
-        d->mem = NULL;
-        d->fd = -1;
-        return -1;
-    }
+    if (d->mem == MAP_FAILED)
+        goto fail;
     return 0;
+
+fail:
+    dp_display_close(d);
+    return -1;
 }
 
 void dp_display_close(struct dp_display *d)
@@ -127,7 +81,7 @@ void dp_display_close(struct dp_display *d)
 
 static void put_pixel(struct dp_display *d, int x, int y, uint16_t p)
 {
-    unsigned char *row = d->mem + (size_t)y * (size_t)d->stride;
+    unsigned char *row = d->mem + d->offset + (size_t)y * (size_t)d->stride;
     switch (d->bpp) {
     case 16: {
         uint16_t *dst = (uint16_t *)(void *)(row + (size_t)x * 2);

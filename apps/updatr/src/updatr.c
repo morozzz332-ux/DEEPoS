@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -60,20 +61,26 @@ static void state_path(const char *dir, char *buf, size_t n)
 }
 
 /* Tolerant scanner: we only ever read our own JSON, so look up known keys. */
-static int json_find_string(const char *json, const char *key, char *out, size_t n)
+static const char *json_value(const char *json, const char *key)
 {
     char pat[64];
     snprintf(pat, sizeof(pat), "\"%s\"", key);
     const char *p = strstr(json, pat);
     if (!p)
-        return -1;
+        return NULL;
     p = strchr(p + strlen(pat), ':');
     if (!p)
-        return -1;
+        return NULL;
     p++;
     while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')
         p++;
-    if (*p != '"')
+    return p;
+}
+
+static int json_find_string(const char *json, const char *key, char *out, size_t n)
+{
+    const char *p = json_value(json, key);
+    if (!p || *p != '"')
         return -1;
     p++;
     size_t i = 0;
@@ -85,15 +92,9 @@ static int json_find_string(const char *json, const char *key, char *out, size_t
 
 static int json_find_int(const char *json, const char *key, int *out)
 {
-    char pat[64];
-    snprintf(pat, sizeof(pat), "\"%s\"", key);
-    const char *p = strstr(json, pat);
+    const char *p = json_value(json, key);
     if (!p)
         return -1;
-    p = strchr(p + strlen(pat), ':');
-    if (!p)
-        return -1;
-    p++;
     while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')
         p++;
     char *end = NULL;
@@ -111,7 +112,7 @@ static int state_load(const char *dir, struct state *st)
     state_path(dir, path, sizeof(path));
     FILE *fh = fopen(path, "rb");
     if (!fh)
-        return 0; /* missing state means "first boot of slot A" */
+        return errno == ENOENT ? 0 : -1;
     char buf[1024];
     size_t n = fread(buf, 1, sizeof(buf) - 1, fh);
     fclose(fh);
@@ -121,11 +122,15 @@ static int state_load(const char *dir, struct state *st)
     if (json_find_string(buf, "slot", slot, sizeof(slot)) == 0 && (slot[0] == 'A' || slot[0] == 'B'))
         st->slot[0] = slot[0];
     json_find_int(buf, "attempts", &st->attempts);
-    json_find_int(buf, "rollback", &st->rollback);
+    const char *rollback = json_value(buf, "rollback");
+    if (rollback && strncmp(rollback, "true", 4) == 0)
+        st->rollback = 1;
+    else
+        json_find_int(buf, "rollback", &st->rollback);
     json_find_int(buf, "generation", &st->generation);
     if (st->attempts < 0)
         st->attempts = 0;
-    return 0;
+    return 1;
 }
 
 static int state_save(const char *dir, const struct state *st)
@@ -192,6 +197,30 @@ static void state_begin(struct state *st, int max_attempts)
 static int valid_slot(const char *s)
 {
     return s && (s[0] == 'A' || s[0] == 'B') && s[1] == '\0';
+}
+
+static int write_boot_ticket(const char *path, const char *slot, int generation)
+{
+    FILE *f = fopen(path, "w");
+    if (!f)
+        return 2;
+    int written = fprintf(f, "%s %d\n", slot, generation);
+    int closed = fclose(f);
+    if (written < 0 || closed != 0) {
+        unlink(path);
+        return 2;
+    }
+    return 0;
+}
+
+static int read_boot_ticket(const char *path, char *slot, int *generation)
+{
+    FILE *f = fopen(path, "r");
+    if (!f)
+        return 2;
+    int scanned = fscanf(f, "%c %d", slot, generation);
+    fclose(f);
+    return scanned == 2 && (*slot == 'A' || *slot == 'B') ? 0 : 3;
 }
 
 static long long file_size(const char *path)
@@ -301,6 +330,8 @@ static int sync_boot(const char *boot_dir, const char *slot)
         if (!at)
             continue;
         size_t nlen = strlen(needles[i]);
+        if (strcmp(needles[i], want) == 0)
+            return 0;
         char out[8192];
         size_t head = (size_t)(at - text);
         if (head + strlen(want) >= sizeof(out))
@@ -346,6 +377,8 @@ static void usage(void)
     fprintf(stderr,
             "usage: updatr --state DIR {status|decide|begin|good|switch A|B}\n"
             "       updatr --state DIR begin [--max-attempts N]\n"
+            "       updatr --state DIR --boot DIR begin --slot A|B --boot-ticket FILE\n"
+            "       updatr --state DIR good --boot-ticket FILE\n"
             "       updatr --state DIR --boot DIR switch A|B\n"
             "       updatr --state DIR install --slot A|B --file IMG --dev TARGET\n");
 }
@@ -358,6 +391,7 @@ int main(int argc, char **argv)
     const char *file = NULL;
     const char *dev = NULL;
     const char *boot_dir = NULL;
+    const char *boot_ticket = NULL;
     int max_attempts = MAX_ATTEMPTS;
 
     for (int i = 1; i < argc; i++) {
@@ -373,6 +407,8 @@ int main(int argc, char **argv)
             dev = argv[++i];
         } else if (strcmp(argv[i], "--boot") == 0 && i + 1 < argc) {
             boot_dir = argv[++i];
+        } else if (strcmp(argv[i], "--boot-ticket") == 0 && i + 1 < argc) {
+            boot_ticket = argv[++i];
         } else if (!cmd) {
             cmd = argv[i];
         } else if (!slot) {
@@ -388,8 +424,34 @@ int main(int argc, char **argv)
         return 3;
     }
 
+    const int begin = strcmp(cmd, "begin") == 0;
+    const int good = strcmp(cmd, "good") == 0;
+    const int switching = strcmp(cmd, "switch") == 0;
+    const int installing = strcmp(cmd, "install") == 0;
+    if ((boot_ticket && !(begin || good)) ||
+        (begin && boot_ticket && (!valid_slot(slot) || !boot_dir)) ||
+        (begin && slot && !boot_ticket)) {
+        usage();
+        return 3;
+    }
+
+    /* Serialize validation and state changes with switch and install. */
+    if (begin || good || switching || installing) {
+        if (ensure_dir(state_dir) != 0)
+            return 2;
+        int lock_fd = open(state_dir, O_RDONLY | O_DIRECTORY);
+        if (lock_fd < 0 || flock(lock_fd, LOCK_EX) != 0) {
+            fprintf(stderr, "updatr: cannot lock %s: %s\n", state_dir, strerror(errno));
+            return 2;
+        }
+        /* main retains the lock descriptor until the process exits. */
+    }
     struct state st;
-    state_load(state_dir, &st);
+    int loaded = state_load(state_dir, &st);
+    if (loaded < 0) {
+        fprintf(stderr, "updatr: cannot read state: %s\n", strerror(errno));
+        return 2;
+    }
 
     if (strcmp(cmd, "status") == 0) {
         state_print(&st);
@@ -399,24 +461,48 @@ int main(int argc, char **argv)
         printf("%s\n", st.slot);
         return 0;
     }
-    if (strcmp(cmd, "begin") == 0) {
+    if (begin) {
+        if (boot_ticket && unlink(boot_ticket) != 0 && errno != ENOENT)
+            return 2;
+        if (slot && !loaded)
+            st.slot[0] = slot[0];
+        int generation = st.generation;
+        if (slot && slot[0] != st.slot[0]) {
+            fprintf(stderr, "updatr: running slot %s differs from scheduled slot %s\n", slot, st.slot);
+            return sync_boot(boot_dir, st.slot);
+        }
         state_begin(&st, max_attempts);
         if (state_save(state_dir, &st) != 0)
             return 2;
         if (sync_boot(boot_dir, st.slot) != 0)
             return 2;
-        state_print(&st);
-        return 0;
-    }
-    if (strcmp(cmd, "good") == 0) {
-        st.attempts = 0;
-        st.rollback = 0;
-        if (state_save(state_dir, &st) != 0)
+        if (boot_ticket && write_boot_ticket(boot_ticket, slot, generation) != 0)
             return 2;
         state_print(&st);
         return 0;
     }
-    if (strcmp(cmd, "switch") == 0) {
+    if (good) {
+        int current = 1;
+        if (boot_ticket) {
+            char booted;
+            int generation;
+            int rc = read_boot_ticket(boot_ticket, &booted, &generation);
+            if (rc != 0)
+                return rc;
+            current = loaded && booted == st.slot[0] && generation == st.generation;
+        }
+        if (current) {
+            st.attempts = 0;
+            st.rollback = 0;
+            if (state_save(state_dir, &st) != 0)
+                return 2;
+        }
+        if (boot_ticket && unlink(boot_ticket) != 0)
+            return 2;
+        state_print(&st);
+        return 0;
+    }
+    if (switching) {
         if (!valid_slot(slot)) {
             fprintf(stderr, "updatr: switch requires A or B\n");
             return 3;
@@ -432,7 +518,7 @@ int main(int argc, char **argv)
         state_print(&st);
         return 0;
     }
-    if (strcmp(cmd, "install") == 0) {
+    if (installing) {
         if (!valid_slot(slot) || !file || !dev) {
             fprintf(stderr, "updatr: install requires --slot A|B --file IMG --dev TARGET\n");
             return 3;

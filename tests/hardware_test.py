@@ -5,12 +5,16 @@ The stock dump (tests/fixtures/stock-rf3536k3ka.dtb) is the ground truth for
 GPIO wiring and panel timings: if our hand-written DTS drops a button line or
 typos a timing, this test catches it long before anybody powers the console.
 """
+import argparse
 import pathlib
 import re
 import subprocess
 import sys
+import tempfile
 
-ROOT = pathlib.Path("/w")
+from board_test import BOARD, CPP
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
 OURS = ROOT / "build/kernel/rk3326-r36s-v20.dtb"
 STOCK = ROOT / "tests/fixtures/stock-rf3536k3ka.dtb"
 CONFIG = ROOT / "build/kernel/kernel.config"
@@ -86,8 +90,24 @@ def panel_props(text):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--built", action="store_true",
+                        help="require and validate the built DTB and merged kernel config")
+    args = parser.parse_args()
     stock = to_dts(STOCK)
-    ours = to_dts(OURS)
+    if args.built:
+        ours = to_dts(OURS)
+        cfg = CONFIG.read_text(encoding="utf-8")
+    else:
+        with tempfile.TemporaryDirectory() as tmp:
+            pre = pathlib.Path(tmp) / "board.dts"
+            dtb = pathlib.Path(tmp) / "board.dtb"
+            subprocess.run(CPP + [str(BOARD / "dts/rk3326-r36s-v20.dts"),
+                                  "-o", str(pre)], check=True)
+            subprocess.run(["dtc", "-I", "dts", "-O", "dtb", "-o", str(dtb),
+                            str(pre)], check=True, capture_output=True)
+            ours = to_dts(dtb)
+        cfg = (BOARD / "linux.config").read_text(encoding="utf-8")
     stock_map = phandle_paths(stock)
     ours_map = phandle_paths(ours)
 
@@ -138,7 +158,6 @@ def main():
         "CONFIG_PWM_ROCKCHIP": "backlight",
         "CONFIG_KEYBOARD_ADC": "volume rocker",
     }
-    cfg = CONFIG.read_text(encoding="utf-8", errors="replace") if CONFIG.exists() else ""
     for symbol, reason in required.items():
         line = next((l.strip() for l in cfg.splitlines() if l.startswith(symbol + "=")), "")
         check(line.endswith("=y"), f"{reason} built in ({symbol}=y)")

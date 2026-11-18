@@ -22,25 +22,25 @@
 		#address-cells = <2>;
 		#size-cells = <2>;
 
-		gpio0: gpio@ff210000 {
+		gpio0: gpio@ff040000 {
 			#gpio-cells = <2>;
 			#interrupt-cells = <2>;
 			gpio-controller;
 			interrupt-controller;
 		};
-		gpio1: gpio@ff220000 {
+		gpio1: gpio@ff250000 {
 			#gpio-cells = <2>;
 			#interrupt-cells = <2>;
 			gpio-controller;
 			interrupt-controller;
 		};
-		gpio2: gpio@ff230000 {
+		gpio2: gpio@ff260000 {
 			#gpio-cells = <2>;
 			#interrupt-cells = <2>;
 			gpio-controller;
 			interrupt-controller;
 		};
-		gpio3: gpio@ff240000 {
+		gpio3: gpio@ff270000 {
 			#gpio-cells = <2>;
 			#interrupt-cells = <2>;
 			gpio-controller;

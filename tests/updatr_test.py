@@ -145,6 +145,38 @@ def main() -> int:
                                "switch", "A"], capture_output=True, text=True)
         check("missing extlinux is an error", proc.returncode == 2, f"rc={proc.returncode}")
 
+        # Only rcS can arm a ticket for the mounted root. A launcher failure
+        # leaves the attempt in place, and a later boot creates a new ticket.
+        ticket = tmp / "boot-ticket"
+        args = ("--state", str(state), "--boot", str(boot))
+        run(*args, "switch", "A")
+        run(*args, "begin", "--slot", "A", "--boot-ticket", str(ticket))
+        check("unconfirmed launch leaves the boot attempt recorded",
+              ticket.is_file() and load(state)["attempts"] == 1)
+        run(*args, "good", "--boot-ticket", str(ticket))
+        check("first frame confirms the running slot and consumes its ticket",
+              load(state)["slot"] == "A" and load(state)["attempts"] == 0 and not ticket.exists())
+
+        for _ in range(4):
+            run(*args, "begin", "--slot", "A", "--boot-ticket", str(ticket))
+        before = load(state)
+        run(*args, "good", "--boot-ticket", str(ticket))
+        check("a late frame from A leaves scheduled rollback to B intact",
+              before["slot"] == "B" and before["rollback"] is True and load(state) == before)
+        run(*args, "begin", "--slot", "B", "--boot-ticket", str(ticket))
+        run(*args, "good", "--boot-ticket", str(ticket))
+        check("B confirms only after a B boot", load(state)["slot"] == "B" and
+              load(state)["attempts"] == 0 and load(state)["rollback"] is False)
+
+        run(*args, "begin", "--slot", "B", "--boot-ticket", str(ticket))
+        run(*args, "switch", "A")
+        run(*args, "switch", "B")
+        run(*args, "begin", "--slot", "B", "--boot-ticket", str(tmp / "new-ticket"))
+        before = load(state)
+        run(*args, "good", "--boot-ticket", str(ticket))
+        check("stale ticket cannot confirm a later generation of the same slot",
+              before["attempts"] == 1 and load(state) == before)
+
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

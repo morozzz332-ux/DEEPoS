@@ -13,25 +13,9 @@ our own GPT.
 The donor may be a raw image or a gzip stream; only the first 16 MiB are read.
 """
 import argparse
-import gzip
 import pathlib
-import sys
 
-START = 32 * 1024
-END = 16 * 1024 * 1024
-
-
-def read_donor(source, size):
-    path = pathlib.Path(source)
-    data = bytearray()
-    opener = gzip.open if path.suffix.endswith(".gz") else open
-    with opener(path, "rb") as handle:
-        while len(data) < size:
-            chunk = handle.read(min(1 << 20, size - len(data)))
-            if not chunk:
-                break
-            data.extend(chunk)
-    return bytes(data)
+from loader_donor import START, END, donor_region
 
 
 def main(argv=None):
@@ -42,15 +26,17 @@ def main(argv=None):
     parser.add_argument("--end", default=END, type=int)
     args = parser.parse_args(argv)
 
-    size = args.end - args.start
-    blob = read_donor(args.donor, args.end)
-    if len(blob) < args.end:
-        raise SystemExit(f"import-loader: donor is shorter than {args.end} bytes")
-    region = blob[args.start:args.end]
-    if region.count(b"\x00") == len(region):
-        raise SystemExit("import-loader: donor loader area is empty")
+    if not START <= args.start < args.end <= END:
+        parser.error("donor range must stay within the Rockchip loader area")
+    try:
+        region = donor_region(args.donor)[args.start - START:args.end - START]
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"import-loader: {exc}") from exc
+    size = len(region)
 
     image = pathlib.Path(args.image)
+    if image.stat().st_size < args.end:
+        raise SystemExit("import-loader: target image is shorter than the loader area")
     with image.open("r+b") as handle:
         handle.seek(args.start)
         handle.write(region)

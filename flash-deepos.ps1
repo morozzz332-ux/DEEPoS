@@ -1,109 +1,157 @@
-﻿# Elevated flasher for DEEPoS: writes build/deepos-r36s-v20.img to the SD card.
-# Run through Start-Process -Verb RunAs (or flash-deepos.cmd) so \\.\PhysicalDriveN is writable.
+﻿# Elevated Windows entry point. Invoke with flash-deepos.cmd or from an elevated PowerShell.
 param(
-    [int]$Disk = 2,
-    [switch]$SkipVerify,
-    [string]$Image = "build/deepos-r36s-v20.img",
+    [int]$Disk = 0,
+    [string]$Image = "",
     [string]$Sha256 = "",
-    [string]$Python = ""
+    [string]$Python = "",
+    [switch]$Fresh
 )
-$ErrorActionPreference = "Continue"
-$root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$log = Join-Path $root "build\flash.log"
-New-Item -ItemType Directory -Force -Path (Split-Path $log) | Out-Null
-function Log([string]$m) {
-    $line = "[{0}] {1}" -f (Get-Date -Format "HH:mm:ss"), $m
-    Add-Content -Path $log -Value $line -Encoding UTF8
-    Write-Host $line
+
+function Test-FlashAdministrator {
+    $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-if (-not $Python) {
-    $candidate = Join-Path $env:USERPROFILE ".dsh\dsh-runtimes\dsh-primary-runtime\dependencies\python\python.exe"
-    if (Test-Path $candidate) { $Python = $candidate }
-    else {
-        $cmd = Get-Command python.exe -ErrorAction SilentlyContinue
-        if ($cmd) { $Python = $cmd.Source }
+function Get-FlashDisk([int]$Number) {
+    $candidates = @(Get-Disk -ErrorAction Stop | Where-Object {
+        $_.FriendlyName -match 'STORAGE DEVICE' -and $_.Size -eq 53745811456 -and
+        $_.BusType -in @('USB', 'SD', 'MMC') -and $_.IsBoot -eq $false -and
+        $_.IsSystem -eq $false -and $_.IsOffline -eq $false -and $_.IsReadOnly -eq $false
+    })
+    if ($candidates.Count -ne 1) { throw "Expected one matching SD card, found $($candidates.Count)" }
+    $candidate = $candidates[0]
+    if ($Number -ne 0 -and $candidate.Number -ne $Number) { throw "Matching SD card is disk $($candidate.Number), requested disk $Number" }
+    if (-not $candidate.Path) { throw "Windows did not report a device path for disk $Number" }
+    if ($candidate.LogicalSectorSize -ne 512) { throw "Disk $Number must have 512-byte logical sectors" }
+    return $candidate
+}
+
+function Invoke-DeepOSFlash {
+    param([int]$Disk = 0, [string]$Image = '',
+          [string]$Sha256 = '', [string]$Python = '', [switch]$Fresh)
+    $ErrorActionPreference = 'Stop'
+    $root = $PSScriptRoot
+    $log = Join-Path $root 'build\flash.log'
+    New-Item -ItemType Directory -Force -Path (Split-Path $log) | Out-Null
+    $logFile = [IO.File]::Open($log, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+    $logWriter = [IO.StreamWriter]::new($logFile, [Text.UTF8Encoding]::new($true))
+    $logWriter.AutoFlush = $true
+
+    function Log([string]$Message) {
+        $line = '[{0}] {1}' -f (Get-Date -Format 'HH:mm:ss'), $Message
+        $logWriter.WriteLine($line)
+        Write-Host $line
+    }
+
+    $source = $null
+    try {
+        Log "start: disk=$Disk image=$Image"
+        if (-not (Test-FlashAdministrator)) {
+            Log 'STOP: run from elevated PowerShell or accept UAC in flash-deepos.cmd'
+            return 2
+        }
+
+        if (-not $Python) {
+            $bundled = Join-Path $env:USERPROFILE '.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\python\python.exe'
+            if (Test-Path -LiteralPath $bundled -PathType Leaf) { $Python = $bundled }
+            else { $Python = (Get-Command python.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source }
+        }
+        if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) { throw "Python interpreter not found: $Python" }
+        $Python = (Resolve-Path -LiteralPath $Python).ProviderPath
+        Log "python=$Python"
+
+        $release = Join-Path $root 'docs\RELEASE.md'
+        if (Test-Path -LiteralPath $release -PathType Leaf) {
+            if (-not $Sha256) {
+                $entry = Select-String -LiteralPath $release -Pattern 'image sha256: `([0-9a-f]{64})`' | Select-Object -First 1
+                if ($entry) { $Sha256 = $entry.Matches[0].Groups[1].Value }
+            }
+            if (-not $Image) {
+                $entry = Select-String -LiteralPath $release -Pattern '^\| image \| \d+ \| [0-9a-f]{64} \| `([^`]+)` \|' | Select-Object -First 1
+                if ($entry) { $Image = $entry.Matches[0].Groups[1].Value }
+            }
+        }
+        if (-not $Image) { $Image = 'build/deepos-r36s-v20.img' }
+        if ($Sha256 -notmatch '^[0-9a-f]{64}$') { throw 'A valid expected SHA-256 is required' }
+
+        if ($env:DEEPOS_CHUNK_KIB -and $env:DEEPOS_CHUNK_KIB -notin @('128', '256', '512', '1024')) {
+            throw 'DEEPOS_CHUNK_KIB must be 128, 256, 512 or 1024'
+        }
+        if ($env:DEEPOS_THROTTLE_MS) {
+            $delay = 0.0
+            if (-not [double]::TryParse($env:DEEPOS_THROTTLE_MS, [Globalization.NumberStyles]::Float,
+                    [Globalization.CultureInfo]::InvariantCulture, [ref]$delay) -or
+                [double]::IsInfinity($delay) -or [double]::IsNaN($delay) -or $delay -lt 0) {
+                throw 'DEEPOS_THROTTLE_MS must be a finite, nonnegative number'
+            }
+        }
+
+        $target = Get-FlashDisk $Disk
+        $Disk = $target.Number
+        Log "target: disk=$Disk $($target.FriendlyName) size=$($target.Size) bus=$($target.BusType) style=$($target.PartitionStyle)"
+        if (-not [IO.Path]::IsPathRooted($Image)) { $Image = Join-Path $root $Image }
+        if (-not (Test-Path -LiteralPath $Image -PathType Leaf)) { throw "Image file not found: $Image" }
+        $Image = (Resolve-Path -LiteralPath $Image).ProviderPath
+        # Block other processes from writing or replacing the verified source during the flash.
+        $source = [IO.File]::Open($Image, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        if ($source.Length -lt (67 * 512) -or $source.Length % 512) { throw "Invalid image size: $($source.Length)" }
+        if ($source.Length -gt $target.Size) { throw "Disk is smaller than the image ($($source.Length) bytes)" }
+        Log "checking SHA-256 of $($source.Length) bytes before clearing disk"
+        $actual = (Get-FileHash -InputStream $source -Algorithm SHA256 -ErrorAction Stop).Hash
+        if ($actual -ne $Sha256) { throw "Image SHA-256 mismatch: expected=$Sha256 actual=$actual" }
+        Log "source verified: sha256=$actual"
+
+        $current = Get-FlashDisk $Disk
+        if ($current.Path -ne $target.Path -or $current.UniqueId -ne $target.UniqueId -or
+            $current.SerialNumber -ne $target.SerialNumber) { throw 'Disk identity changed before clearing' }
+        Log 'clearing partition table'
+        Clear-Disk -InputObject $current -RemoveData -RemoveOEM -Confirm:$false -ErrorAction Stop
+        Log 'Clear-Disk: OK'
+
+        # Wait for the storage stack to drop the old volume objects before opening the raw disk.
+        for ($attempt = 0; $attempt -lt 10; $attempt++) {
+            Update-HostStorageCache -ErrorAction Stop
+            $ready = Get-FlashDisk $Disk
+            if ($ready.Path -ne $target.Path -or $ready.SerialNumber -ne $target.SerialNumber) {
+                throw 'Disk identity changed after clearing'
+            }
+            if ($ready.PartitionStyle -in @('RAW', 'MBR') -and $ready.NumberOfPartitions -eq 0) { break }
+            Start-Sleep -Seconds 1
+        }
+        if ($ready.PartitionStyle -notin @('RAW', 'MBR') -or $ready.NumberOfPartitions -ne 0) {
+            throw "Old partition layout remains visible: $($ready.PartitionStyle), $($ready.NumberOfPartitions) partitions"
+        }
+        Log "ready: style=$($ready.PartitionStyle) partitions=0"
+
+        $flashArgs = @('-u', (Join-Path $root 'tools\dpflash.py'), '--image', $Image,
+                       '--target', "\\.\PhysicalDrive$Disk", '--expect-sha256', $Sha256,
+                       '--disk-path', $ready.Path, '--disk-size', ([string]$ready.Size),
+                       '--verify')
+        if (-not $Fresh) { $flashArgs += '--resume' }
+        if ($ready.SerialNumber) { $flashArgs += @('--disk-serial', $ready.SerialNumber.Trim()) }
+        Log 'writing image'
+        try {
+            # PowerShell 5.1 wraps redirected native stderr in ErrorRecord objects.
+            # Keep streaming those lines and preserve the native exit status.
+            $ErrorActionPreference = 'Continue'
+            & $Python @flashArgs 2>&1 | ForEach-Object { Log "  $_" }
+            $code = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = 'Stop'
+        }
+        Log "dpflash exit=$code"
+        if ($code -ne 0) { return $code }
+        Log 'DONE: image written and verified'
+        return 0
+    } catch {
+        Log "STOP: $($_.Exception.Message)"
+        return 1
+    } finally {
+        if ($null -ne $source) { $source.Dispose() }
+        $logWriter.Dispose()
     }
 }
 
-Set-Content -Path $log -Value "" -Encoding UTF8
-Log "start: disk=$Disk image=$Image"
-$principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
-$isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $isAdmin) {
-    # Locale-independent fallback: the built-in Administrators group SID.
-    $isAdmin = [bool](whoami /groups | Select-String "S-1-5-32-544" | Where-Object { $_ -notmatch "deny" })
+if ($MyInvocation.InvocationName -ne '.') {
+    exit (Invoke-DeepOSFlash @PSBoundParameters)
 }
-Log ("admin=" + $isAdmin)
-if (-not $isAdmin) { Log "STOP: not elevated, run flash-deepos.cmd and accept the UAC prompt"; exit 2 }
-Log ("python=" + $Python)
-
-if (-not $Sha256) {
-    $rel = Join-Path $root "docs\RELEASE.md"
-    if (Test-Path $rel) {
-        $m = Select-String -Path $rel -Pattern 'image sha256: `([0-9a-f]{64})`' | Select-Object -First 1
-        if ($m) { $Sha256 = $m.Matches[0].Groups[1].Value }
-    }
-}
-Log ("expected sha256=" + $(if ($Sha256) { $Sha256 } else { "unknown" }))
-if (-not $Python -or -not (Test-Path $Python)) { Log "STOP: python interpreter not found"; exit 1 }
-
-$d = Get-Disk -Number $Disk
-Log ("target: " + $d.FriendlyName + " size=" + $d.Size + " bus=" + $d.BusType + " style=" + $d.PartitionStyle)
-if ($d.FriendlyName -notmatch "STORAGE DEVICE") { Log "STOP: unexpected disk name"; exit 1 }
-if ($d.Size -ne 53745811456) { Log "STOP: unexpected disk size"; exit 1 }
-
-$img = Join-Path $root $Image
-if (-not (Test-Path $img)) { Log "STOP: image not found: $img"; exit 1 }
-Log ("image bytes=" + (Get-Item $img).Length)
-
-# Drop drive letters/access paths so nothing keeps the card open.
-Get-Partition -DiskNumber $Disk -ErrorAction SilentlyContinue | ForEach-Object {
-    if ($_.DriveLetter) {
-        Log ("removing access path " + $_.DriveLetter)
-        Remove-PartitionAccessPath -DiskNumber $Disk -PartitionNumber $_.PartitionNumber `
-            -AccessPath ($_.DriveLetter + ":") -ErrorAction SilentlyContinue
-    }
-}
-
-# A half-written card can show up as a bogus partition; cleaning it also tells
-# Windows to release the volume objects before we open the raw device.
-Log "clearing partition table..."
-try {
-    Clear-Disk -Number $Disk -RemoveData -RemoveOEM -Confirm:$false -ErrorAction Stop
-    Log "Clear-Disk: OK"
-} catch {
-    Log ("Clear-Disk: " + $_.Exception.Message)
-}
-# Clear-Disk leaves a raw volume object behind; Windows then refuses the raw
-# write with 32 (sharing violation). Drop any partition that reappeared.
-Get-Partition -DiskNumber $Disk -ErrorAction SilentlyContinue | ForEach-Object {
-    Log ("dropping leftover partition " + $_.PartitionNumber)
-    try { Remove-Partition -DiskNumber $Disk -PartitionNumber $_.PartitionNumber -Confirm:$false -ErrorAction Stop }
-    catch { Log ("  remove-partition: " + $_.Exception.Message) }
-}
-Start-Sleep -Seconds 1
-Update-HostStorageCache -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 2
-$d = Get-Disk -Number $Disk
-Log ("ready: style=" + $d.PartitionStyle + " partitions=" + $d.NumberOfPartitions + " size=" + $d.Size)
-
-Log "writing..."
-try {
-    $flashArgs = @((Join-Path $root "tools\dpflash.py"), "--image", $img,
-                   "--target", ("\\.\PhysicalDrive" + $Disk),
-                   "--expect-sha256", $Sha256, "--resume", "--expand")
-    if (-not $SkipVerify) { $flashArgs += "--verify" }
-    $out = & $Python @flashArgs 2>&1
-    $code = $LASTEXITCODE
-    foreach ($line in @($out)) { Log ("  " + $line) }
-    Log "dpflash exit=$code"
-} catch {
-    Log ("dpflash threw: " + $_.Exception.Message)
-}
-
-$after = Get-Disk -Number $Disk
-Log ("after: style=" + $after.PartitionStyle + " partitions=" + $after.NumberOfPartitions)
-Get-Partition -DiskNumber $Disk -ErrorAction SilentlyContinue |
-    ForEach-Object { Log ("  part " + $_.PartitionNumber + " " + $_.Size + " offset=" + $_.Offset) }
-Log "DONE"

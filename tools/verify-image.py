@@ -32,6 +32,9 @@ import sys
 import tempfile
 import zlib
 
+from loader_donor import START as DONOR_START, donor_region
+from mkboot import BOOT_SCRIPT, sha256_file, valid_boot_script, validate_extlinux
+
 SECTOR = 512
 GPT_SIG = b"EFI PART"
 CRC_OFFSET = 16
@@ -53,7 +56,6 @@ REQUIRED_ROOTFS = [
     "etc/inittab",
     "etc/init.d/rcS",
 ]
-REQUIRED_BOOT = ["KERNEL", "MANIFEST.json", "extlinux/extlinux.conf"]
 
 
 class Report:
@@ -66,7 +68,7 @@ class Report:
         if cond:
             self.ok.append(name)
         else:
-            self.failures.append(f"{name}{(' — ' + extra) if extra else ''}")
+            self.failures.append(f"{name}{(' вЂ” ' + extra) if extra else ''}")
         return cond
 
     def info(self, key: str, value: object) -> None:
@@ -86,7 +88,7 @@ def parse_gpt_header(raw: bytes) -> dict:
     entries_lba, num_entries, entry_size, entries_crc = struct.unpack_from("<QIII", raw, 72)
     disk_guid = raw[56:72]
     crc_ok = False
-    if header_size <= len(raw):
+    if 92 <= header_size <= len(raw):
         muted = bytearray(raw[:header_size])
         muted[CRC_OFFSET:CRC_OFFSET + 4] = b"\0\0\0\0"
         crc_ok = zlib.crc32(bytes(muted)) & 0xFFFFFFFF == header_crc
@@ -135,25 +137,40 @@ def check_gpt(fh, image_size: int, rep: Report) -> list[dict]:
     ptype = mbr[446 + 4]
     rep.check("protective MBR partition type 0xEE", ptype == 0xEE, f"0x{ptype:02x}")
 
-    primary = parse_gpt_header(read_at(fh, SECTOR, 92))
+    primary = parse_gpt_header(read_at(fh, SECTOR, SECTOR))
     rep.check("GPT primary header present", bool(primary))
     if not primary:
         return []
     rep.check("GPT primary header CRC", primary["crc_ok"])
 
-    entries_raw = read_at(fh, primary["entries_lba"] * SECTOR, primary["num_entries"] * primary["entry_size"])
-    rep.check("GPT entries array length", len(entries_raw) == primary["num_entries"] * primary["entry_size"])
-    rep.check("GPT entries CRC",
-              crc_entries(entries_raw, primary["num_entries"], primary["entry_size"]) == primary["entries_crc"])
+    last_lba = image_size // SECTOR - 1
+    count, width = primary["num_entries"], primary["entry_size"]
+    table_sectors = (count * width + SECTOR - 1) // SECTOR
+    if not rep.check("GPT entry geometry", primary["entries_lba"] == 2
+                     and 1 <= count <= 4096 and width == ENTRY_SIZE
+                     and table_sectors < last_lba // 2):
+        return []
+    rep.check("GPT primary points at image end",
+              primary["current_lba"] == 1 and primary["backup_lba"] == last_lba)
+    rep.check("GPT usable LBA bounds", 2 + table_sectors <= primary["first_usable"]
+              <= primary["last_usable"] < last_lba - table_sectors)
+    entries_raw = read_at(fh, 2 * SECTOR, count * width)
+    rep.check("GPT entries array length", len(entries_raw) == count * width)
+    rep.check("GPT entries CRC", crc_entries(entries_raw, count, width)
+              == primary["entries_crc"])
 
-    backup = parse_gpt_header(read_at(fh, image_size - SECTOR, 92))
-    rep.check("GPT backup header present", bool(backup))
-    if backup:
+    backup = parse_gpt_header(read_at(fh, image_size - SECTOR, SECTOR))
+    if rep.check("GPT backup header present", bool(backup)):
         rep.check("GPT backup header CRC", backup["crc_ok"])
-        rep.check("GPT backup points at primary", backup["current_lba"] == primary["backup_lba"],
-                  f"{backup['current_lba']} vs {primary['backup_lba']}")
-        rep.check("GPT backup entries LBA inside image",
-                  backup["entries_lba"] * SECTOR < image_size)
+        rep.check("GPT backup points at primary", backup["current_lba"] == last_lba
+                  and backup["backup_lba"] == 1)
+        rep.check("GPT backup metadata matches primary", all(
+            backup[k] == primary[k] for k in ("disk_guid", "num_entries", "entry_size",
+                                              "first_usable", "last_usable", "entries_crc")))
+        backup_entries_lba = last_lba - table_sectors
+        rep.check("GPT backup entries LBA", backup["entries_lba"] == backup_entries_lba)
+        rep.check("GPT backup entries match primary",
+                  read_at(fh, backup_entries_lba * SECTOR, count * width) == entries_raw)
 
     parts = parse_entries(entries_raw, primary["num_entries"])
     rep.info("partitions", parts)
@@ -163,7 +180,9 @@ def check_gpt(fh, image_size: int, rep: Report) -> list[dict]:
     ordered = sorted(parts, key=lambda p: p["first_lba"])
     overlap = any(ordered[i]["last_lba"] >= ordered[i + 1]["first_lba"] for i in range(len(ordered) - 1))
     rep.check("partitions do not overlap", not overlap)
-    rep.check("last partition ends inside image", ordered[-1]["last_lba"] * SECTOR <= image_size)
+    rep.check("all partitions are within usable GPT LBAs", all(
+        primary["first_usable"] <= p["first_lba"] <= p["last_lba"] <= primary["last_usable"]
+        for p in parts))
     return parts
 
 
@@ -195,83 +214,61 @@ def check_loader(fh, loader_dir: pathlib.Path, rep: Report) -> None:
                   f"{len(got)} of {len(blob)} bytes match")
 
 
-def boot_listing(fh, part: dict) -> str:
-    """Recursive listing of a FAT partition (VFAT long names are not contiguous)."""
+def extract_boot_member(fh, part, member, *, digest=False):
     offset = part["first_lba"] * SECTOR
-    try:
-        proc = subprocess.run(
-            ["mdir", "-/", "-i", f"{fh.name}@@{offset}", "::"],
-            capture_output=True, text=True, env=dict(os.environ, MTOOLS_SKIP_CHECK="1"),
-        )
-    except FileNotFoundError:
-        return ""
-    return proc.stdout if proc.returncode == 0 else ""
+    with tempfile.TemporaryDirectory() as td:
+        out = pathlib.Path(td) / "member.bin"
+        try:
+            proc = subprocess.run(
+                ["mcopy", "-n", "-i", f"{fh.name}@@{offset}", f"::{member}", str(out)],
+                capture_output=True, env=dict(os.environ, MTOOLS_SKIP_CHECK="1"),
+            )
+        except FileNotFoundError:
+            return None
+        if proc.returncode != 0 or not out.is_file():
+            return None
+        return sha256_file(out) if digest else out.read_bytes()
 
 
-def check_boot_payload(fh, parts: list[dict], rep: Report) -> None:
+def check_boot_payload(fh, parts, rep, *, require_script=False):
     boot = next((p for p in parts if p["name"] == "BOOT"), None)
     if not rep.check("BOOT partition present for payload check", boot is not None):
         return
-    raw = read_at(fh, boot["first_lba"] * SECTOR, (boot["last_lba"] - boot["first_lba"] + 1) * SECTOR)
-    listing = boot_listing(fh, boot)
-    for name in REQUIRED_BOOT:
-        base = name.split("/")[-1]
-        if listing:
-            # mdir -/ prints nested entries as ::dir/file, so match the leaf name.
-            present = base.lower() in listing.lower()
-        else:
-            present = base.upper().encode() in raw.upper()
-        rep.check(f"BOOT contains {name}", present)
+    manifest_blob = extract_boot_member(fh, boot, "MANIFEST.json")
+    try:
+        manifest = json.loads(manifest_blob or b"")
+        hashes = manifest["files"]
+        if not isinstance(hashes, dict):
+            raise ValueError("files must be an object")
+    except (ValueError, KeyError, TypeError) as exc:
+        rep.check("BOOT MANIFEST.json parses", False, str(exc))
+        return
 
-    # Manifest lives inside FAT; parse it from the raw region when possible.
-    marker = raw.find(b'{\n  "board"')
-    if marker == -1:
-        marker = raw.find(b'{"board"')
-    if marker != -1:
-        depth = 0
-        end = marker
-        for i in range(marker, min(marker + 8192, len(raw))):
-            if raw[i:i + 1] == b"{":
-                depth += 1
-            elif raw[i:i + 1] == b"}":
-                depth -= 1
-                if depth == 0:
-                    end = i + 1
-                    break
+    rep.info("manifest", {"version": manifest.get("version"), "board": manifest.get("board"),
+                          "files": len(hashes)})
+    for member in ("KERNEL", "dtbs/rk3326-r36s-v20.dtb"):
+        actual = extract_boot_member(fh, boot, member, digest=True)
+        rep.check(f"BOOT {member} sha256 matches manifest",
+                  actual is not None and actual == hashes.get(member))
+
+    name = "extlinux/extlinux.conf"
+    config = extract_boot_member(fh, boot, name)
+    if rep.check(f"BOOT contains {name}", config is not None):
         try:
-            manifest = json.loads(raw[marker:end].decode("utf-8", "ignore"))
-        except json.JSONDecodeError as exc:
-            rep.check("MANIFEST.json parses", False, str(exc))
+            validate_extlinux(config.decode("utf-8"))
+        except ValueError as exc:
+            rep.check("BOOT extlinux kernel arguments", False, str(exc))
         else:
-            rep.check("MANIFEST.json parses", True)
-            files = manifest.get("files", {})
-            sizes = manifest.get("sizes", {})
-            kernel_sha = files.get("KERNEL", "")
-            kernel_size = sizes.get("KERNEL", 0)
-            rep.info("manifest", {"version": manifest.get("version"), "board": manifest.get("board"),
-                                  "files": len(files)})
-            rep.check("manifest lists KERNEL", bool(kernel_sha) and kernel_size > 0)
-            if kernel_sha and kernel_size:
-                digest = extract_and_hash(fh, boot, "::KERNEL")
-                rep.check("KERNEL sha256 matches manifest", digest == kernel_sha,
-                          f"{(digest or '?')[:16]} vs {kernel_sha[:16]}")
-            dtb_sha = files.get("dtbs/rk3326-r36s-v20.dtb", "")
-            rep.check("manifest lists device tree", bool(dtb_sha))
+            rep.check("BOOT extlinux kernel arguments", True)
+        rep.check("BOOT extlinux sha256 matches manifest",
+                  hashlib.sha256(config).hexdigest() == hashes.get(name))
 
-
-def extract_and_hash(fh, part: dict, member: str) -> str:
-    """Copy one file out of a FAT partition with mtools and hash it."""
-    offset = part["first_lba"] * SECTOR
-    image = fh.name
-    with tempfile.TemporaryDirectory() as td:
-        out = pathlib.Path(td) / "member.bin"
-        proc = subprocess.run(
-            ["mcopy", "-n", "-i", f"{image}@@{offset}", member, str(out)],
-            capture_output=True, text=True, env=dict(os.environ, MTOOLS_SKIP_CHECK="1"),
-        )
-        if proc.returncode != 0 or not out.is_file():
-            return ""
-        return hashlib.sha256(out.read_bytes()).hexdigest()
+    if require_script or BOOT_SCRIPT in hashes:
+        script = extract_boot_member(fh, boot, BOOT_SCRIPT)
+        if rep.check("BOOT contains a valid boot.scr",
+                     script is not None and valid_boot_script(script)):
+            rep.check("BOOT boot.scr sha256 matches manifest",
+                      hashlib.sha256(script).hexdigest() == hashes.get(BOOT_SCRIPT))
 
 
 def check_squashfs(fh, parts: list[dict], rep: Report) -> None:
@@ -307,7 +304,9 @@ def check_squashfs(fh, parts: list[dict], rep: Report) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Verify a DEEPoS image before flashing")
     ap.add_argument("image", type=pathlib.Path)
-    ap.add_argument("--loader", type=pathlib.Path, default=pathlib.Path("build/uboot"))
+    loader = ap.add_mutually_exclusive_group()
+    loader.add_argument("--loader", type=pathlib.Path, default=pathlib.Path("build/uboot"))
+    loader.add_argument("--loader-donor", type=pathlib.Path)
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--skip-rootfs", action="store_true")
     args = ap.parse_args()
@@ -317,14 +316,23 @@ def main() -> int:
         return 1
     size = args.image.stat().st_size
     rep.info("image", {"path": str(args.image), "size": size,
-                       "sha256": hashlib.sha256(args.image.read_bytes()).hexdigest()})
+                       "sha256": sha256_file(args.image)})
 
     with args.image.open("rb") as fh:
         parts = check_gpt(fh, size, rep)
         if parts:
             check_signatures(fh, parts, rep)
-            check_loader(fh, args.loader, rep)
-            check_boot_payload(fh, parts, rep)
+            if args.loader_donor:
+                try:
+                    blob = donor_region(args.loader_donor)
+                except (OSError, ValueError) as exc:
+                    rep.check("Rockchip donor loader readable", False, str(exc))
+                else:
+                    rep.check("Rockchip loader matches donor",
+                              read_at(fh, DONOR_START, len(blob)) == blob)
+            else:
+                check_loader(fh, args.loader, rep)
+            check_boot_payload(fh, parts, rep, require_script=bool(args.loader_donor))
             if not args.skip_rootfs:
                 check_squashfs(fh, parts, rep)
         else:

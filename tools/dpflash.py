@@ -1,300 +1,353 @@
 #!/usr/bin/env python3
-"""DEEPoS flasher - writes an image to a card (or to a file, for tests).
+"""Flash a DEEPoS image to a prepared Windows card or a regular test file.
 
-Flash order matters on Windows: as soon as a valid partition table exists the
-mount manager tries to mount FAT/exFAT volumes, and writing into a mounted
-volume fails with `win32=5` (ERROR_ACCESS_DENIED on \\\\.\\\\PhysicalDriveN).
-So the table region (protective MBR + GPT header + entry array) is written
-LAST: the card stays "blank" while the payload streams in, then a single 17 KiB
-write makes it bootable.
-
-Usage:
-    python3 tools/dpflash.py --image build/deepos.img --target \\\\.\\\\PhysicalDrive2
-    python3 tools/dpflash.py --image build/deepos.img --target test.img --dry-run
-
-A plain file target is supported so the whole flow is testable on the host.
+On Windows, flash-deepos.ps1 validates the image and clears the selected disk
+before invoking this writer. Keep the raw handle open and defer both GPT copies
+until the payload is complete so Windows cannot mount a writable volume.
 """
 import argparse
+import ctypes
+from ctypes import wintypes
 import hashlib
-import os
-import re
 import json
+import math
+import os
 import pathlib
+import re
+import struct
 import subprocess
 import sys
 import time
 
 MIB = 1024 * 1024
-CHUNK = 1 * MIB
-RETRYABLE = {1, 5, 21, 22}  # access, not ready, device errors during long writes
-TABLE_BYTES = 34 * 512  # protective MBR + primary GPT header + 32 entries
+SECTOR = 512
+TABLE_BYTES = 34 * SECTOR
+BACKUP_BYTES = 33 * SECTOR
+DISK_NUMBER_RE = re.compile(r"^\\\\\.\\PhysicalDrive(\d+)$", re.IGNORECASE)
+DEVICE_PATH_RE = re.compile(r"^\\\\[.?]\\")
+
+if os.name == "nt":
+    import msvcrt
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    DWORD_PTR = ctypes.POINTER(wintypes.DWORD)
+    LONG64_PTR = ctypes.POINTER(ctypes.c_longlong)
+    kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                   wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD,
+                                   wintypes.HANDLE]
+    kernel.CreateFileW.restype = wintypes.HANDLE
+    kernel.SetFilePointerEx.argtypes = [wintypes.HANDLE, ctypes.c_longlong,
+                                        LONG64_PTR, wintypes.DWORD]
+    kernel.SetFilePointerEx.restype = wintypes.BOOL
+    for transfer in (kernel.ReadFile, kernel.WriteFile):
+        transfer.argtypes = [wintypes.HANDLE, wintypes.LPVOID, wintypes.DWORD,
+                             DWORD_PTR, wintypes.LPVOID]
+        transfer.restype = wintypes.BOOL
+    kernel.DeviceIoControl.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPVOID,
+                                       wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD,
+                                       DWORD_PTR, wintypes.LPVOID]
+    kernel.DeviceIoControl.restype = wintypes.BOOL
+    for operation in (kernel.FlushFileBuffers, kernel.CloseHandle):
+        operation.argtypes = [wintypes.HANDLE]
+        operation.restype = wintypes.BOOL
 
 
-def sha256_file(path, limit=None):
-    digest = hashlib.sha256()
-    with open(path, "rb") as handle:
-        remaining = limit
-        while True:
-            size = CHUNK if remaining is None else min(CHUNK, remaining)
-            if size <= 0:
-                break
-            chunk = handle.read(size)
-            if not chunk:
-                break
-            digest.update(chunk)
-            if remaining is not None:
-                remaining -= len(chunk)
-    return digest.hexdigest()
+def _image_stream(path):
+    if DEVICE_PATH_RE.match(os.fspath(path)) or not os.path.isfile(path):
+        raise SystemExit("dpflash: the image must be a regular file")
+    if os.name != "nt":
+        return open(path, "rb")
+    # FILE_SHARE_READ denies writes and replacement until this handle closes.
+    handle = _open_windows(os.fspath(path), write=False, share=1)
+    try:
+        fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+    except OSError:
+        close(handle)
+        raise
+    return os.fdopen(fd, "rb")
 
 
-DISK_NUMBER_RE = re.compile(r"^\\\\\.\\PhysicalDrive(\d+)$")
-
-
-def _windows_disk_size(number):
-    """Ask PowerShell for the length of a physical disk.
-
-    CreateFileW(..., GENERIC_READ) is denied for removable cards on some
-    systems and GetFileSizeEx() answers 0 for raw devices, so Get-Disk is the
-    reliable path here.
-    """
-    script = (f"(Get-Disk -Number {number}).Size")
-    out = subprocess.run(["powershell", "-NoProfile", "-Command", script],
-                         capture_output=True, text=True, timeout=30)
-    text = (out.stdout or "").strip().splitlines()
-    if text and text[-1].isdigit():
-        return int(text[-1])
-    return 0
+def _windows_disk(number):
+    cmd = (f"$ErrorActionPreference='Stop'; Get-Disk -Number {number} | "
+           "Select-Object Number,Path,Size,SerialNumber,LogicalSectorSize,IsBoot,IsSystem,"
+           "IsReadOnly,IsOffline,NumberOfPartitions,"
+           "@{n='Bus';e={$_.BusType.ToString()}},"
+           "@{n='Style';e={$_.PartitionStyle.ToString()}} | ConvertTo-Json -Compress")
+    try:
+        out = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", cmd],
+                             capture_output=True, text=True, check=True, timeout=30)
+        disk = json.loads(out.stdout)
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        raise SystemExit(f"dpflash: could not query PhysicalDrive{number}: {exc}") from exc
+    if not isinstance(disk, dict) or disk.get("Number") != number or not disk.get("Size"):
+        raise SystemExit(f"dpflash: invalid disk information for PhysicalDrive{number}")
+    return disk
 
 
 def target_size(path):
-    """Size of a regular file or of a raw disk/volume device."""
-    try:
-        size = os.path.getsize(path)
-    except OSError:
-        size = 0
-    if size > 0:
-        return size
-    if os.name != "nt":
-        raise SystemExit(f"dpflash: cannot determine size of {path}")
+    """Return the regular file size or the Windows physical disk length."""
+    if os.name == "nt":
+        match = DISK_NUMBER_RE.fullmatch(os.fspath(path))
+        if match:
+            return _windows_disk(int(match.group(1)))["Size"]
+    return os.path.getsize(path)
 
-    match = DISK_NUMBER_RE.match(path)
-    if match:
-        size = _windows_disk_size(int(match.group(1)))
-        if size:
-            return size
-        raise SystemExit(f"dpflash: cannot determine size of {path} "
-                         f"(Get-Disk returned nothing)")
 
-    import ctypes
-
-    free = ctypes.c_ulonglong(0)
-    total = ctypes.c_ulonglong(0)
-    if ctypes.windll.kernel32.GetDiskFreeSpaceExW(
-            path, ctypes.byref(free), ctypes.byref(total), None) and total.value:
-        return int(total.value)
-    raise SystemExit(f"dpflash: cannot determine size of {path}")
+def _open_windows(path, write, share=3):
+    access = 0x80000000 | (0x40000000 if write else 0)
+    handle = kernel.CreateFileW(path, access, share, None, 3, 0, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise OSError(f"open {path} (win32={ctypes.get_last_error()})")
+    return handle
 
 
 def open_target(path, write):
-    if os.name == "nt":
-        import ctypes
-        access = 0x80000000 | 0x40000000 if write else 0x80000000
-        # Windows keeps a volume handle open for a while after Clear-Disk, which
-        # makes an exclusive open fail with 32 (sharing violation). Try shared
-        # modes first and retry for a few seconds before giving up.
-        last = 0
-        for attempt in range(12):
-            for share in (0x1 | 0x2, 0x1 | 0x2 | 0x4, 0):
-                handle = ctypes.windll.kernel32.CreateFileW(path, access, share,
-                                                            None, 3, 0, None)
-                if handle != -1:
-                    return handle
-                last = ctypes.windll.kernel32.GetLastError()
-                if last not in (5, 32):  # access denied / sharing violation
-                    break
-            time.sleep(1.0)
-        raise SystemExit(f"dpflash: cannot open {path} (win32={last}); "
-                         "close Explorer/disk tools and retry")
-
+    if os.name == "nt" and DEVICE_PATH_RE.match(os.fspath(path)):
+        return _open_windows(os.fspath(path), write)
     return open(path, "r+b" if write else "rb")
 
 
-class WriteError(Exception):
-    def __init__(self, offset, err):
-        super().__init__(f"write failed at offset {offset} (win32={err})")
-        self.offset = offset
-        self.err = err
+def _seek(handle, offset, size, phase):
+    moved = ctypes.c_longlong()
+    if not kernel.SetFilePointerEx(handle, offset, ctypes.byref(moved), 0):
+        raise OSError(f"{phase}: seek offset={offset} length={size} win32={ctypes.get_last_error()}")
+    if moved.value != offset:
+        raise OSError(f"{phase}: seek offset={offset} length={size} moved={moved.value}")
 
 
-def write_at(handle, offset, data):
-    if os.name == "nt":
-        import ctypes
-        from ctypes import wintypes
-        moved = ctypes.c_longlong(0)
-        ctypes.windll.kernel32.SetFilePointerEx(handle, ctypes.c_longlong(offset),
-                                                ctypes.byref(moved), 0)
-        written = wintypes.DWORD(0)
-        buf = ctypes.create_string_buffer(data, len(data))
-        if not ctypes.windll.kernel32.WriteFile(handle, buf, len(data),
-                                                ctypes.byref(written), None):
-            raise WriteError(offset, ctypes.windll.kernel32.GetLastError())
-        if written.value != len(data):
-            raise WriteError(offset, 0)
+def write_at(handle, offset, data, phase="write"):
+    size = len(data)
+    if isinstance(handle, int):
+        _seek(handle, offset, size, phase)
+        written = wintypes.DWORD()
+        if not kernel.WriteFile(handle, data, size, ctypes.byref(written), None):
+            raise OSError(f"{phase}: write offset={offset} length={size} win32={ctypes.get_last_error()}")
+        count = written.value
     else:
         handle.seek(offset)
-        handle.write(data)
+        count = handle.write(data)
+    if count != size:
+        raise OSError(f"{phase}: short write offset={offset}, expected {size}, wrote {count}")
 
 
-def write_retry(target_path, offset, data, attempts=8, log=print):
-    """Write one chunk, reopening the device when the reader hiccups.
-
-    Cheap USB readers drop off during sustained writes (win32=21 "device not
-    ready" or 22 "device does not recognise the command"); a reopen plus a
-    short pause usually brings them back.
-    """
-    last = None
-    for attempt in range(1, attempts + 1):
-        handle = open_target(target_path, write=True)
-        try:
-            write_at(handle, offset, data)
-            return
-        except WriteError as exc:
-            last = exc
-            log(f"\n  retry {attempt}/{attempts} at offset {offset}: {exc}")
-            time.sleep(min(3.0, 0.5 * attempt))
-        finally:
-            close(handle)
-    raise SystemExit(f"dpflash: {last}")
-
-
-def verify_table(target_path, table, table_tail, image_size, log=print):
-    handle = open_target(target_path, write=False)
-    try:
-        head = read_at(handle, 0, len(table))
-        tail = read_at(handle, image_size - len(table_tail), len(table_tail)) if table_tail else b""
-    finally:
-        close(handle)
-    if head != table or (table_tail and tail != table_tail):
-        raise SystemExit("dpflash: read-back mismatch after writing the partition table")
-    log("verified: partition table read back byte-identical")
-
-
-def read_at(handle, offset, size):
-    if os.name == "nt":
-        import ctypes
-        from ctypes import wintypes
-        moved = ctypes.c_longlong(0)
-        ctypes.windll.kernel32.SetFilePointerEx(handle, ctypes.c_longlong(offset),
-                                                ctypes.byref(moved), 0)
+def read_at(handle, offset, size, phase="read"):
+    if isinstance(handle, int):
+        _seek(handle, offset, size, phase)
         buf = ctypes.create_string_buffer(size)
-        got = wintypes.DWORD(0)
-        ctypes.windll.kernel32.ReadFile(handle, buf, size, ctypes.byref(got), None)
-        return buf.raw[:got.value]
-
-    handle.seek(offset)
-    return handle.read(size)
-
-
-def compare_at(handle, offset, data):
-    """True when the device already holds exactly these bytes at this offset."""
-    got = read_at(handle, offset, len(data))
-    return got == data
+        got = wintypes.DWORD()
+        if not kernel.ReadFile(handle, buf, size, ctypes.byref(got), None):
+            raise OSError(f"{phase}: read offset={offset} length={size} win32={ctypes.get_last_error()}")
+        data = buf.raw if got.value == size else buf[:got.value]
+    else:
+        handle.seek(offset)
+        data = handle.read(size)
+    if len(data) != size:
+        raise OSError(f"{phase}: short read offset={offset}, expected {size}, read {len(data)}")
+    return data
 
 
-def hash_target(target_path, size):
-    """sha256 of the first `size` bytes of a target (file or raw device)."""
-    handle = open_target(target_path, write=False)
-    digest = hashlib.sha256()
-    try:
-        offset = 0
-        while offset < size:
-            block = read_at(handle, offset, min(8 * MIB, size - offset))
-            if not block:
-                break
-            digest.update(block)
-            offset += len(block)
-    finally:
-        close(handle)
-    return digest.hexdigest()
+def flush(handle, phase="flush"):
+    if isinstance(handle, int):
+        if not kernel.FlushFileBuffers(handle):
+            raise OSError(f"{phase}: flush win32={ctypes.get_last_error()}")
+    else:
+        handle.flush()
+        os.fsync(handle.fileno())
 
 
 def close(handle):
-    if os.name == "nt":
-        import ctypes
-        ctypes.windll.kernel32.CloseHandle(handle)
+    if isinstance(handle, int):
+        if not kernel.CloseHandle(handle):
+            raise OSError(f"close: win32={ctypes.get_last_error()}")
     else:
         handle.close()
 
 
-def flash(image_path, target_path, dry_run=False, defer_table=True, expected_sha=None,
-          resume=False, verify=False, expand=False):
-    image_size = os.path.getsize(image_path)
-    card_size = target_size(target_path)
-    if card_size < image_size:
-        raise SystemExit(f"dpflash: target is {card_size} B, image needs {image_size} B")
+def _device_ioctl(handle, code, size):
+    buf = ctypes.create_string_buffer(size)
+    got = wintypes.DWORD()
+    if not kernel.DeviceIoControl(handle, code, None, 0, buf, size,
+                                   ctypes.byref(got), None):
+        raise OSError(f"prepare: ioctl={code:#x} win32={ctypes.get_last_error()}")
+    if got.value < 8:
+        raise OSError(f"prepare: short response for ioctl={code:#x}")
+    return buf
 
-    digest = sha256_file(image_path)
-    print(f"image   {image_path} ({image_size} B)")
-    print(f"target  {target_path} ({card_size} B)")
-    print(f"sha256  {digest}")
-    if expected_sha and digest != expected_sha.lower():
-        raise SystemExit("dpflash: image sha256 does not match --expect-sha256")
-    if dry_run:
-        print("dry-run: nothing written")
-        return 0
 
-    with open(image_path, "rb") as src:
-        table = src.read(TABLE_BYTES)
-        src.seek(max(0, image_size - 33 * 512))
-        table_tail = src.read()
+def _require_blank_disk(handle, disk_size):
+    length = _device_ioctl(handle, 0x7405C, 8)  # IOCTL_DISK_GET_LENGTH_INFO
+    if struct.unpack_from("<Q", length)[0] != disk_size:
+        raise OSError("prepare: raw handle capacity differs from the selected disk")
+    layout = _device_ioctl(handle, 0x70050, 4096)  # IOCTL_DISK_GET_DRIVE_LAYOUT_EX
+    style, count = struct.unpack_from("<II", layout)
+    if count != 0 or style not in (0, 2):  # Empty MBR or RAW
+        raise OSError(f"prepare: expected a blank raw disk, layout={style} partitions={count}")
 
-    handle = open_target(target_path, write=True)
+
+def _hash_range(handle, offset, size, prefix=b"", suffix=b"", phase="hash"):
+    digest = hashlib.sha256(prefix)
+    while offset < size:
+        block = read_at(handle, offset, min(8 * MIB, size - offset), phase)
+        digest.update(block)
+        offset += len(block)
+    digest.update(suffix)
+    return digest.hexdigest()
+
+
+def hash_target(target_path, size):
+    """Return the SHA-256 of the first `size` bytes of the target."""
+    handle = open_target(target_path, write=False)
     try:
-        if defer_table:
-            # A zeroed table means Windows does not mount anything mid-write.
-            write_at(handle, 0, bytes(TABLE_BYTES))
+        return _hash_range(handle, 0, size)
     finally:
         close(handle)
-    start = TABLE_BYTES if defer_table else 0
-    skipped = 0
-    probe = open_target(target_path, write=False) if resume else None
-    try:
-        with open(image_path, "rb") as src:
-            src.seek(start)
-            offset = start
-            while offset < image_size:
-                chunk = src.read(min(CHUNK, image_size - offset))
-                if not chunk:
-                    break
-                if probe is not None and compare_at(probe, offset, chunk):
-                    skipped += len(chunk)
+
+
+def _clear_tables(handle, disk_size, raw):
+    areas = [(0, bytes(TABLE_BYTES))]
+    if raw:
+        areas.append((disk_size - BACKUP_BYTES, bytes(BACKUP_BYTES)))
+    for offset, data in areas:
+        write_at(handle, offset, data, "clear GPT")
+    flush(handle, "clear GPT")
+    for offset, data in areas:
+        if read_at(handle, offset, len(data), "clear GPT") != data:
+            raise OSError(f"clear GPT: read-back mismatch offset={offset} length={len(data)}")
+    if raw:
+        _require_blank_disk(handle, disk_size)
+
+
+def _checked_disk(number, disk_path, disk_size, disk_serial):
+    disk = _windows_disk(number)
+    path = disk.get("Path") or ""
+    if (not DEVICE_PATH_RE.match(path) or path.casefold() != disk_path.casefold()
+            or disk["Size"] != disk_size
+            or (disk_serial and (disk.get("SerialNumber") or "").strip() != disk_serial)
+            or disk.get("Bus") not in ("USB", "SD", "MMC") or disk.get("IsBoot") is not False
+            or disk.get("IsSystem") is not False or disk.get("IsReadOnly") is not False
+            or disk.get("IsOffline") is not False or disk.get("LogicalSectorSize") != SECTOR):
+        raise SystemExit("dpflash: disk identity or sector size changed before opening")
+    if disk.get("Style") not in ("RAW", "MBR") or disk.get("NumberOfPartitions") != 0:
+        raise SystemExit("dpflash: Windows still reports a partition layout on the disk")
+    return path
+
+
+def flash(image_path, target_path, dry_run=False, defer_table=True, expected_sha=None,
+          resume=False, verify=False, expand=False, disk_path=None, disk_size=None,
+          disk_serial=None):
+    chunk_kib = os.environ.get("DEEPOS_CHUNK_KIB") or "1024"
+    if chunk_kib not in ("128", "256", "512", "1024"):
+        raise SystemExit("dpflash: DEEPOS_CHUNK_KIB must be 128, 256, 512 or 1024")
+    chunk_size = int(chunk_kib) * 1024
+    throttle_ms = float(os.environ.get("DEEPOS_THROTTLE_MS") or "0")
+    if not math.isfinite(throttle_ms) or throttle_ms < 0:
+        raise SystemExit("dpflash: DEEPOS_THROTTLE_MS must be a finite, nonnegative number")
+    path = os.fspath(target_path)
+    raw = os.name == "nt" and DISK_NUMBER_RE.fullmatch(path)
+    if not raw and not os.path.isfile(path):
+        raise SystemExit("dpflash: target must be an existing regular file or Windows physical disk")
+    if not raw and os.path.samefile(image_path, target_path):
+        raise SystemExit("dpflash: the image and target must be different files")
+    if raw and not dry_run:
+        if not disk_path or not disk_size or not expected_sha:
+            raise SystemExit("dpflash: use flash-deepos.ps1 to prepare and identify the Windows disk")
+        if expand or not defer_table:
+            raise SystemExit("dpflash: raw Windows flashing requires deferred GPT and no expansion")
+        verify = True
+
+    with _image_stream(image_path) as src:
+        image_size = os.fstat(src.fileno()).st_size
+        card_size = disk_size if raw and disk_size else target_size(path)
+        if card_size < image_size:
+            raise SystemExit(f"dpflash: target is {card_size} B, image needs {image_size} B")
+        if image_size < TABLE_BYTES + BACKUP_BYTES:
+            raise SystemExit("dpflash: image is too small for both GPT copies")
+        if raw and (image_size % SECTOR or card_size % SECTOR):
+            raise SystemExit("dpflash: image and card sizes must be multiples of 512 bytes")
+
+        digest = _hash_range(src, 0, image_size, phase="hash image")
+        print(f"image   {image_path} ({image_size} B)")
+        print(f"target  {target_path} ({card_size} B)")
+        print(f"sha256  {digest}")
+        if expected_sha and digest != expected_sha.lower():
+            raise SystemExit("dpflash: image sha256 does not match --expect-sha256")
+        if dry_run:
+            print("dry-run: nothing written")
+            return 0
+
+        table = read_at(src, 0, TABLE_BYTES) if defer_table else b""
+        tail_offset = image_size - BACKUP_BYTES if defer_table else image_size
+        tail = read_at(src, tail_offset, BACKUP_BYTES) if defer_table else b""
+        disk_table = table
+        tails = [(tail_offset, tail)] if defer_table else []
+        relocate = raw and card_size > image_size
+        if relocate:
+            from expand_gpt import relocated_metadata
+            disk_table, disk_tail = relocated_metadata(table, image_size, card_size)
+            disk_tail_offset = card_size - len(disk_tail)
+            # Clear any original backup sectors outside the relocated GPT region.
+            stale_size = min(image_size, disk_tail_offset) - tail_offset
+            tails = [(tail_offset, bytes(stale_size)), (disk_tail_offset, disk_tail)]
+            print(f"GPT: relocating backup to byte {disk_tail_offset}; partition sizes preserved")
+        if raw:
+            path = _checked_disk(int(raw.group(1)), disk_path, card_size, disk_serial)
+        handle = open_target(path, write=True)
+        try:
+            if raw:
+                _require_blank_disk(handle, card_size)
+            if defer_table:
+                print("preparing: clearing old partition table locations")
+                _clear_tables(handle, card_size, raw)
+            offset = len(table)
+            skipped = 0
+            last_percent = -1
+            while offset < tail_offset:
+                # Align chunk boundaries to MiB so a transfer never straddles BOOT.
+                size = min(chunk_size - offset % chunk_size, tail_offset - offset)
+                chunk = read_at(src, offset, size, "read image")
+                if resume and read_at(handle, offset, size, "resume") == chunk:
+                    skipped += size
                 else:
-                    write_retry(target_path, offset, chunk)
-                offset += len(chunk)
-                print(f"\r  written {offset * 100 // image_size}% "
-                      f"(skipped {skipped // MIB} MiB)", end="", flush=True)
-    finally:
-        if probe is not None:
-            close(probe)
-    print()
-    if skipped:
-        print(f"resume: {skipped // MIB} MiB were already correct, rewritten {(((image_size - start) - skipped) // MIB)} MiB")
-    if defer_table:
-        write_retry(target_path, 0, table)
-        if table_tail:
-            write_retry(target_path, image_size - len(table_tail), table_tail)
-        verify_table(target_path, table, table_tail, image_size)
-    if verify:
-        print("verifying whole card...")
-        got = hash_target(target_path, image_size)
-        if got != digest:
-            raise SystemExit(f"dpflash: card sha256 mismatch ({got})")
-        print("verified: whole card matches the image")
+                    write_at(handle, offset, chunk, "payload")
+                    if throttle_ms:
+                        time.sleep(throttle_ms / 1000)
+                offset += size
+                percent = offset * 100 // image_size
+                if percent != last_percent:
+                    print(f"  payload {percent}% (skipped {skipped // MIB} MiB)", flush=True)
+                    last_percent = percent
+            if skipped:
+                print(f"resume: {skipped // MIB} MiB were already correct, "
+                      f"rewritten {(tail_offset - len(table) - skipped) // MIB} MiB")
+            for offset, data in tails:
+                write_at(handle, offset, data, "publish backup GPT")
+            flush(handle, "payload and backup GPT")
+            if verify:
+                print("verifying the written range before publishing the primary GPT", flush=True)
+                got = _hash_range(handle, len(table), tail_offset, table, tail, "verify payload")
+                if got != digest:
+                    raise OSError(f"verify payload: card sha256 mismatch ({got})")
+            if defer_table:
+                for offset, data in tails:
+                    if read_at(handle, offset, len(data), "verify backup GPT") != data:
+                        raise OSError(f"verify backup GPT: read-back mismatch at offset {offset}")
+                write_at(handle, 0, disk_table, "publish primary GPT")
+                flush(handle, "publish primary GPT")
+                if read_at(handle, 0, len(disk_table), "verify primary GPT") != disk_table:
+                    raise OSError("verify primary GPT: read-back mismatch")
+                print("verified: partition tables read back byte-identical")
+            if relocate:
+                print("verified: image payload matches and the relocated GPT is intact")
+            elif verify:
+                print("verified: whole card matches the image")
+        finally:
+            close(handle)
     if expand:
         import expand_gpt
         expand_gpt.expand_target(target_path, card_size)
-    print("done: table written last, card is bootable")
+    print("done: image written")
     return 0
+
 
 def list_disks(stream=sys.stdout):
     """Show candidate cards so nobody has to guess the PhysicalDrive number."""
@@ -362,17 +415,25 @@ def main(argv=None):
     parser.add_argument("--resume", action="store_true",
                         help="skip chunks that already match the image (retry after a reader hiccup)")
     parser.add_argument("--expand", action="store_true",
-                        help="grow the last partition to the real card size after writing")
+                        help="relocate backup GPT on a larger test file and preserve partition sizes")
     parser.add_argument("--verify", action="store_true",
                         help="after writing, read the whole card back and compare sha256")
+    parser.add_argument("--disk-path", help=argparse.SUPPRESS)
+    parser.add_argument("--disk-size", type=int, help=argparse.SUPPRESS)
+    parser.add_argument("--disk-serial", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.list:
         return list_disks()
     if not args.image or not args.target:
         parser.error("--image and --target are required unless --list is used")
-    return flash(args.image, args.target, dry_run=args.dry_run,
-                 defer_table=not args.no_defer_table, expected_sha=args.expect_sha256,
-                 resume=args.resume, verify=args.verify, expand=args.expand)
+    try:
+        return flash(args.image, args.target, dry_run=args.dry_run,
+                     defer_table=not args.no_defer_table, expected_sha=args.expect_sha256,
+                     resume=args.resume, verify=args.verify, expand=args.expand,
+                     disk_path=args.disk_path, disk_size=args.disk_size, disk_serial=args.disk_serial)
+    except (OSError, ValueError) as exc:
+        print(f"dpflash: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

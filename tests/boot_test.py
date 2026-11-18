@@ -65,6 +65,33 @@ def test_mkboot():
         check("manifest has board and version",
               mf["board"] == "r36s-v20" and mf["version"] == "0.1")
 
+        out_default = tmp / "boot-default"
+        p = run(MKBOOT, "--kernel", kernel, "--dtb", dtb, "--out", out_default)
+        check("default BOOT builds", p.returncode == 0, p.stderr)
+        default = (out_default / "extlinux/extlinux.conf").read_text()
+        check("default kernel root uses PARTLABEL", "root=PARTLABEL=DEEPOS_A" in default)
+
+        broken = tmp / "multiline.conf"
+        broken.write_text(
+            "LABEL DEEPoS\nLINUX /KERNEL\nFDT /dtbs/rk3326-r36s-v20.dtb\n"
+            "APPEND root=PARTLABEL=DEEPOS_A rootfstype=squashfs ro rootwait " + chr(92) +
+            "\nconsole=ttyS2,1500000n8 console=tty0\n", encoding="utf-8")
+        p = run(MKBOOT, "--kernel", kernel, "--dtb", dtb, "--out", tmp / "bad-multiline",
+                "--extlinux", broken)
+        check("mkboot rejects line continuation", p.returncode != 0)
+
+        out_donor = tmp / "boot-donor"
+        p = run(MKBOOT, "--kernel", kernel, "--dtb", dtb, "--out", out_donor,
+                "--boot-script", ROOT / "board/r36s-v20/boot/boot.cmd")
+        check("donor BOOT builds with boot.scr", p.returncode == 0, p.stderr)
+        if p.returncode == 0:
+            data = (out_donor / "boot.scr").read_bytes()
+            manifest = json.loads((out_donor / "MANIFEST.json").read_text())
+            check("donor boot.scr is a U-Boot script", data[:4] == bytes.fromhex("27051956")
+                  and data[30] == 6 and b"/extlinux/extlinux.conf" in data)
+            check("boot.scr digest recorded in manifest",
+                  manifest["files"].get("boot.scr") == hashlib.sha256(data).hexdigest())
+
         tiny = tmp / "tiny.img"
         tiny.write_bytes(b"\x00" * 1024)
 

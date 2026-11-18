@@ -21,6 +21,9 @@ import argparse
 import hashlib
 import json
 import subprocess
+
+from loader_donor import donor_region
+from mkboot import BOOT_SCRIPT, valid_boot_script, validate_extlinux
 import sys
 from pathlib import Path
 
@@ -77,7 +80,7 @@ def read_extlinux(conf: Path) -> dict[str, str]:
     return out
 
 
-def boot_checks(rep: Report, root: Path, boot: Path, kernel: Path, dtb: Path) -> None:
+def boot_checks(rep: Report, boot: Path, kernel: Path, dtb: Path, *, require_script=False) -> None:
     rep.check(kernel.is_file(), f"kernel image present: {kernel}")
     if kernel.is_file():
         size = kernel.stat().st_size
@@ -93,6 +96,16 @@ def boot_checks(rep: Report, root: Path, boot: Path, kernel: Path, dtb: Path) ->
     conf = boot / "extlinux" / "extlinux.conf"
     if not rep.check(conf.is_file(), f"extlinux.conf present: {conf}"):
         return
+    try:
+        validate_extlinux(conf.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        rep.fail(str(exc))
+    else:
+        rep.check(True, "extlinux APPEND and root selector are valid")
+    script = boot / BOOT_SCRIPT
+    if require_script:
+        rep.check(script.is_file() and valid_boot_script(script.read_bytes()),
+                  "BOOT contains a valid boot.scr for the donor")
     entries = read_extlinux(conf)
     rep.check(entries.get("LABEL") == "DEEPoS", f"extlinux label: {entries.get('LABEL')!r}")
     linux = entries.get("LINUX", "")
@@ -114,6 +127,9 @@ def boot_checks(rep: Report, root: Path, boot: Path, kernel: Path, dtb: Path) ->
         if rep.check(man.is_file(), "BOOT/MANIFEST.json exists"):
             data = json.loads(man.read_text(encoding="utf-8"))
             files = data.get("files", {})
+            if require_script and script.is_file():
+                rep.check(sha256(script) == files.get(BOOT_SCRIPT),
+                          "BOOT/boot.scr sha256 matches manifest")
             want = files.get("KERNEL")
             rep.check(bool(want), "manifest lists KERNEL sha256")
             if want:
@@ -154,12 +170,13 @@ def loader_checks(rep: Report, loader: Path) -> None:
             print(f"      {name}: {path.stat().st_size} bytes at offset {off}")
 
 
-def image_checks(rep: Report, root: Path, image: Path, loader: Path) -> None:
+def image_checks(rep: Report, root: Path, image: Path, loader: Path, donor=None) -> None:
     if not image.is_file():
         rep.fail(f"image not built yet: {image}")
         return
     tool = root / "tools" / "verify-image.py"
-    cmd = [sys.executable, str(tool), "--loader", str(loader), str(image)]
+    loader_flag = ["--loader-donor", str(donor)] if donor else ["--loader", str(loader)]
+    cmd = [sys.executable, str(tool), *loader_flag, str(image)]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     tail = (proc.stdout.strip().splitlines() or [""])[-1]
     rep.check(proc.returncode == 0, f"verify-image: {tail}")
@@ -172,7 +189,9 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--kernel", default="build/kernel/Image")
     ap.add_argument("--dtb", default="build/kernel/rk3326-r36s-v20.dtb")
     ap.add_argument("--rootfs", default="build/rootfs.squashfs")
-    ap.add_argument("--loader", default="build/uboot")
+    loader_group = ap.add_mutually_exclusive_group()
+    loader_group.add_argument("--loader", default="build/uboot")
+    loader_group.add_argument("--loader-donor", type=Path)
     ap.add_argument("--image", default="build/deepos-r36s-v20.img")
     ap.add_argument("--skip-image", action="store_true")
     args = ap.parse_args(argv)
@@ -180,11 +199,21 @@ def main(argv: list[str]) -> int:
     root = Path(args.root).resolve()
     rep = Report()
 
-    boot_checks(rep, root, root / args.boot, root / args.kernel, root / args.dtb)
+    donor = root / args.loader_donor if args.loader_donor else None
+    boot_checks(rep, root / args.boot, root / args.kernel, root / args.dtb,
+                require_script=bool(donor))
     rootfs_checks(rep, root, root / args.rootfs)
-    loader_checks(rep, root / args.loader)
+    if donor:
+        try:
+            donor_region(donor)
+        except (OSError, ValueError) as exc:
+            rep.fail(f"donor loader: {exc}")
+        else:
+            rep.check(True, "Rockchip donor loader readable")
+    else:
+        loader_checks(rep, root / args.loader)
     if not args.skip_image:
-        image_checks(rep, root, root / args.image, root / args.loader)
+        image_checks(rep, root, root / args.image, root / args.loader, donor)
 
     if rep.failures:
         print(f"PREFLIGHT: NO-GO ({rep.failures} of {rep.checks} checks failed)")

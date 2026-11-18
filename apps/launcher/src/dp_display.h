@@ -19,6 +19,7 @@ struct dp_display {
     int fd;
     unsigned char *mem;
     size_t len;
+    size_t offset;
     int w;
     int h;
     int bpp;

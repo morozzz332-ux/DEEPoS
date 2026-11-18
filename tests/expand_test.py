@@ -1,119 +1,132 @@
 #!/usr/bin/env python3
-"""The card is bigger than the image: after flashing, the GPT must cover it."""
-import binascii
+"""Relocating GPT on a larger target preserves the existing filesystems."""
+import hashlib
 import pathlib
 import struct
-import subprocess
 import sys
 import tempfile
+import zlib
 
-ROOT = pathlib.Path("/w")
-MKIMAGE = ROOT / "tools/mkimage.py"
-DPFLASH = ROOT / "tools/dpflash.py"
-EXPAND = ROOT / "tools/expand_gpt.py"
-SECTOR = 512
-GIB = 1024 ** 3
-MIB = 1024 ** 2
-
-failures = []
+from verify_card_test import MIB, PY, SECTOR, build_image, flash, run
 
 
-def check(name, cond, detail=""):
-    if cond:
-        print(f"  ok   {name}")
-    else:
-        print(f"  FAIL {name} {detail}")
-        failures.append(name)
-
-
-def gpt_state(path: pathlib.Path):
-    with open(path, "rb") as f:
-        f.seek(SECTOR)
-        header = f.read(SECTOR)
-        sig = header[:8]
-        entries_lba, = struct.unpack_from("<Q", header, 72)
-        entries_crc, = struct.unpack_from("<I", header, 88)
-        backup_lba, = struct.unpack_from("<Q", header, 32)
-        last_usable, = struct.unpack_from("<Q", header, 48)
-        f.seek(entries_lba * SECTOR)
-        entries = f.read(32 * 128)
-        actual_crc = binascii.crc32(entries) & 0xFFFFFFFF
-        parts = []
-        for i in range(32):
-            first, last = struct.unpack_from("<QQ", entries, i * 128 + 32)
-            if first and last:
-                parts.append((first, last))
+def gpt_state(path):
+    sectors = path.stat().st_size // SECTOR
+    with path.open("rb") as handle:
+        mbr = handle.read(SECTOR)
+        primary = handle.read(SECTOR)
+        handle.seek((sectors - 1) * SECTOR)
+        backup = handle.read(SECTOR)
+        arrays = []
+        headers = []
+        for header in (primary, backup):
+            raw = bytearray(header)
+            stored_crc = struct.unpack_from("<I", raw, 16)[0]
+            size = struct.unpack_from("<I", raw, 12)[0]
+            struct.pack_into("<I", raw, 16, 0)
+            headers.append((header[:8], stored_crc == zlib.crc32(raw[:size]),
+                            struct.unpack_from("<QQ", raw, 24)))
+            entries_lba, count, width, stored_crc = struct.unpack_from("<QIII", header, 72)
+            handle.seek(entries_lba * SECTOR)
+            entries = handle.read(count * width)
+            arrays.append((entries, stored_crc == zlib.crc32(entries)))
+        entries = arrays[0][0]
+        parts = [struct.unpack_from("<QQ", entries, index * width + 32) for index in range(5)]
     return {
-        "sig": sig,
-        "entries_crc_ok": entries_crc == actual_crc,
-        "backup_lba": backup_lba,
-        "last_usable": last_usable,
+        "mbr_size": struct.unpack_from("<I", mbr, 458)[0],
+        "headers": headers,
+        "arrays": arrays,
         "parts": parts,
+        "last_usable": struct.unpack_from("<Q", primary, 48)[0],
     }
 
 
-def build_image(tmp: pathlib.Path, size_mib: int) -> pathlib.Path:
-    layout = ROOT / "tests/fixtures/layout-small.json"
-    boot = tmp / "boot"
-    boot.mkdir()
-    (boot / "KERNEL").write_bytes(b"k" * 4096)
-    sys_a = tmp / "a.squashfs"
-    sys_a.write_bytes(b"hsqs" + b"\x00" * 4092)
-    data = tmp / "data"
-    data.mkdir()
-    out = tmp / "card.img"
-    proc = subprocess.run([sys.executable, str(MKIMAGE), "--out", str(out),
-                           "--size-mib", str(size_mib), "--layout", str(layout),
-                           "--boot", str(boot), "--sys-a", str(sys_a),
-                           "--data", str(data)],
-                          capture_output=True, text=True)
-    if proc.returncode != 0:
-        raise SystemExit(proc.stderr[-500:])
-    return out
+def partition_digests(path, parts):
+    with path.open("rb") as handle:
+        digests = []
+        for first, last in parts:
+            handle.seek(first * SECTOR)
+            digest = hashlib.sha256()
+            remaining = (last - first + 1) * SECTOR
+            while remaining:
+                chunk = handle.read(min(remaining, MIB))
+                if not chunk:
+                    raise ValueError("incomplete filesystem in image")
+                digest.update(chunk)
+                remaining -= len(chunk)
+            digests.append(digest.hexdigest())
+        return digests
 
 
-def main():
-    tmp = pathlib.Path(tempfile.mkdtemp(prefix="deepos-expand-"))
-    image = build_image(tmp, 129)
+def exfat_sectors(path, start_lba):
+    with path.open("rb") as handle:
+        handle.seek(start_lba * SECTOR)
+        boot = handle.read(SECTOR)
+    return struct.unpack_from("<Q", boot, 72)[0]
+
+
+def check_relocation(work):
+    failures = []
+
+    def check(name, cond):
+        print(f"  {'ok  ' if cond else 'FAIL'} {name}")
+        if not cond:
+            failures.append(name)
+
+    image = build_image(work)
     before = gpt_state(image)
-    check("image has GPT", before["sig"] == b"EFI PART")
-    check("image GPT CRCs are valid", before["entries_crc_ok"])
-
-    card = tmp / "card-512m.img"
-    card.write_bytes(b"\x00" * (512 * MIB))
-    proc = subprocess.run([sys.executable, str(DPFLASH), "--image", str(image),
-                           "--target", str(card), "--expand"],
-                          capture_output=True, text=True, timeout=300)
-    check("dpflash --expand exits 0", proc.returncode == 0, proc.stderr[-300:])
-    check("expand reported in the log", "expand:" in proc.stdout, proc.stdout[-300:])
-
+    original = partition_digests(image, before["parts"])
+    expand = [PY, "tools/expand_gpt.py", "--target"]
+    card_size = image.stat().st_size + 5 * MIB
+    card = flash(image, work / "larger.img", card_size)
+    run(expand + [str(card)])
     after = gpt_state(card)
-    card_sectors = card.stat().st_size // SECTOR
-    check("backup header moved to the card end", after["backup_lba"] == card_sectors - 1,
-          f'{after["backup_lba"]} vs {card_sectors - 1}')
-    check("entries CRC still valid after expand", after["entries_crc_ok"])
-    check("last partition now ends at last_usable",
-          after["parts"][-1][1] == after["last_usable"],
-          f'{after["parts"][-1][1]} vs {after["last_usable"]}')
-    check("last partition starts where the image put it",
-          after["parts"][-1][0] == before["parts"][-1][0])
-    check("other partitions untouched", after["parts"][:-1] == before["parts"][:-1])
+    last_lba = card_size // SECTOR - 1
+    check("protective MBR covers the target", after["mbr_size"] == last_lba)
+    check("primary and backup headers have valid CRCs and reciprocal LBAs",
+          after["headers"] == [(b"EFI PART", True, (1, last_lba)),
+                               (b"EFI PART", True, (last_lba, 1))])
+    check("both GPT arrays have valid CRCs and match the original",
+          after["arrays"] == [(before["arrays"][0][0], True)] * 2)
+    check("all partition bounds are preserved", before["parts"] == after["parts"])
+    check("all filesystems are byte-identical after relocation",
+          original == partition_digests(card, before["parts"]))
+    run([PY, "tools/verify-card.py", "--target", str(card)])
 
-    header_at_end = card.read_bytes()[card_sectors * SECTOR - SECTOR:][:8]
-    check("backup GPT signature is at the card end", header_at_end == b"EFI PART")
+    exact = flash(image, work / "exact.img", image.stat().st_size)
+    out = run(expand + [str(exact)])
+    check("exact-size target is accepted", "expand:" in out and "already" in out)
+    check("exact-size target remains byte-identical",
+          gpt_state(exact) == before and partition_digests(exact, before["parts"]) == original)
 
-    empty = tmp / "card-empty.img"
-    empty.write_bytes(b"\x00" * (64 * MIB))
-    proc = subprocess.run([sys.executable, str(EXPAND), "--target", str(empty)],
-                          capture_output=True, text=True)
-    check("expand refuses a card without GPT", proc.returncode != 0)
+    larger = work / "fresh"
+    larger.mkdir()
+    full_image = build_image(larger, card_size // MIB)
+    full_gpt = gpt_state(full_image)
+    roms_start, roms_end = full_gpt["parts"][-1]
+    volume_sectors = exfat_sectors(full_image, roms_start)
+    check("fresh larger image fills the device and stops ROMS before backup GPT",
+          full_image.stat().st_size == card_size and roms_end == full_gpt["last_usable"])
+    check("fresh larger image has exFAT capacity matching the partition",
+          volume_sectors == roms_end - roms_start + 1
+          and volume_sectors - exfat_sectors(image, before["parts"][-1][0]) == 5 * MIB // SECTOR)
+    run([PY, "tools/verify-card.py", "--target", str(full_image)])
 
-    print()
+    empty = work / "card-empty.img"
+    with empty.open("wb") as handle:
+        handle.truncate(64 * MIB)
+    run(expand + [str(empty)], expect=1)
+
     if failures:
         print(f"FAIL  expand: {len(failures)} check(s) failed")
         return 1
-    print("PASS  expand: GPT grows to the card size with valid CRCs")
+    print("PASS  expand: GPT relocation preserves partition bounds and contents")
     return 0
+
+
+def main():
+    with tempfile.TemporaryDirectory(prefix="deepos-expand-") as directory:
+        return check_relocation(pathlib.Path(directory))
 
 
 if __name__ == "__main__":

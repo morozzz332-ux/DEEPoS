@@ -134,7 +134,8 @@ def test_busybox_config():
     required = ["CONFIG_INIT=y", "CONFIG_ASH=y", "CONFIG_MDEV=y", "CONFIG_MOUNT=y",
                 "CONFIG_SWITCH_ROOT=y", "CONFIG_TAR=y", "CONFIG_GZIP=y",
                 "CONFIG_GREP=y", "CONFIG_SED=y", "CONFIG_AWK=y", "CONFIG_FIND=y",
-                "CONFIG_CUT=y", "CONFIG_SYNC=y", "CONFIG_POWEROFF=y", "CONFIG_UDHCPC=y"]
+                "CONFIG_CUT=y", "CONFIG_SYNC=y", "CONFIG_POWEROFF=y", "CONFIG_UDHCPC=y",
+                "CONFIG_READLINK=y", "CONFIG_FEATURE_READLINK_FOLLOW=y"]
     missing = [s for s in required if s not in text]
     check("busybox config enables required applets", not missing, ",".join(missing))
     check("busybox: no cron/syslog bloat", "CONFIG_CROND=y" not in text and "CONFIG_SYSLOGD=y" not in text)
@@ -188,13 +189,48 @@ def test_rootfs_builder():
 
 
 def test_partition_mounts():
-    """rcS must mount BOOT, DATA and ROMS; system slots stay unmounted."""
+    """Exercise the real rcS card resolver against synthetic kernel metadata."""
     text = (ROOT / "board/r36s-v20/rootfs-overlay/etc/init.d/rcS").read_text(encoding="utf-8")
-    check("rcS mounts BOOT at /flash", "mmcblk1p1 /flash" in text)
-    check("rcS mounts DATA at /data", "mmcblk1p4 /data" in text)
-    check("rcS mounts ROMS at /storage", "mmcblk1p5 /storage" in text)
-    check("rcS does not mount SYS_B as /data", "mmcblk1p3 /data" not in text)
-    check("rcS does not mount DATA as /storage", "mmcblk1p4 /storage" not in text)
+    helpers = text.split("# 1. Kernel filesystems", 1)[0]
+    for cards, root_card, root_part, missing in (
+        ((0,), 0, 2, None), ((1,), 1, 2, None),
+        ((0, 1), 1, 3, None), ((0, 1), 0, 2, 4),
+        ((0, 1), 2, 2, None),
+    ):
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = pathlib.Path(tmp)
+            devices = tree / "sys/dev/block"
+            devices.mkdir(parents=True)
+            for card in cards:
+                disk = tree / f"sys/devices/mmc_host/mmc{card}/mmcblk{card}"
+                disk.mkdir(parents=True)
+                for number in range(1, 6):
+                    if card == root_card and number == missing:
+                        continue
+                    part = disk / f"mmcblk{card}p{number}"
+                    part.mkdir()
+                    (part / "partition").write_text(f"{number}\n")
+                    (devices / f"179:{card * 32 + number}").symlink_to(part)
+            mountinfo = tree / "mountinfo"
+            mountinfo.write_text(
+                "10 1 0:1 / / rw - rootfs rootfs rw\n"
+                f"11 10 179:{root_card * 32 + root_part} / / ro - squashfs /dev/root ro\n"
+            )
+            p = run(["sh", "-c", helpers + '''
+                is_mounted() { return 1; }
+                mount() { printf '%s %s\\n' "$3" "$4"; }
+                mount_boot_card "$1" "$2"
+                printf 'slot=%s\\n' "$boot_slot"
+            ''', "rcS-test", str(mountinfo), str(devices)])
+            expected = ([f"/dev/mmcblk{root_card}p{n} {path}"
+                         for n, path in ((1, "/flash"), (4, "/data"), (5, "/storage"))
+                         if n != missing] if root_card in cards else [])
+            slot = {2: "A", 3: "B"}[root_part] if root_card in cards else ""
+            check(f"rcS cards {cards}, root mmcblk{root_card}p{root_part}, missing {missing}",
+                  p.returncode == 0 and p.stdout.splitlines() == [*expected, f"slot={slot}"],
+                  p.stdout + p.stderr)
+            if missing or root_card not in cards:
+                check("rcS diagnoses missing partition or root", "DEEPoS:" in p.stderr, p.stderr)
     check("modd modules live on DATA", "/data/modules" in text)
     check("modd data lives on DATA", "/data/module-data" in text)
 
@@ -205,7 +241,8 @@ def test_rcs_robustness():
     check("rcS never aborts the boot", not any(l.strip() == "set -e" for l in text.splitlines()))
     check("rcS creates /data/config", "/data/config" in text)
     check("rcS creates /data/saves", "/data/saves" in text)
-    check("rcS guards A/B on a real mount", "is_mounted /data" in text)
+    check("rcS guards A/B on real same-card mounts",
+          '[ "$data_mounted" = yes ] &&\n   [ "$flash_mounted" = yes ]' in text)
     check("rcS has mount helper", "mount_part()" in text)
     check("rcS skips already mounted dirs", '/proc/mounts' in text)
     for line in text.splitlines():
@@ -262,23 +299,25 @@ def test_rcs_order():
     rcs = ROOT / "board" / "r36s-v20" / "rootfs-overlay" / "etc" / "init.d" / "rcS"
     text = rcs.read_text(encoding="utf-8")
     check("rcS exists", rcs.is_file())
-    check("rcS mounts BOOT on /flash", "mmcblk1p1 /flash" in text)
     check("rcS passes --boot /flash", "--boot /flash" in text)
     exit_at = text.find("\nexit 0")
     begin_at = text.find("updatr --state /data --boot /flash begin")
-    good_at = text.find("updatr --state /data --boot /flash good")
     check("A/B begin runs before exit 0",
           exit_at != -1 and begin_at != -1 and begin_at < exit_at,
           f"exit@{exit_at} begin@{begin_at}")
-    check("A/B good scheduled before exit 0",
-          exit_at != -1 and good_at != -1 and good_at < exit_at,
-          f"exit@{exit_at} good@{good_at}")
+    check("A/B begin passes the running root slot and boot ticket",
+          '--slot "$boot_slot" --boot-ticket /run/deepos-boot' in text)
+    check("rcS never confirms a boot", re.search(r"updatr.*\bgood\b", text) is None)
+    run_mount = re.search(r"mount -t tmpfs\s+tmpfs\s+/run\s+-o mode=0755", text)
+    modd_at = text.find("/usr/bin/modd --modules")
+    check("/run gets a writable tmpfs before modd is started",
+          run_mount is not None and run_mount.start() < modd_at)
 
 
 def test_boot_report() -> None:
     text = (ROOT / "board/r36s-v20/rootfs-overlay/etc/init.d/rcS").read_text(encoding="utf-8")
     check("report dir on BOOT", "/flash/report" in text)
-    check("report guarded by mount", "is_mounted /flash" in text)
+    check("report guarded by mount", '[ "$flash_mounted" = yes ]' in text)
     for name in ("boot.txt", "mounts.txt", "free.txt", "dmesg.txt",
                  "temps.txt", "cpufreq.txt", "modules.txt", "selftest.txt"):
         check(f"report writes {name}", name in text)
@@ -311,7 +350,8 @@ def test_usb_gadget() -> None:
         check("getty waits for the node", "/dev/ttyGS0" in gtext)
         check("getty execs login", "getty -L /dev/ttyGS0" in gtext)
     inittab = (overlay / "etc/inittab").read_text(encoding="utf-8")
-    check("inittab starts gadget getty", "ttyGS0::respawn:/usr/local/bin/gadget-getty.sh" in inittab)
+    check("inittab starts the gadget waiter before ttyGS0 exists",
+          "::respawn:/usr/local/bin/gadget-getty.sh" in inittab.splitlines())
     rcs = (overlay / "etc/init.d/rcS").read_text(encoding="utf-8")
     check("rcS calls the gadget script", "usb-gadget.sh" in rcs)
     conf = (ROOT / "board/r36s-v20/linux.config").read_text(encoding="utf-8")
@@ -335,6 +375,12 @@ def test_selfcheck() -> None:
     check("selfcheck never aborts boot", "exit 0" in text)
     rcs = (ROOT / "board/r36s-v20/rootfs-overlay/etc/init.d/rcS").read_text(encoding="utf-8")
     check("rcS runs selfcheck", "selfcheck.sh /flash/report/checks.txt" in rcs)
+    check("rcS requests a refreshed report after the first frame", "/run/deepos-boot-report" in rcs)
+    with tempfile.TemporaryDirectory() as tmp:
+        output = pathlib.Path(tmp) / "checks.txt"
+        p = run(["sh", str(script), str(output), "--first-frame"])
+        check("first-frame report records the launcher", p.returncode == 0 and output.exists() and
+              "launcher=running" in output.read_text(encoding="utf-8").splitlines(), p.stderr)
 
 
 

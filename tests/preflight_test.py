@@ -34,12 +34,8 @@ def make_tree(base: Path) -> dict[str, Path]:
     boot = base / "build/boot"
     (boot / "extlinux").mkdir(parents=True)
     (boot / "dtbs").mkdir(parents=True)
-    (boot / "extlinux/extlinux.conf").write_text(
-        "LABEL DEEPoS\n"
-        "  LINUX /KERNEL\n"
-        "  FDT /dtbs/rk3326-r36s-v20.dtb\n"
-        "  APPEND root=/dev/mmcblk1p2\n",
-        encoding="utf-8")
+    shutil.copyfile(ROOT / "board/r36s-v20/boot/extlinux/extlinux.conf",
+                    boot / "extlinux/extlinux.conf")
     shutil.copyfile(kernel, boot / "KERNEL")
     shutil.copyfile(dtb, boot / "dtbs/rk3326-r36s-v20.dtb")
     (boot / "MANIFEST.json").write_text(json.dumps(

@@ -35,3 +35,17 @@ jobs:
       - name: Preflight self-test
         run: docker run --rm -v "$PWD:/w" -w /w deepos-build:local -c "python3 tests/preflight_test.py"
 
+
+
+  windows-flasher:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test raw I/O on temporary files
+        run: python tests/dpflash_test.py
+      - name: Test Windows flash wrapper with mocked storage commands
+        shell: powershell
+        run: ./tests/flash_wrapper_test.ps1

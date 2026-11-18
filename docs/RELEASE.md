@@ -21,5 +21,10 @@
 python3 tools/preflight.py --root .
 python3 tools/verify-image.py --loader build/uboot build/deepos-r36s-v20.img
 python3 tools/dpflash.py --list          # номер карты, не гадать
-python3 tools/dpflash.py --image build/deepos-r36s-v20.img --target \\.\PhysicalDriveN --expect-sha256 <sha выше>
+```
+
+Из PowerShell с правами администратора, подставив номер карты и её образ:
+
+```powershell
+.\flash-deepos.ps1 -Disk 2 -Image build/deepos-r36s-v20.img -Sha256 0158ac69c0e71c504d989b915eedd69c454c0283a6dab5a41ff55acf0d18d195
 ```

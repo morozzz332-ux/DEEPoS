@@ -10,7 +10,7 @@ SIZE_MIB ?= 4096
 IMG      ?= build/deepos-r36s-v20.img
 KARCH  ?= linux-6.12.56
 
-.PHONY: playdemo-test settings-test preflight preflight-test release release-test config-test help selftest-test fonts launcher modd saved updatr updatr render test modd-test saved-test launch-test modules-test image-test board-test boot-test kconfig-check verify-image docker-image docker-cross docker-test kernel uboot image-full image clean
+.PHONY: playdemo-test settings-test preflight preflight-test release release-test config-test help selftest-test fonts launcher modd saved updatr updatr render test modd-test saved-test launch-test modules-test image-test board-test boot-test kconfig-check verify-image docker-image docker-cross docker-test kernel uboot image-full image boot clean
 
 help:
 	@echo "make fonts        - regenerate bitmap fonts from tools/fonts/DejaVuSansMono.ttf"
@@ -123,8 +123,13 @@ uboot: docker-cross
 	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(CROSS_IMAGE) -c "sh tools/build-uboot.sh"
 
 # BOOT volume: kernel, DTB, extlinux, splash and the owner's README.
-VERSION ?= 0.17-dev
+VERSION ?= 0.26-dev
 BOOT_EXTRA ?= board/r36s-v20/boot/README-FIRST.txt
+LOADER_DONOR ?=
+DONOR_BIND = $(if $(LOADER_DONOR),--mount "type=bind,source=$(abspath $(LOADER_DONOR)),target=$(DONOR_PATH),readonly")
+DONOR_PATH = /rockchip-donor$(suffix $(LOADER_DONOR))
+LOADER_ARG = $(if $(LOADER_DONOR),--loader-donor $(DONOR_PATH),--loader build/uboot)
+BOOT_SCRIPT_ARG = $(if $(LOADER_DONOR),--boot-script board/r36s-v20/boot/boot.cmd)
 
 boot: docker-image
 	@test -f build/kernel/Image || (echo "missing build/kernel/Image - run 'make kernel' first" >&2; exit 1)
@@ -133,24 +138,22 @@ boot: docker-image
 			--dtb build/kernel/rk3326-r36s-v20.dtb --out build/boot \
 			--extlinux board/r36s-v20/boot/extlinux/extlinux.conf \
 			--logo branding/deepos-boot.bmp \
-			--extra $(BOOT_EXTRA) --version $(VERSION)"
+			--extra $(BOOT_EXTRA) $(BOOT_SCRIPT_ARG) --version $(VERSION)"
 
-image: docker-image
-	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "mkdir -p build/data && cp board/r36s-v20/data/emulators.toml build/data/emulators.toml && python3 tools/mkimage.py --out build/deepos-r36s-v20.img --size-mib $(SIZE_MIB) --boot build/boot --sys-a build/rootfs.squashfs --data build/data"
-	$(MAKE) verify-image
+image: image-full
 
 # Full image: real kernel + DTB (build/kernel), boot chain (build/uboot) and the
 # staged BOOT tree. Fails loudly when a piece is missing instead of silently
 # producing an unbootable card.
 verify-image: docker-image
 	@echo "==> verifying $(IMG) before writing it to a card"
-	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) \
-		-c "python3 tools/verify-image.py --loader build/uboot $(IMG)"
+	$(DOCKER) run --rm -v "$(CURDIR):/w" $(DONOR_BIND) -w /w $(IMAGE) \
+		-c "python3 tools/verify-image.py $(LOADER_ARG) $(IMG)"
 
-image-full: docker-image
+image-full: boot
 	@test -f build/kernel/Image || (echo "missing build/kernel/Image - run 'make kernel' first" >&2; exit 1)
-	@test -f build/uboot/idbloader.img || (echo "missing build/uboot/idbloader.img - run 'make uboot' first" >&2; exit 1)
-	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "mkdir -p build/data && cp board/r36s-v20/data/emulators.toml build/data/emulators.toml && python3 tools/mkimage.py --out build/deepos-r36s-v20.img --size-mib $(SIZE_MIB) --boot build/boot --sys-a build/rootfs.squashfs --data build/data --loader build/uboot"
+	@test -n "$(LOADER_DONOR)" || test -f build/uboot/idbloader.img || (echo "missing build/uboot/idbloader.img - run 'make uboot' first" >&2; exit 1)
+	$(DOCKER) run --rm -v "$(CURDIR):/w" $(DONOR_BIND) -w /w $(IMAGE) -c "mkdir -p build/data && cp board/r36s-v20/data/emulators.toml build/data/emulators.toml && python3 tools/mkimage.py --out $(IMG) --size-mib $(SIZE_MIB) --boot build/boot --sys-a build/rootfs.squashfs --data build/data $(LOADER_ARG)"
 	$(MAKE) verify-image
 
 clean:
@@ -160,10 +163,10 @@ clean:
 	rm -rf tests/out
 
 preflight:
-	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "python3 tools/preflight.py --root /w"
+	$(DOCKER) run --rm -v "$(CURDIR):/w" $(DONOR_BIND) -w /w $(IMAGE) -c "python3 tools/preflight.py --root /w $(LOADER_ARG) --image $(IMG)"
 
 release:
-	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "python3 tools/release.py --root ."
+	$(DOCKER) run --rm -v "$(CURDIR):/w" $(DONOR_BIND) -w /w $(IMAGE) -c "python3 tools/release.py --root . $(LOADER_ARG) --image $(IMG)"
 
 release-test:
 	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "python3 tests/release_test.py"

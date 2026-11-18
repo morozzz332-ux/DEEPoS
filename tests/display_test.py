@@ -5,7 +5,9 @@ The device path is /dev/fb0 (DRM fbdev emulation, RGB565). On a host we let the
 same code write into a regular file (ftruncate + mmap), which makes the blit
 byte-comparable with the PPM render of the same state.
 """
+import os
 import pathlib
+import signal
 import struct
 import subprocess
 import sys
@@ -43,6 +45,39 @@ def ppm_to_565(ppm):
         v = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)
         out += struct.pack("<H", v)
     return bytes(out)
+
+
+def test_first_frame(tmpdir):
+    source = BIN.parent / "src"
+    launcher = tmpdir / "launcher-boot-test"
+    wrappers = ("dp_display_open", "dp_display_present", "dp_display_close",
+                "dp_input_open", "access", "execl")
+    cmd = ["cc", "-o", str(launcher), "-I", str(source),
+           *(str(obj) for obj in sorted(source.glob("*.o"))),
+           str(ROOT / "tests" / "fixtures" / "launcher_boot.c"),
+           *(f"-Wl,--wrap={name}" for name in wrappers)]
+    build = subprocess.run(cmd, capture_output=True, text=True)
+    if build.returncode != 0:
+        check("launcher boot test links", False, build.stderr)
+        return
+    for mode, args, rc, confirmed in (
+        ("hardware", [], 0, True),
+        ("missing", [], 0, False),
+        ("crash", [], -signal.SIGKILL, False),
+        ("fail", [], 1, False),
+        ("fake", [], 0, False),
+        ("hardware", ["--out", str(tmpdir / "boot-test.ppm")], 0, False),
+        ("hardware", ["--selftest"], 0, False),
+    ):
+        p = subprocess.run([str(launcher), *args], capture_output=True, text=True,
+                           timeout=10, env={**os.environ, "DEEPOS_TEST_FRAMEBUFFER": mode})
+        refreshed = "boot report refresh requested" in p.stdout
+        logged = ("DEEPoS: launcher first frame\nboot report refresh requested\n"
+                  "boot confirmation requested\n") in p.stdout
+        check(f"boot confirmation ({mode}, {args[:1]})",
+              p.returncode == rc and refreshed == logged == confirmed and
+              (confirmed or "boot confirmation requested" not in p.stdout),
+              (p.returncode, p.stdout, p.stderr))
 
 
 def main():
@@ -96,8 +131,10 @@ def main():
         check("unusable framebuffer is reported", p.returncode == 1 and "no display" in (p.stderr or ""),
               (p.returncode, (p.stderr or "").strip()[-80:]))
 
+        test_first_frame(tmpdir)
+
     print("FAILED: " + ", ".join(FAILED) if FAILED else
-          "PASS  display: RGB565 blit, key-driven frames, error handling")
+          "PASS  display: RGB565 blit, key-driven frames, error handling, boot confirmation")
     return 1 if FAILED else 0
 
 

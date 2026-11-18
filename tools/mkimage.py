@@ -22,6 +22,7 @@ import glob
 import json
 import os
 import shutil
+import tempfile
 import struct
 import subprocess
 import sys
@@ -32,6 +33,9 @@ from pathlib import Path
 
 MIB = 1024 * 1024
 SECTOR = 512
+GPT_ENTRY_SIZE = 128
+GPT_ENTRY_COUNT = 128
+GPT_ENTRY_SECTORS = GPT_ENTRY_COUNT * GPT_ENTRY_SIZE // SECTOR
 
 # GPT partition type GUIDs (Linux filesystem / EFI system / basic data).
 TYPE_LINUX = "0fc63daf-8483-4772-8e79-3d69d8477de4"
@@ -62,52 +66,36 @@ def gpt_type_for(fstype):
 def layout_partitions(layout, size_mib):
     """Assign start LBA / size for every partition, honouring fill:true."""
     sector = layout.get("sector", SECTOR)
+    if sector != SECTOR:
+        raise SystemExit("mkimage: layout must use 512-byte logical sectors")
     align = layout.get("align_mib", 1) * MIB // sector
-    cursor = align  # 1 MiB of headroom for the GPT itself
-    # The Rockchip boot chain lives below the first partition: idbloader.img at
-    # 32 KiB (sector 64) and u-boot.itb at 8 MiB (sector 16384). Partitions that
-    # must not cover it declare "start_mib" explicitly (BOOT starts at 16 MiB).
+    if align <= 0 or size_mib is None or size_mib <= 0:
+        raise SystemExit("mkimage: invalid image size or alignment")
+    end_lba = size_mib * MIB // sector - 1 - GPT_ENTRY_SECTORS
+    cursor = 2 + GPT_ENTRY_SECTORS
     parts = []
-    used = 0
-    for spec in layout["partitions"]:
-        part_mib = spec["size_mib"]
+    for index, spec in enumerate(layout["partitions"]):
+        minimum = max(cursor, spec.get("start_mib", 0) * MIB // sector)
+        start_lba = (minimum + align - 1) // align * align
         if spec.get("fill"):
-            if part_mib:
-                raise SystemExit("mkimage: fill partition must have size_mib 0")
-            part_mib = None
-        if part_mib is not None:
-            used += part_mib
-        parts.append(dict(spec, size_mib=part_mib))
-    if size_mib is None or size_mib < used + 8:
-        raise SystemExit(f"mkimage: image too small ({size_mib} MiB) for layout (needs > {used + 8} MiB)")
-    # Anything below the first partition start is reserved for the GPT and the
-    # Rockchip boot chain (idbloader at 32 KiB, u-boot.itb at 8 MiB), so the
-    # fill partition may only use what is left after that reservation.
-    explicit = [int(spec.get("start_mib", 0)) for spec in layout["partitions"] if spec.get("start_mib")]
-    reserved = max(explicit) if explicit else layout.get("align_mib", 1)
-    fill = size_mib - used - reserved
-    if fill <= 0:
-        raise SystemExit(f"mkimage: no room left for the fill partition ({fill} MiB)")
-    for part in parts:
-        if part["size_mib"] is None:
-            part["size_mib"] = fill
-        sectors = part["size_mib"] * MIB // sector
-        cursor = (cursor + align - 1) // align * align
-        if part.get("start_mib"):
-            want = int(part["start_mib"]) * MIB // sector
-            cursor = (want + align - 1) // align * align
-        part["start_lba"] = cursor
-        part["sectors"] = sectors
-        part["byte_offset"] = cursor * sector
-        cursor += sectors
+            if spec["size_mib"] or index != len(layout["partitions"]) - 1:
+                raise SystemExit("mkimage: fill partition must be last with size_mib 0")
+            sectors = end_lba - start_lba
+        else:
+            sectors = spec["size_mib"] * MIB // sector
+        cursor = start_lba + sectors
+        if sectors <= 0 or cursor > end_lba:
+            raise SystemExit(f"mkimage: image too small for {spec['name']}")
+        parts.append(dict(spec, start_lba=start_lba, sectors=sectors,
+                          byte_offset=start_lba * sector))
     return parts
 
 
 def write_gpt(image, image_name, parts, total_sectors):
     """Write protective MBR + primary/backup GPT and verify the entries CRC."""
     sector = SECTOR
-    entry_size = 128
-    entry_count = 32  # 4 KiB of entries, the conventional minimum
+    entry_size = GPT_ENTRY_SIZE
+    entry_count = GPT_ENTRY_COUNT
 
     blob = bytearray(entry_size * entry_count)
     for index, part in enumerate(parts):
@@ -124,11 +112,11 @@ def write_gpt(image, image_name, parts, total_sectors):
     disk_guid = uuid.UUID(part_guid(image_name, "disk"))
     entries_sectors = entry_count * entry_size // sector
 
-    def header(current_lba, entries_lba):
+    def header(current_lba, alternate_lba, entries_lba):
         raw = struct.pack(
             "<8sIIIIQQQQ16sQIII",
             b"EFI PART", 0x00010000, 92, 0, 0,
-            current_lba, total_sectors - 1,
+            current_lba, alternate_lba,
             2 + entries_sectors, total_sectors - 2 - entries_sectors,
             disk_guid.bytes_le,
             entries_lba, entry_count, entry_size, entries_crc,
@@ -137,8 +125,8 @@ def write_gpt(image, image_name, parts, total_sectors):
         return raw[:16] + struct.pack("<I", crc) + raw[20:]
 
     backup_entries_lba = total_sectors - 1 - entries_sectors
-    primary = header(1, 2)
-    backup = header(total_sectors - 1, backup_entries_lba)
+    primary = header(1, total_sectors - 1, 2)
+    backup = header(total_sectors - 1, 1, backup_entries_lba)
 
     image.seek(0)
     image.write(bytes(34 * sector))
@@ -146,8 +134,8 @@ def write_gpt(image, image_name, parts, total_sectors):
     image.write(primary)
     image.seek(2 * sector)
     image.write(blob)
-    image.seek((total_sectors - 34) * sector)
-    image.write(bytes(34 * sector))
+    image.seek(backup_entries_lba * sector)
+    image.write(bytes((1 + entries_sectors) * sector))
     image.seek(backup_entries_lba * sector)
     image.write(blob)
     image.seek((total_sectors - 1) * sector)
@@ -259,8 +247,15 @@ def build(args):
     if size_mib is None:
         size_mib = sum(p["size_mib"] for p in layout["partitions"] if not p.get("fill")) + 8192
     parts = layout_partitions(layout, size_mib)
-    end_sector = max(p["start_lba"] + p["sectors"] for p in parts)
-    total_sectors = max(size_mib * MIB // SECTOR, end_sector)
+    total_sectors = size_mib * MIB // SECTOR
+    if args.loader_donor:
+        from loader_donor import END, START, donor_region
+        if min(p["byte_offset"] for p in parts) < END:
+            raise SystemExit("mkimage: the donor loader overlaps the partition layout")
+        try:
+            loader_bytes = donor_region(args.loader_donor)
+        except (OSError, ValueError, EOFError) as exc:
+            raise SystemExit(f"mkimage: donor loader: {exc}") from exc
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
 
@@ -275,11 +270,10 @@ def build(args):
     else:
         sources_b = args.sys_a
 
-    with open(out, "w+b") as image:
+    with tempfile.TemporaryDirectory(prefix="deepos-image-") as temp, open(out, "w+b") as image:
         image.truncate(total_sectors * SECTOR)
         for part in parts:
-            path = out.with_suffix(out.suffix + f".{part['name'].lower()}")
-            path.unlink(missing_ok=True)
+            path = Path(temp) / f"partition-{part['start_lba']}.img"
             # temp files are sparse-sized so mkfs sees the real partition size
             with open(path, "wb") as tmp:
                 tmp.truncate(part["sectors"] * SECTOR)
@@ -301,11 +295,18 @@ def build(args):
                                  f"in {part['sectors'] * SECTOR} B")
             with open(path, "rb") as src:
                 image.seek(part["byte_offset"])
-                shutil.copyfileobj(src, image, 4 * MIB)
+                for block in iter(lambda: src.read(4 * MIB), b""):
+                    if block.count(0) == len(block):
+                        image.seek(len(block), os.SEEK_CUR)
+                    else:
+                        image.write(block)
             path.unlink()
 
         if args.loader:
             write_loader(image, Path(args.loader))
+        if args.loader_donor:
+            image.seek(START)
+            image.write(loader_bytes)
 
         write_gpt(image, layout["name"], parts, total_sectors)
         image.flush()
@@ -341,7 +342,9 @@ def main(argv=None):
     parser.add_argument("--sys-a", default=None, help="rootfs tree or squashfs for SYS_A")
     parser.add_argument("--sys-b", default=None, help="rootfs tree or squashfs for SYS_B (default: same as A)")
     parser.add_argument("--data", default=None, help="directory laid down as the initial DATA contents")
-    parser.add_argument("--loader", default=None, help="directory with idbloader.img / u-boot.itb (Rockchip boot chain)")
+    loader = parser.add_mutually_exclusive_group()
+    loader.add_argument("--loader", help="directory with idbloader.img and u-boot.itb")
+    loader.add_argument("--loader-donor", help="known-good raw or gzip Rockchip image")
 
     args = parser.parse_args(argv)
     build(args)

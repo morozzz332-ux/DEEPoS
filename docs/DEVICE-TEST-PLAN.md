@@ -7,41 +7,27 @@
 
 ## 0. Что должно быть готово до прошивки
 
-| Артефакт | Путь | Проверка |
-|---|---|---|
-| Образ карты | `build/deepos-r36s-v20.img` | `sha256sum` совпадает со значением из `docs/metrics.md` |
-| Загрузчик | `build/uboot/idbloader.img`, `build/uboot/u-boot.itb` | `tools/build-uboot.sh` → `BUILD.txt` |
-| Ядро | `build/kernel/Image` | 74 490 368 B, версия 6.12.56 |
-| DTB платы | `build/kernel/rk3326-r36s-v20.dtb` | 46 564 B |
-| Rootfs | `build/rootfs.squashfs` | размер и число записей — в `docs/metrics.md` |
+| Артефакт | Проверка |
+|---|---|
+| Образ карты | SHA‑256 совпадает с `docs/RELEASE.md` |
+| Загрузчик Arch-R clone | Область 32 КиБ–16 МиБ побайтово совпадает с проверенным донором |
+| BOOT | `boot.scr` вызывает extlinux, SHA‑256 скрипта и файлов BOOT совпадают с манифестом |
+| Ядро, DTB и rootfs | Размеры и SHA‑256 совпадают с `docs/RELEASE.md` |
 
-Образ без загрузчика не загрузится: `idbloader.img` пишется по смещению 32 KiB,
-`u-boot.itb` — по 8 MiB (Rockchip boot chain), это делает `tools/mkimage.py --loader`.
-
-
-### 0.4a Проверка готовности (preflight)
-
-    python3 tools/preflight.py --root .
-
-Проверяет то, что нужно именно загрузке: размер ядра, `compatible` нашего DTB,
-имя DTB в `extlinux.conf` = файл в `BOOT/dtbs`, sha256 `BOOT/KERNEL` = `MANIFEST.json`,
-все бинари и бит `x` на `etc/init.d/rcS`, наличие загрузчиков, и в конце гоняет
-`tools/verify-image.py`. Ожидаемая строка: `PREFLIGHT: GO (32 checks)`.
-**Если NO-GO — карту не писать.**
-
-## 0.4 Проверка образа до записи (обязательно)
-
-Перед записью на карту образ проверяется офлайн — без карты и без прав администратора:
+Для V20 с донором указать путь к проверенному образу Arch‑R в `LOADER_DONOR`.
+Сборка сама упакует `boot.scr` и вставит загрузчик.
 
 ```sh
-python3 tools/verify-image.py --loader build/uboot build/deepos-r36s-v20.img
+make image-full LOADER_DONOR=/path/to/ArchR-clone.img.gz
+make preflight LOADER_DONOR=/path/to/ArchR-clone.img.gz
+make release LOADER_DONOR=/path/to/ArchR-clone.img.gz
 ```
 
-Ожидаемый вывод: `PASS  verify-image: 39 checks`. Проверяются CRC первичного и резервного
-GPT, геометрия разделов, сигнатуры файловых систем, побайтовая раскладка загрузчика
-(`idbloader.img` на 32 KiB, `u-boot.itb` на 8 MiB), содержимое `BOOT` (`KERNEL`, dtb,
-`extlinux.conf`, `MANIFEST.json` со sha256) и обязательные файлы корневой системы внутри
-squashfs. Если проверка падает — образ не писать.
+Проверка `preflight` должна вернуть `GO`. Она проверяет файлы BOOT, конфиг
+extlinux, rootfs, обе копии GPT и соответствие выбранному донору.
+Для первого теста используется образ на 4 ГиБ. При записи на большую карту
+резервная GPT переносится в физический конец, объём exFAT задаётся при сборке.
+Для нового готового образа на всю пустую карту задать `SIZE_MIB` по её размеру.
 
 ## 0.5. Смоук-тест после первого буста
 
@@ -59,7 +45,7 @@ squashfs. Если проверка падает — образ не писат�
 | `roms=… systems=N games=M` | найдены системы и игры | `systems>0` при непустом ROMS |
 | `data=… continue=N` | прочитанный `continue.tsv` | `N` равно числу строк файла |
 | `emulators=… emulators_present=1` | найден `emulators.toml` | 1 |
-| `modd=… modules=N` | связь с супервизором | `N` = число модулей в `/storage/.config/deepos/modules` |
+| `modd=… modules=N` | связь с супервизором через `/run/modd.sock` | `N` = число модулей в `/data/modules` |
 | `fb=… fb_present=1` | фреймбуфер | 1 (иначе смотреть `CONFIG_DRM_FBDEV_EMULATION`) |
 | `input_events=N` | устройства ввода | ≥1 (`gpio-keys` и/или `adc-joystick`) |
 | `status=ok` | отчёт дошёл до конца | ok |
@@ -77,28 +63,33 @@ squashfs. Если проверка падает — образ не писат�
 
 ## 2. Прошивка
 
+Определить номер тестовой microSD через `Get-Disk` и сверить модель и ёмкость.
+Из PowerShell с правами администратора подставить номер карты и SHA-256 образа.
+
 ```powershell
-# карта в картридере, диск определить через Get-Disk (например, PhysicalDrive2)
-python tools/dpflash.py --image build/deepos-r36s-v20.img `
-    --target \\.\PhysicalDrive2 --expect-sha256 <sha256> --dry-run
-python tools/dpflash.py --image build/deepos-r36s-v20.img `
-    --target \\.\PhysicalDrive2 --expect-sha256 <sha256>
+.\flash-deepos.ps1 -Image build/deepos-r36s-v20.img -Sha256 $sha256
 ```
 
-`dpflash` пишет таблицу разделов **последней**: пока таблица пуста, Windows не
-монтирует FAT/exFAT, и запись не падает с `win32=5`. После записи — `sync`,
-извлечь карту, вставить в консоль.
+Скрипт сверяет хеш до очистки карты. `dpflash` записывает основную GPT после
+проверки полезной нагрузки, сбрасывает кэш записи и считывает таблицу обратно.
+На карте большего размера резервная GPT записывается в конец носителя. Размеры
+разделов сохраняются. После успешной проверки и сообщения `DONE` извлечь карту и вставить в консоль.
 
 ## 3. Первый буст — что должно произойти
 
-1. U-Boot SPL → `u-boot.itb` → `extlinux.conf` с `LABEL DEEPoS`.
-2. Ядро монтирует `LABEL=DEEPOS_A` (squashfs, ro), `rcS` монтирует `/data` (p3)
-   и `/storage` (p4), запускает `mdev`, затем `launcher` на tty0.
+1. U-Boot SPL → `u-boot.itb` → `boot.scr` → `extlinux.conf` с `LABEL DEEPoS`.
+2. Ядро монтирует `PARTLABEL=DEEPOS_A` (squashfs, ro). `rcS` определяет карту по
+   major:minor корневого монтирования, запускает `mdev` и монтирует с той же карты
+   BOOT (p1) в `/flash`, DATA (p4) в `/data`, ROMS (p5) в `/storage`.
+   В консоли появляется `DEEPoS: storage=ok data=ok`. Затем `init` запускает лаунчер.
 3. Экран: чёрный фон, вкладки «Продолжить · Игры · Настройки · Модули · Файлы ·
-   Сведения», статус-бар с часами и батареей.
-4. Если экран тёмный, а UART на гребёнке (115200, `console=ttyS2,1500000`) что-то
-   печатает — смотреть причину в логе ядра; частые причины: неверный `FDT`
-   (панель), отсутствующий `simple-battery`, `root=LABEL` не найден.
+   Сведения», статус-бар с часами и батареей. При выводе первого кадра в консоли
+   появляется `DEEPoS: launcher first frame`.
+4. Для лога от включения подключите UART-адаптер к площадкам платы и выставьте
+   `1500000 8N1`, без управления потоком. Это скорость `console=ttyS2,1500000n8`
+   данной сборки. USB ACM (§0.7) появляется после запуска `rcS`.
+5. Если экран тёмный, последняя строка UART отделяет ошибки загрузчика,
+   монтирования корня и видеовывода. Для панели сверить `FDT` и прочитать `dmesg`.
 
 ## 4. Чек-лист приёмки (отмечать по факту)
 
@@ -112,9 +103,16 @@ python tools/dpflash.py --image build/deepos-r36s-v20.img `
       гнезде CHARGE (OTG — только данные).
 - [ ] Нагрев: простой ≤55 °C, стресс 4 потока 5 мин ≤85 °C, троттлинг срабатывает.
 - [ ] Память: `MemAvailable` в простое ≥560 МБ, `MemTotal` ≈732 МБ.
-- [ ] Загрузка: ≤12 с до первого кадра (секундомер по UART: `Startup finished`).
-- [ ] A/B: `update.py begin` 4 раза → слот переключился и `rollback=true`.
-- [ ] Модули: `modd` стартует, `thermal` показывает температуры, `saves` делает бэкап.
+- [ ] До строки `DEEPoS: launcher first frame` по UART проходит ≤12 с.
+- [ ] Проверить A → B → A на тестовой карте. Выполнить `updatr --state /data --boot /flash switch B`,
+      перезагрузиться, затем выполнить `updatr --state /data --boot /flash switch A` и
+      снова перезагрузиться. Сверить фактический корень и `attempts=0` после первого кадра.
+- [ ] На тестовой карте собрать слот B с лаунчером, завершающимся до первого
+      кадра. На каждой загрузке B счётчик растёт, после четвёртой `slot=A` и
+      `rollback=true`. Перезагрузиться в A и проверить сброс счётчика после первого
+      кадра. Сверить заранее сохранённые контрольные файлы на DATA и ROMS.
+- [ ] После запуска `modd` проходит `test -S /run/modd.sock`, `thermal` показывает
+      температуры, `saves` делает бэкап.
 - [ ] Samba/USB: `smbd` поднимается, `\\deepos\...` виден с ПК; gadget NCM даёт
       SSH root@deepos.local.
 - [ ] Сейвы: `saved put` → перезагрузка → `saved get` возвращает тот же файл.
@@ -125,7 +123,7 @@ python tools/dpflash.py --image build/deepos-r36s-v20.img `
 |---|---|
 | Нет картинки, UART молчит | загрузчик: смещения `idbloader`/`u-boot.itb`, питание карты, целостность `BOOT` |
 | UART есть, экран тёмный | DTB/панель: `panel@0` compatible, `reset-gpios`, тайминги, `dsi,lanes` |
-| `root=LABEL` не найден | GPT: метки `DEEPOS_A`, размер squashfs, `mkimage` не обрезал раздел |
+| `root=PARTLABEL=DEEPOS_A` не найден | GPT: метка `DEEPOS_A`, размер squashfs, `mkimage` не обрезал раздел |
 | Экран есть, лаунчер падает | `journalctl` нет (нет systemd) → смотреть `/tmp/launcher.log`, свободную RAM, размер шрифтов |
 | Троттлинг раньше 85 °C | `thermal_zone` trip-точки, `cooling-maps`, термопрокладка |
 | Кнопки перепутаны | `gpio-keys` code/GPIO в DTS, `linux,code` из `linux-event-codes.h` |
@@ -147,7 +145,10 @@ python tools/dpflash.py --image build/deepos-r36s-v20.img `
 /usr/bin/launcher --selftest
 
 # 2. Диски и монтирования
+cat /proc/cmdline
+awk '$5 == "/" && / - squashfs / { print; exit }' /proc/self/mountinfo
 cat /proc/mounts
+ls -l /flash/report/boot.txt /flash/report/mounts.txt /flash/report/checks.txt
 df -h
 
 # 3. Память (цель: MemAvailable >= 560 МБ, MemTotal ~732 МБ)
@@ -161,7 +162,7 @@ cat /sys/devices/system/cpu/cpufreq/policy0/scaling_governor
 
 # 5. A/B и модули
 /usr/bin/updatr --state /data --boot /flash status
-/usr/bin/modd --help >/dev/null 2>&1; echo "modd: $?"
+test -S /run/modd.sock && ls -l /run/modd.sock
 ls /data/modules
 
 # 6. Питание
@@ -206,7 +207,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\pull-report.ps1
 ### 0.7. USB-консоль вместо UART
 
 После загрузки DEEPoS на OTG-кабеле поднимаются две функции gadget: CDC-ACM (COM-порт) и
-NCM (сеть `<console-ip>/16`).
+NCM (сеть `<console-ip>/16`). Для виртуального COM-порта используйте `115200 8N1`,
+без управления потоком. Параметры UART-адаптера для лога от включения указаны в §3.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\usb-shell.ps1
@@ -216,4 +218,4 @@ plink -serial COMx -sercfg 115200,8,n,1,N -batch -m tools\report-commands.sh
 ```
 
 Вердикт первого буста лежит в `BOOT/report/checks.txt` (`verdict=PASS|FAIL`, `panel=`, `data=`,
-`input_events=`, `mem_available_mb=`).
+`input_events=`, `mem_available_mb=`). После первого кадра отчёт обновляется с `launcher=running`.

@@ -113,7 +113,7 @@ def main(argv=None):
                 print("--- checks.txt ---")
                 print(checks.read_text(encoding="utf-8", errors="replace").strip())
     finally:
-        handle.close()
+        dpflash.close(handle)
     return 0
 
 
