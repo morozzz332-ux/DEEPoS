@@ -195,6 +195,26 @@ def test_partition_mounts():
     check("modd data lives on DATA", "/data/module-data" in text)
 
 
+def test_rcs_robustness():
+    """Boot must survive a missing card / re-exec: no set -e, best-effort mounts."""
+    text = (ROOT / "board/r36s-v20/rootfs-overlay/etc/init.d/rcS").read_text(encoding="utf-8")
+    check("rcS never aborts the boot", not any(l.strip() == "set -e" for l in text.splitlines()))
+    check("rcS creates /data/config", "/data/config" in text)
+    check("rcS creates /data/saves", "/data/saves" in text)
+    check("rcS guards A/B on a real mount", "is_mounted /data" in text)
+    check("rcS has mount helper", "mount_part()" in text)
+    check("rcS skips already mounted dirs", '/proc/mounts' in text)
+    for line in text.splitlines():
+        if line.startswith("mount -t ") or line.startswith("mount -o "):
+            check(f"mount is best-effort: {line.strip()[:40]}", "|| true" in line)
+    pat = subprocess.run(
+        ["sh", "-n", str(ROOT / "board/r36s-v20/rootfs-overlay/etc/init.d/rcS")],
+        capture_output=True,
+        text=True,
+    )
+    check("rcS parses as POSIX sh", pat.returncode == 0, pat.stderr)
+
+
 def test_emulators_config():
     path = ROOT / "board" / "r36s-v20" / "data" / "emulators.toml"
     if not path.exists():
@@ -234,6 +254,7 @@ def main():
     test_rootfs_builder()
     test_emulators_config()
     test_partition_mounts()
+    test_rcs_robustness()
     test_rcs_order()
     print()
     if fails:

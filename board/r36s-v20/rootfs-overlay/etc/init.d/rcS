@@ -1,49 +1,62 @@
 #!/bin/sh
 # DEEPoS early userspace bring-up (busybox init ::sysinit hook).
 #
-# Kept deliberately small: every process started here costs RAM that the
-# emulator will want later. Only what the launcher cannot live without is
-# started here - storage, /proc, /sys, devices and the module supervisor.
-set -e
+# Deliberately tiny: every process started here costs RAM that the emulator
+# will want later. This script must never abort the boot - a missing card
+# partition or a re-run must leave the system usable: errexit is not enabled and every
+# mount is best-effort.
 
-mount -t proc     proc     /proc
-mount -t sysfs    sysfs    /sys
-mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+# 1. Kernel filesystems. All best-effort: init may run on a re-exec or with
+#    devtmpfs already mounted by the kernel.
+mount -t proc     proc     /proc                 2>/dev/null || true
+mount -t sysfs    sysfs    /sys                  2>/dev/null || true
+mount -t devtmpfs devtmpfs /dev                  2>/dev/null || true
 mkdir -p /dev/pts /dev/shm
-mount -t devpts   devpts   /dev/pts 2>/dev/null || true
-mount -t tmpfs    shm      /dev/shm -o mode=1777,nosuid,nodev
-mount -t tmpfs    tmpfs    /tmp     -o mode=1777,nosuid,nodev
+mount -t devpts   devpts   /dev/pts              2>/dev/null || true
+mount -t tmpfs    shm      /dev/shm -o mode=1777,nosuid,nodev 2>/dev/null || true
+mount -t tmpfs    tmpfs    /tmp     -o mode=1777,nosuid,nodev 2>/dev/null || true
 
-# Device nodes for early accesses (devtmpfs covers most, mdev -s the rest).
-[ -x /sbin/mdev ] && mdev -s
+# 2. Device nodes for early accesses (devtmpfs covers most, mdev -s the rest).
+[ -x /sbin/mdev ] && mdev -s 2>/dev/null || true
 
-# Boot partition, persistent state and the ROM library live on their own
-# partitions. /flash is needed by updatr to point the bootloader at the
-# slot that passed the boot attempt.
-# Layout (see board/r36s-v20/layout.json):
-#   p1 BOOT (FAT32)  -> /flash   bootloader + kernel + dtbs
-#   p2 SYS_A, p3 SYS_B (squashfs, read-only roots) - never mounted at runtime
-#   p4 DATA (ext4)   -> /data    settings, save states, A/B state
-#   p5 ROMS (exFAT)  -> /storage ROM library shared with the PC
+# 3. Partitions. Layout (see board/r36s-v20/layout.json):
+#      p1 BOOT (FAT32)  -> /flash   boot chain, KERNEL, dtbs, extlinux
+#      p2 SYS_A, p3 SYS_B (squashfs roots) - never mounted at runtime
+#      p4 DATA (ext4)   -> /data    settings, save states, A/B state
+#      p5 ROMS (exFAT)  -> /storage ROM library shared with the PC
+#    Missing partitions (broken card, no card) are not fatal: the launcher
+#    still starts and shows an empty library.
 mkdir -p /flash /storage /data
-[ -b /dev/mmcblk1p1 ] && mount -o noatime /dev/mmcblk1p1 /flash   2>/dev/null || true
-[ -b /dev/mmcblk1p4 ] && mount -o noatime /dev/mmcblk1p4 /data    2>/dev/null || true
-[ -b /dev/mmcblk1p5 ] && mount -o noatime /dev/mmcblk1p5 /storage 2>/dev/null || true
+is_mounted() { grep -q " $1 " /proc/mounts 2>/dev/null; }
+mount_part() {
+    dev="$1"; dir="$2"
+    [ -b "$dev" ] || return 0
+    is_mounted "$dir" && return 0
+    mount -o noatime "$dev" "$dir" 2>/dev/null || true
+}
+mount_part /dev/mmcblk1p1 /flash
+mount_part /dev/mmcblk1p4 /data
+mount_part /dev/mmcblk1p5 /storage
 
-# A/B boot accounting: count this boot attempt and mark the slot good once
-# userspace has been running for a while (no init system, no watchdog daemon).
-# The bootloader reads extlinux.conf, so the chosen slot must be written there.
-if [ -x /usr/bin/updatr ] && [ -d /data ]; then
+# 4. Writable places the launcher expects even on a fresh card.
+mkdir -p /data/config /data/saves 2>/dev/null || true
+
+# 5. A/B boot accounting. Only when DATA really is mounted - otherwise the
+#    counter would be lost on every boot and could roll the slot for nothing.
+#    The bootloader reads extlinux.conf, so the chosen slot is written there.
+if [ -x /usr/bin/updatr ] && is_mounted /data; then
     /usr/bin/updatr --state /data --boot /flash begin >/dev/null 2>&1 || true
     ( sleep 20; /usr/bin/updatr --state /data --boot /flash good >/dev/null 2>&1 ) &
 fi
 
-# Module supervisor: only started when at least one module is installed.
+# 6. Module supervisor: only when at least one module is installed. Modules
+#    live on DATA (the ROM volume is shared with the PC and stays clean).
 if [ -x /usr/bin/modd ] && [ -d /data/modules ]; then
-    mkdir -p /run
+    mkdir -p /run 2>/dev/null || true
     /usr/bin/modd --modules /data/modules --data /data/module-data \
                   --socket /run/modd.sock &
 fi
 
+# 7. Quiet kernel console: the splash screen owns the panel.
 echo 0 > /proc/sys/kernel/printk 2>/dev/null || true
 exit 0

@@ -65,3 +65,6 @@
 | P0 mounts (host) | `tests/board_test.py` | 7 проверок привязки разделов p1/p4/p5 и путей модулей | PASS |
 | образ (0.7-dev) | 4 294 967 296 B, sha256 `2569c4b70f510d562d31198d272ae321a6e81a3ad65cf7aa1f50cead38916fd7` | ok |
 
+| P0 rcS (host) | `tests/board_test.py` | 13 проверок: best-effort mounts, mount_part, /data/config, guard A/B, sh -n | PASS |
+| образ (0.8-dev) | 4 294 967 296 B, sha256 `bf04b4dbf32d3d9bcfabaa41ab71f179c0a36916bbb02ddd9af5eedc1f16b6c5` | ok |
+
