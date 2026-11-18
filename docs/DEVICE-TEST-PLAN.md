@@ -188,3 +188,16 @@ dmesg | head -3
 Если расхождение по экрану/кнопкам/звуку — сначала смотреть таблицу «Если что-то пошло
 не так» (§5), затем присылать `dmesg` и `--selftest`: по этим двум выводам видно,
 DTB-проблема это, драйвер панели или userland.
+
+
+### 0.6. Отчёт о загрузке, если нет UART и SSH
+
+Лаунчер и `rcS` пишут отчёт в `BOOT/report/` (`boot.txt`, `mounts.txt`, `free.txt`, `dmesg.txt`,
+`temps.txt`, `cpufreq.txt`, `modules.txt`, `selftest.txt`). Забрать отчёт с ПК:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\pull-report.ps1
+```
+
+Файлы появятся в `build/device-report/`. Это же — основа для §7: вставьте содержимое
+`boot.txt`, `temps.txt`, `free.txt` и `selftest.txt` в отчёт.

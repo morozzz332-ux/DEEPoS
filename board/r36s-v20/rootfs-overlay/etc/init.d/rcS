@@ -60,6 +60,40 @@ fi
 # 7. Quiet kernel console: the splash screen owns the panel.
 echo 0 > /proc/sys/kernel/printk 2>/dev/null || true
 
+# 7b. Boot report on the BOOT partition (FAT32): the only channel that works
+#     without UART or SSH - the card can be pulled and read from a PC.
+if is_mounted /flash; then
+    rep=/flash/report
+    mkdir -p $rep 2>/dev/null || true
+    if [ -d $rep ]; then
+        {
+            echo "DEEPoS boot report"
+            date -u 2>/dev/null || true
+            uname -a 2>/dev/null || true
+            echo "cmdline: $(cat /proc/cmdline 2>/dev/null)"
+            cat /proc/uptime 2>/dev/null | sed 's/^/uptime: /'
+        } > $rep/boot.txt 2>/dev/null || true
+        cat /proc/mounts > $rep/mounts.txt 2>/dev/null || true
+        free -m > $rep/free.txt 2>/dev/null || true
+        dmesg 2>/dev/null | tail -n 400 > $rep/dmesg.txt || true
+        for z in /sys/class/thermal/thermal_zone*; do
+            [ -r "$z/temp" ] || continue
+            echo "$(cat $z/type 2>/dev/null): $(( $(cat $z/temp) / 1000 )) C"
+        done > $rep/temps.txt 2>/dev/null || true
+        {
+            for f in scaling_cur_freq scaling_min_freq scaling_max_freq scaling_governor; do
+                echo "$f: $(cat /sys/devices/system/cpu/cpufreq/policy0/$f 2>/dev/null)"
+            done
+            echo "gpu_cur: $(cat /sys/class/devfreq/ff400000.gpu/cur_freq 2>/dev/null)"
+        } > $rep/cpufreq.txt 2>/dev/null || true
+        ls /data/modules 2>/dev/null > $rep/modules.txt || true
+        if [ -x /usr/bin/launcher ]; then
+            /usr/bin/launcher --selftest > $rep/selftest.txt 2>&1 || true
+        fi
+        sync 2>/dev/null || true
+    fi
+fi
+
 # 8. Report readiness for the serial console. The UI itself is started by init
 #    from /etc/inittab (::respawn) so a crashed launcher comes back by itself.
 st=missing; is_mounted /storage && st=ok

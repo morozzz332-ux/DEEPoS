@@ -1,9 +1,9 @@
-# Elevated flasher for DEEPoS: writes build/deepos-r36s-v20.img to the SD card.
+﻿# Elevated flasher for DEEPoS: writes build/deepos-r36s-v20.img to the SD card.
 # Run through Start-Process -Verb RunAs (or flash-deepos.cmd) so \\.\PhysicalDriveN is writable.
 param(
     [int]$Disk = 2,
     [string]$Image = "build/deepos-r36s-v20.img",
-    [string]$Sha256 = "349a900d6b318888851e35a2260893db2b7eadfb4ec99e08b194935e0d4bf2c3",
+    [string]$Sha256 = "",
     [string]$Python = ""
 )
 $ErrorActionPreference = "Continue"
@@ -31,6 +31,15 @@ $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIden
 Log ("admin=" + $isAdmin)
 if (-not $isAdmin) { Log "STOP: not elevated, run flash-deepos.cmd and accept the UAC prompt"; exit 2 }
 Log ("python=" + $Python)
+
+if (-not $Sha256) {
+    $rel = Join-Path $root "docs\RELEASE.md"
+    if (Test-Path $rel) {
+        $m = Select-String -Path $rel -Pattern 'image sha256: `([0-9a-f]{64})`' | Select-Object -First 1
+        if ($m) { $Sha256 = $m.Matches[0].Groups[1].Value }
+    }
+}
+Log ("expected sha256=" + $(if ($Sha256) { $Sha256 } else { "unknown" }))
 if (-not $Python -or -not (Test-Path $Python)) { Log "STOP: python interpreter not found"; exit 1 }
 
 $d = Get-Disk -Number $Disk

@@ -84,4 +84,6 @@
 | P8 render timings (host) | `tests/ci/measure.py` | 7 экранов: 9.4–10.7 мс/кадр, бинарь 85 208 B | PASS |
 | образ (0.13-dev) | 4 294 967 296 B, sha256 `349a900d6b318888851e35a2260893db2b7eadfb4ec99e08b194935e0d4bf2c3` | UART getty + passwd | ok |
 | release report | `docs/RELEASE.md`, 7 артефактов, git `main` | `tests/release_test.py` | PASS |
+| boot report | `/flash/report/*` (8 файлов), `tools/pull-report.ps1` | `tests/board_test.py` | PASS |
+| образ (0.14-dev) | sha256 `0e418a5f8920679d807c936ba5499d8c1fa417d3678e89b50caef4cf67cea07a` | сборка + preflight | GO |
 

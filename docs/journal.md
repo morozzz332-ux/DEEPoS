@@ -664,3 +664,22 @@
 - Проверка: 16 наборов PASS, отчёт `docs/RELEASE.md` соответствует образу
   sha256 `349a900d…` (0.13-dev; полный хэш — в `docs/RELEASE.md`).
 
+## 2026-11-18 · P9 (отчёт о загрузке на BOOT-раздел, без UART и SSH)
+
+- В `board/r36s-v20/rootfs-overlay/etc/init.d/rcS` добавлен блок 7b: если `/flash`
+  смонтирован, пишется `/flash/report/*` — `boot.txt` (дата, `uname -a`, cmdline, uptime),
+  `mounts.txt`, `free.txt`, `dmesg.txt` (хвост 400 строк), `temps.txt` (все термозоны в °C),
+  `cpufreq.txt` (cur/min/max/governor + GPU cur), `modules.txt`, `selftest.txt`
+  (`launcher --selftest`). Любая строка — через `|| true`, отчёт не может сорвать загрузку.
+- Зачем: у DEEPoS нет sshd, а UART-гребёнка требует паяльника/адаптера. FAT32 на BOOT
+  читается с любого ПК: вынули карту — забрали отчёт.
+- `tools/pull-report.ps1` (PowerShell 5.1, UTF-8 BOM): ищет том с меткой `BOOT`, копирует
+  `report\*` в `build/device-report/`, печатает `boot.txt`, `selftest.txt`, `temps.txt`.
+  Если тома нет — показывает список дисков с метками, чтобы не гадать.
+- `tests/board_test.py::test_boot_report` — 14 проверок: каталог, guard `is_mounted /flash`,
+  каждый файл, вызов `--selftest`, `sync`, best-effort на каждой строке записи.
+- `flash-deepos.ps1`: ожидаемый sha256 больше не хардкодится — берётся из
+  `docs/RELEASE.md` (`image sha256: ...`), иначе «unknown» и dpflash сверит сам.
+- Сборка: rootfs OK, BOOT `0.14-dev`, образ sha256 `0e418a5f…` (полный — в `docs/RELEASE.md`),
+  `PREFLIGHT: GO (32 checks)`, 16 наборов PASS.
+

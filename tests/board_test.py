@@ -271,6 +271,23 @@ def test_rcs_order():
           f"exit@{exit_at} good@{good_at}")
 
 
+def test_boot_report() -> None:
+    text = (ROOT / "board/r36s-v20/rootfs-overlay/etc/init.d/rcS").read_text(encoding="utf-8")
+    check("report dir on BOOT", "/flash/report" in text)
+    check("report guarded by mount", "is_mounted /flash" in text)
+    for name in ("boot.txt", "mounts.txt", "free.txt", "dmesg.txt",
+                 "temps.txt", "cpufreq.txt", "modules.txt", "selftest.txt"):
+        check(f"report writes {name}", name in text)
+    check("report runs selftest", "--selftest" in text)
+    check("report syncs", "sync 2>/dev/null" in text)
+    # The report must not be able to abort the boot.
+    for line in text.splitlines():
+        if "$rep/" not in line:
+            continue
+        check(f"report line is best-effort: {line.strip()[:40]}",
+              "|| true" in line)
+
+
 def main():
     print("board tests (R36S-V20):")
     test_dts()
@@ -282,12 +299,13 @@ def main():
     test_partition_mounts()
     test_rcs_robustness()
     test_boot_handover()
+    test_boot_report()
     test_rcs_order()
     print()
     if fails:
         print("FAIL  board: " + ", ".join(fails))
         return 1
-    print("PASS  board: dtb, kernel config, busybox config, extlinux, mounts, handover, rcs order, emulators, rootfs builder")
+    print("PASS  board: dtb, kernel config, busybox config, extlinux, mounts, handover, report, rcs order, emulators, rootfs builder")
     return 0
 
 
