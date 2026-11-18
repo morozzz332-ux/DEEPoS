@@ -249,3 +249,24 @@
 - Сборка: в `apps/launcher/Makefile` добавлен `-D_GNU_SOURCE` (иначе `strcasecmp`/
   `strcasestr` скрыты при `-std=c11 -Werror`), запрос `EVIOCGNAME` приводится к `int`.
 - `make input-test`, `docker-test` и `build/run-tests.sh` теперь гоняют 9 наборов.
+
+## 2026-11-18 · P4b/P4 (лаунчер ↔ modd: живой список модулей)
+
+- `apps/launcher/src/dp_modc.{h,c}`: синхронный клиент modd по AF_UNIX —
+  `dp_modc_call(sock, method, params, out, n)` шлёт одну NDJSON-строку
+  `{"id":1,"method":…,"params":…}`, читает ответ построчно, достаёт `result`;
+  `dp_modc_status(sock, m)` разбирает `{"modules":[{"id":…,"state":…}]}` в
+  `m->mods[] / m->nmods` (до `DP_MAX_MODULES = 8`).
+- Экран «МОДУЛИ» больше не статичен: при живом `modd` рисуется реальный список,
+  подпись = `id`, вторая строка — русская расшифровка состояния (`ready` →
+  «включён · отвечает на запросы», `stopped` → «остановлен · запустится при
+  действии», `disabled` → «отключён · три падения за 10 минут»), тумблер включён
+  только для `ready`; шапка показывает `modd · N модулей · M активных`. Без сокета
+  остаётся демо-набор (чтобы golden-кадры не зависели от окружения).
+- CLI: `--modules-socket PATH` (по умолчанию `/run/modd.sock`) и `--print-modules`
+  (`<id>\t<state>` построчно) — удобно и для тестов, и для отладки на устройстве.
+- `tests/launcher_mod_test.py`: поднимает настоящий `modd` на временном сокете с
+  фикстурами `thermal/hang/crash`, проверяет получение списка и состояний, рендер
+  экрана «МОДУЛИ» из живых данных и мягкий фолбэк при отсутствии сокета (6 проверок).
+- `tests/ci/render-modules.sh` — демо-рендер экрана с живым modd (использован для
+  `build/modules-live.png`); `make launcher-mod-test`, `build/run-tests.sh` — 10 наборов.

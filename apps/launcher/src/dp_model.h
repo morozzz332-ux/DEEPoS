@@ -9,6 +9,9 @@
 #define DP_SYS_ID 24
 #define DP_SYS_NAME 40
 #define DP_TITLE_LEN 64
+#define DP_MAX_MODULES 8
+#define DP_MOD_ID 32
+#define DP_MOD_STATE 16
 
 struct dp_system {
     char id[DP_SYS_ID];       /* directory name, lower-case */
@@ -24,6 +27,11 @@ struct dp_continue_item {
     int has_save;
 };
 
+struct dp_module_info {
+    char id[DP_MOD_ID];       /* module id from module.toml */
+    char state[DP_MOD_STATE]; /* ready / stopped / disabled / unknown */
+};
+
 struct dp_status {
     int battery;              /* percent, 0..100 */
     int charging;
@@ -37,6 +45,9 @@ struct dp_model {
 
     struct dp_continue_item cont[DP_MAX_CONTINUE];
     int ncont;
+
+    struct dp_module_info mods[DP_MAX_MODULES];
+    int nmods;
 
     struct dp_status st;
 

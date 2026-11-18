@@ -362,9 +362,30 @@ static void dp_toggle(struct dp_canvas *cv, int x, int y, int on)
     dp_rect(cv, kx, y + 2, 14, 14, on ? DP_COL_BG : DP_COL_FG3);
 }
 
-static void dp_screen_modules(struct dp_canvas *cv)
+static const char *mod_state_label(const char *state)
 {
-    dp_section(cv, "МОДУЛИ", "установлено 5 · включено 4");
+    if (strcmp(state, "ready") == 0)
+        return "включён · отвечает на запросы";
+    if (strcmp(state, "stopped") == 0)
+        return "остановлен · запустится при действии";
+    if (strcmp(state, "disabled") == 0)
+        return "отключён · три падения за 10 минут";
+    return "состояние неизвестно";
+}
+
+static void dp_screen_modules(struct dp_canvas *cv, const struct dp_model *m)
+{
+    char meta[64];
+    if (m->nmods > 0) {
+        int on = 0;
+        for (int i = 0; i < m->nmods; i++)
+            if (strcmp(m->mods[i].state, "ready") == 0)
+                on++;
+        snprintf(meta, sizeof(meta), "modd · %d модулей · %d активных", m->nmods, on);
+    } else {
+        snprintf(meta, sizeof(meta), "%s", "modd не запущен · демо-данные");
+    }
+    dp_section(cv, "МОДУЛИ", meta);
 
     static const struct dp_module_row rows[] = {
         { "Температура и профили", "тайл в «Продолжить» · права: cpu-profile, brightness", 1 },
@@ -375,14 +396,25 @@ static void dp_screen_modules(struct dp_canvas *cv)
     };
 
     int y = DP_STATUS_H + DP_HEADER_H;
-    int n = (int)(sizeof(rows) / sizeof(rows[0]));
-    for (int i = 0; i < n; i++) {
-        int rh = 46;
-        dp_row_frame(cv, y, rh, i == 0);
-        dp_text(cv, 20, y + 8, rows[i].name, DP_COL_FG, 1);
-        dp_text_small(cv, 20, y + 26, rows[i].sub, DP_COL_FG3, 1);
-        dp_toggle(cv, DP_W - 20 - 34, y + 14, rows[i].enabled);
-        y += rh;
+    if (m->nmods > 0) {
+        for (int i = 0; i < m->nmods && i < 6; i++) {
+            int rh = 46;
+            dp_row_frame(cv, y, rh, i == 0);
+            dp_text(cv, 20, y + 8, m->mods[i].id, DP_COL_FG, 1);
+            dp_text_small(cv, 20, y + 26, mod_state_label(m->mods[i].state), DP_COL_FG3, 1);
+            dp_toggle(cv, DP_W - 20 - 34, y + 14, strcmp(m->mods[i].state, "ready") == 0);
+            y += rh;
+        }
+    } else {
+        int n = (int)(sizeof(rows) / sizeof(rows[0]));
+        for (int i = 0; i < n; i++) {
+            int rh = 46;
+            dp_row_frame(cv, y, rh, i == 0);
+            dp_text(cv, 20, y + 8, rows[i].name, DP_COL_FG, 1);
+            dp_text_small(cv, 20, y + 26, rows[i].sub, DP_COL_FG3, 1);
+            dp_toggle(cv, DP_W - 20 - 34, y + 14, rows[i].enabled);
+            y += rh;
+        }
     }
 
     dp_hline(cv, 20, y + 6, DP_W - 40, DP_COL_LINE);
@@ -497,7 +529,7 @@ void dp_ui_paint(struct dp_canvas *cv, const struct dp_model *m, enum dp_screen 
     case DP_SCR_SYSTEMS: dp_screen_systems(cv, m); break;
     case DP_SCR_GAMES: dp_screen_games(cv, m, system_index); break;
     case DP_SCR_SETTINGS: dp_screen_settings(cv, m); break;
-    case DP_SCR_MODULES: dp_screen_modules(cv); break;
+    case DP_SCR_MODULES: dp_screen_modules(cv, m); break;
     case DP_SCR_FILES: dp_screen_files(cv, m); break;
     case DP_SCR_INFO: dp_screen_info(cv, m); break;
     default: break;

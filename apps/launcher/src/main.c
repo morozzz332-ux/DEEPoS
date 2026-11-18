@@ -5,6 +5,7 @@
 
 #include "dp_canvas.h"
 #include "dp_input.h"
+#include "dp_modc.h"
 #include "dp_model.h"
 #include "dp_theme.h"
 #include "dp_ui.h"
@@ -167,6 +168,8 @@ int main(int argc, char **argv)
     unsigned rom_used = 12, rom_total = 36;
     const char *keys = NULL;
     int print_state = 0;
+    const char *mods_socket = "/run/modd.sock";
+    int print_modules = 0;
 
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
@@ -183,6 +186,8 @@ int main(int argc, char **argv)
         else if (strcmp(a, "--rom-total") == 0) rom_total = (unsigned)atoi(NEED_ARG());
         else if (strcmp(a, "--keys") == 0) keys = NEED_ARG();
         else if (strcmp(a, "--print-state") == 0) print_state = 1;
+        else if (strcmp(a, "--modules-socket") == 0) mods_socket = NEED_ARG();
+        else if (strcmp(a, "--print-modules") == 0) print_modules = 1;
         else if (strcmp(a, "--list") == 0) {
             for (int s = 0; s < DP_SCR_COUNT; s++)
                 printf("%s\n", dp_screen_id((enum dp_screen)s));
@@ -223,6 +228,14 @@ int main(int argc, char **argv)
     if (dp_model_scan(m, roms) < 0)
         fprintf(stderr, "launcher: cannot read ROMs at %s (empty library)\n", roms);
     dp_model_load_continue(m, data);
+    dp_modc_status(mods_socket, m);
+
+    if (print_modules) {
+        for (int i = 0; i < m->nmods; i++)
+            printf("%s\t%s\n", m->mods[i].id, m->mods[i].state);
+        dp_model_free(m);
+        return 0;
+    }
 
     m->st.battery = battery;
     m->st.charging = charging;

@@ -60,7 +60,7 @@ modules-test: docker-image
 	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "python3 tests/modules_test.py"
 
 updatr-test: docker-image
-	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "make -C apps/updatr && python3 tests/updatr_test.py && python3 tests/input_test.py"
+	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "make -C apps/updatr && python3 tests/updatr_test.py && python3 tests/input_test.py && python3 tests/launcher_mod_test.py"
 
 saved-test: saved
 	$(PYTHON) tests/saved_test.py
@@ -74,8 +74,11 @@ docker-cross:
 docker-test: docker-image
 	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "python3 tests/run.py && python3 tests/modd_test.py && python3 tests/saved_test.py && python3 tests/modules_test.py && python3 tests/image_test.py && python3 tests/board_test.py && python3 tests/boot_test.py"
 
+launcher-mod-test: docker-image
+	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "make -C apps/launcher make -C apps/modd && python3 tests/launcher_mod_test.py"
+
 input-test: docker-image
-	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "make -C apps/launcher && python3 tests/input_test.py"
+	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "make -C apps/launcher && python3 tests/input_test.py && python3 tests/launcher_mod_test.py"
 
 board-test: docker-image
 	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) -c "python3 tests/board_test.py"
