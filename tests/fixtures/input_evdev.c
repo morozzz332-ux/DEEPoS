@@ -100,13 +100,22 @@ static int check_key(struct dp_input *input, unsigned short code, unsigned value
     return 1;
 }
 
-static int check_pad(const char *name, enum dp_key south, enum dp_key east)
+static int check_pad(const char *name, enum dp_key south, enum dp_key east, int vendor_dpad)
 {
     keys_reset();
-    key_set(KEY_UP);
-    key_set(KEY_DOWN);
-    key_set(KEY_LEFT);
-    key_set(KEY_RIGHT);
+    if (vendor_dpad) {
+        /* Arch-R's singleadc joypad reports the D-pad as BTN_DPAD_* and the
+         * face buttons as BTN_EAST/SOUTH/WEST/NORTH. */
+        key_set(BTN_DPAD_UP);
+        key_set(BTN_DPAD_DOWN);
+        key_set(BTN_DPAD_LEFT);
+        key_set(BTN_DPAD_RIGHT);
+    } else {
+        key_set(KEY_UP);
+        key_set(KEY_DOWN);
+        key_set(KEY_LEFT);
+        key_set(KEY_RIGHT);
+    }
     key_set(BTN_SOUTH);
     key_set(BTN_EAST);
     key_set(BTN_TL);
@@ -165,8 +174,8 @@ static int check_reject(const char *name)
 
 int main(void)
 {
-    int failed = check_pad("r36s_Gamepad", DP_KEY_B, DP_KEY_A);
-    failed |= check_pad("gpio-keys", DP_KEY_A, DP_KEY_B);
+    int failed = check_pad("r36s_Gamepad", DP_KEY_B, DP_KEY_A, 1);
+    failed |= check_pad("gpio-keys", DP_KEY_A, DP_KEY_B, 0);
     failed |= check_reject("keyboard");
     return failed;
 }

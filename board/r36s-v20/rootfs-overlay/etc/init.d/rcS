@@ -95,6 +95,11 @@ if [ -x /usr/local/bin/usb-gadget.sh ]; then
     /usr/local/bin/usb-gadget.sh &
 fi
 
+# 6c. Development shell on the USB NCM link. The link is the console's own
+#     OTG port, not a network, and this build has no other way in while the
+#     panel prototype moves. Disable before a release build.
+/bin/busybox telnetd -p 23 -l /bin/sh >/dev/null 2>&1 &
+
 # 7. Quiet kernel console: the splash screen owns the panel.
 echo 0 > /proc/sys/kernel/printk 2>/dev/null || true
 

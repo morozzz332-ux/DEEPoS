@@ -137,7 +137,7 @@ def run_tests(update: bool) -> None:
 
             body_rows = ink_rows(px, w, 30, 454)
             check(body_rows >= 18, f"{screen}: body looks empty ({body_rows} rows)")
-            status_rows = ink_rows(px, w, 0, 30)
+            status_rows = ink_rows(px, w, 0, 40)
             check(status_rows >= 18, f"{screen}: status bar looks empty")
             hashes[screen] = digest
 
@@ -150,13 +150,13 @@ def run_tests(update: bool) -> None:
         moved = render(roms, data, "systems", base / "systems-right.ppm",
                        "--keys", "RIGHT")
         w, _, px = parse_ppm(moved)
-        check(px[80 * w + 324] == PALETTE_ACC and px[80 * w + 12] != PALETTE_ACC,
+        check(px[88 * w + 324] == PALETTE_ACC and px[88 * w + 12] != PALETTE_ACC,
               "systems: RIGHT should focus the right column only")
 
         moved = render(roms, data, "systems", base / "systems-row.ppm",
                        "--keys", "DOWN,DOWN,DOWN,DOWN")
         w, _, px = parse_ppm(moved)
-        check(px[(68 + 4 * 26 + 5) * w + 12] == PALETTE_ACC,
+        check(px[(76 + 4 * 26 + 5) * w + 12] == PALETTE_ACC,
               "systems: DOWN should step a full row (two cells)")
 
         moved = render(roms, data, "games", base / "games-scrolled.ppm",

@@ -110,8 +110,10 @@ static int pad_capabilities(int fd)
         return -1;
     if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(keys)), keys) < 0)
         return -1;
-    int arrows = bit_test(keys, KEY_UP) + bit_test(keys, KEY_DOWN) +
-                 bit_test(keys, KEY_LEFT) + bit_test(keys, KEY_RIGHT);
+    int arrows = (bit_test(keys, KEY_UP) || bit_test(keys, BTN_DPAD_UP)) +
+                 (bit_test(keys, KEY_DOWN) || bit_test(keys, BTN_DPAD_DOWN)) +
+                 (bit_test(keys, KEY_LEFT) || bit_test(keys, BTN_DPAD_LEFT)) +
+                 (bit_test(keys, KEY_RIGHT) || bit_test(keys, BTN_DPAD_RIGHT));
     int face = bit_test(keys, BTN_SOUTH) + bit_test(keys, BTN_EAST) +
                bit_test(keys, BTN_TL) + bit_test(keys, BTN_SELECT);
     if (arrows == 0)

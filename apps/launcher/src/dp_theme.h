@@ -14,6 +14,12 @@
 #define DP_HEADER_H 34
 #define DP_HINT_H 28
 #define DP_PAD 12
+/* The LCD sits under a plastic bezel: keep a few pixels of air at the top
+ * and bottom so tabs and the hint bar are not covered by it. */
+#define DP_SAFE_TOP 8
+#define DP_SAFE_BOTTOM 12
+#define DP_BODY_Y0 (DP_SAFE_TOP + DP_STATUS_H + DP_HEADER_H)
+#define DP_BODY_Y1 (DP_H - DP_SAFE_BOTTOM - DP_HINT_H)
 
 #define DP_COL_BG       dp565(0x0C, 0x10, 0x0E)
 #define DP_COL_PANEL    dp565(0x13, 0x1A, 0x16)

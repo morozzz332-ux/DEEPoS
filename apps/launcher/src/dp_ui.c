@@ -113,7 +113,7 @@ static int dp_keycap(struct dp_canvas *cv, int x, int y, const char *label)
 static void dp_hints(struct dp_canvas *cv, const struct dp_hint *items, int n,
                      const char *back_label)
 {
-    int y = DP_H - DP_HINT_H + 5;
+    int y = DP_H - DP_SAFE_BOTTOM - DP_HINT_H + 5;
     int limit = DP_W - 12;
     if (back_label)
         limit -= dp_text_small_w(back_label, 1) + 40;
@@ -138,24 +138,24 @@ static void dp_hints(struct dp_canvas *cv, const struct dp_hint *items, int n,
 
 static void dp_statusbar(struct dp_canvas *cv, const struct dp_model *m, enum dp_screen active)
 {
-    dp_rect(cv, 0, 0, DP_W, DP_STATUS_H, DP_COL_PANEL);
-    dp_hline(cv, 0, DP_STATUS_H - 1, DP_W, DP_COL_LINE);
+    dp_rect(cv, 0, DP_SAFE_TOP, DP_W, DP_STATUS_H, DP_COL_PANEL);
+    dp_hline(cv, 0, DP_SAFE_TOP + DP_STATUS_H - 1, DP_W, DP_COL_LINE);
 
     int cur = dp_tab_index(active);
     int x = DP_PAD;
     for (int i = 0; i < DP_TABS; i++) {
         int tw = dp_text_small_w(dp_tabs[i], 1);
         uint16_t col = (i == cur) ? DP_COL_FG : DP_COL_FG3;
-        dp_text_small(cv, x, 9, dp_tabs[i], col, 1);
+        dp_text_small(cv, x, DP_SAFE_TOP + 9, dp_tabs[i], col, 1);
         if (i == cur)
-            dp_rect(cv, x, DP_STATUS_H - 4, tw, 2, DP_COL_ACC);
+            dp_rect(cv, x, DP_SAFE_TOP + DP_STATUS_H - 4, tw, 2, DP_COL_ACC);
         x += tw + 10;
     }
 
     const char *clock = m->st.clock;
     if (clock[0]) {
         int cw = dp_text_small_w(clock, 1);
-        dp_text_small(cv, DP_W - DP_PAD - cw, 9, clock, DP_COL_FG2, 1);
+        dp_text_small(cv, DP_W - DP_PAD - cw, DP_SAFE_TOP + 9, clock, DP_COL_FG2, 1);
     }
     if (m->st.battery < 0)
         return;
@@ -165,21 +165,21 @@ static void dp_statusbar(struct dp_canvas *cv, const struct dp_model *m, enum dp
     int pw = dp_text_small_w(buf, 1);
     int cw = clock[0] ? dp_text_small_w(clock, 1) + 10 : 0;
     int bx = DP_W - DP_PAD - cw - pw - 8 - 26;
-    dp_frame(cv, bx, 10, 24, 12, DP_COL_FG3);
-    dp_rect(cv, bx + 1, 11, 22, 10, DP_COL_BG);
+    dp_frame(cv, bx, DP_SAFE_TOP + 10, 24, 12, DP_COL_FG3);
+    dp_rect(cv, bx + 1, DP_SAFE_TOP + 11, 22, 10, DP_COL_BG);
     int pct = m->st.battery > 100 ? 100 : m->st.battery;
-    dp_rect(cv, bx + 1, 11, 22 * pct / 100, 10,
+    dp_rect(cv, bx + 1, DP_SAFE_TOP + 11, 22 * pct / 100, 10,
             pct <= 20 ? DP_COL_BAD : DP_COL_ACC);
     if (m->st.charging) {
-        dp_rect(cv, bx + 9, 13, 2, 6, DP_COL_WARN);
-        dp_rect(cv, bx + 12, 13, 2, 4, DP_COL_WARN);
+        dp_rect(cv, bx + 9, DP_SAFE_TOP + 13, 2, 6, DP_COL_WARN);
+        dp_rect(cv, bx + 12, DP_SAFE_TOP + 13, 2, 4, DP_COL_WARN);
     }
-    dp_text_small(cv, bx - 8 - pw, 9, buf, DP_COL_FG2, 1);
+    dp_text_small(cv, bx - 8 - pw, DP_SAFE_TOP + 9, buf, DP_COL_FG2, 1);
 }
 
 static void dp_section(struct dp_canvas *cv, const char *title, const char *meta)
 {
-    int y = DP_STATUS_H;
+    int y = DP_SAFE_TOP + DP_STATUS_H;
     int right = DP_W - DP_PAD;
     if (meta) {
         int mw = dp_text_small_w(meta, 1);
@@ -219,7 +219,7 @@ static void dp_scrollbar(struct dp_canvas *cv, int x, int y, int h, int total,
 
 static void dp_empty(struct dp_canvas *cv, const char *title, const char *message)
 {
-    const int y = (DP_STATUS_H + DP_HEADER_H + DP_H - DP_HINT_H) / 2 - 26;
+    const int y = (DP_BODY_Y0 + DP_BODY_Y1) / 2 - 26;
     dp_text(cv, (DP_W - dp_text_w(title, 1)) / 2, y, title, DP_COL_FG, 1);
     if (message)
         dp_text(cv, (DP_W - dp_text_w(message, 1)) / 2, y + 26, message, DP_COL_FG2, 1);
@@ -289,9 +289,9 @@ static void dp_screen_continue(struct dp_canvas *cv, const struct dp_model *m, i
         return;
     }
 
-    const int y0 = DP_STATUS_H + DP_HEADER_H + 2;
+    const int y0 = DP_BODY_Y0 + 2;
     const int rh = 40;
-    const int rows = (DP_H - DP_HINT_H - 6 - y0) / rh;
+    const int rows = (DP_BODY_Y1 - 6 - y0) / rh;
     const int first = dp_first_visible(selected, rows);
     int y = y0;
     for (int i = first; i < m->ncont && i < first + rows; i++) {
@@ -347,9 +347,9 @@ static void dp_screen_systems(struct dp_canvas *cv, const struct dp_model *m, in
         return;
     }
 
-    const int y0 = DP_STATUS_H + DP_HEADER_H + 2;
+    const int y0 = DP_BODY_Y0 + 2;
     const int rh = 26;
-    const int visible_rows = (DP_H - DP_HINT_H - 6 - y0) / rh;
+    const int visible_rows = (DP_BODY_Y1 - 6 - y0) / rh;
     const int visible = visible_rows * 2;
     const int first_row = selected / 2 < visible_rows
         ? (selected / 2 > visible_rows - 1 ? selected / 2 - visible_rows + 1 : 0)
@@ -415,9 +415,9 @@ static void dp_screen_games(struct dp_canvas *cv, const struct dp_model *m, int 
         return;
     }
 
-    const int y0 = DP_STATUS_H + DP_HEADER_H + 2;
+    const int y0 = DP_BODY_Y0 + 2;
     const int rh = 34;
-    const int rows = (DP_H - DP_HINT_H - 6 - y0) / rh;
+    const int rows = (DP_BODY_Y1 - 6 - y0) / rh;
     const int first = dp_first_visible(selected, rows);
     int y = y0;
     for (int i = first; i < m->nroms && i < first + rows; i++) {
@@ -493,7 +493,7 @@ static void dp_screen_settings(struct dp_canvas *cv, const struct dp_model *m, i
     const int cols = 3, gap = 10;
     const int cw = (DP_W - 2 * DP_PAD - (cols - 1) * gap) / cols;
     const int ch = 84;
-    const int y0 = DP_STATUS_H + DP_HEADER_H + 8;
+    const int y0 = DP_BODY_Y0 + 8;
 
     for (int i = 0; i < 12; i++) {
         int col = i % cols, row = i / cols;
@@ -545,9 +545,9 @@ static void dp_screen_modules(struct dp_canvas *cv, const struct dp_model *m, in
         return;
     }
 
-    const int y0 = DP_STATUS_H + DP_HEADER_H + 2;
+    const int y0 = DP_BODY_Y0 + 2;
     const int rh = 52;
-    const int rows = (DP_H - DP_HINT_H - 6 - y0) / rh;
+    const int rows = (DP_BODY_Y1 - 6 - y0) / rh;
     const int first = dp_first_visible(selected, rows);
     int y = y0;
     for (int i = first; i < m->nmods && i < first + rows; i++) {
@@ -581,7 +581,7 @@ static void dp_screen_files(struct dp_canvas *cv, const struct dp_model *m, int 
         { "Библиотека", library },
     };
 
-    const int y0 = DP_STATUS_H + DP_HEADER_H + 2;
+    const int y0 = DP_BODY_Y0 + 2;
     const int n = (int)(sizeof(rows) / sizeof(rows[0]));
     const int rh = 52;
     int y = y0;
@@ -646,7 +646,7 @@ static void dp_screen_info(struct dp_canvas *cv, const struct dp_model *m)
         { "Профиль CPU", m->cfg_profile[0] ? m->cfg_profile : "не выбран" },
     };
 
-    const int y0 = DP_STATUS_H + DP_HEADER_H + 2;
+    const int y0 = DP_BODY_Y0 + 2;
     const int rh = 26;
     const int n = (int)(sizeof(rows) / sizeof(rows[0]));
     int y = y0;
@@ -670,7 +670,7 @@ void dp_ui_toast(struct dp_canvas *cv, const char *message)
     if (w > DP_W - 40)
         w = DP_W - 40;
     int x = (DP_W - w) / 2;
-    int y = DP_H - DP_HINT_H - 44;
+    int y = DP_BODY_Y1 - 44;
     dp_rect(cv, x, y, w, 32, DP_COL_PANEL2);
     dp_frame(cv, x, y, w, 32, DP_COL_WARN);
     dp_text_fit(cv, x + 16, y + 9, w - 32, message, DP_COL_FG, 1);
