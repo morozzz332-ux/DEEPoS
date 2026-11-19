@@ -23,7 +23,7 @@ import json
 import subprocess
 
 from loader_donor import donor_region
-from mkboot import BOOT_SCRIPT, valid_boot_script, validate_extlinux
+from mkboot import BOOT_SCRIPT, ROOTDIR_INITRD, rootdir_initramfs, valid_boot_script, validate_extlinux
 from v20_display import ARCHR_COMPATIBLE, display_checks, get_string
 import sys
 from pathlib import Path
@@ -96,13 +96,19 @@ def boot_checks(rep: Report, boot: Path, kernel: Path, dtb: Path, *, require_scr
     conf = boot / "extlinux" / "extlinux.conf"
     if not rep.check(conf.is_file(), f"extlinux.conf present: {conf}"):
         return
+    has_rootdir = False
     try:
         board = get_string(dtb, "/", "compatible").split() if dtb.is_file() else ()
-        validate_extlinux(conf.read_text(encoding="utf-8"), archr_v20=ARCHR_COMPATIBLE in board)
+        has_rootdir = validate_extlinux(conf.read_text(encoding="utf-8"),
+                                       archr_v20=ARCHR_COMPATIBLE in board)
     except ValueError as exc:
         rep.fail(str(exc))
     else:
         rep.check(True, "extlinux APPEND and root selector are valid")
+    rootdir = boot / ROOTDIR_INITRD
+    if has_rootdir:
+        rep.check(rootdir.is_file() and rootdir.read_bytes() == rootdir_initramfs(),
+                  "BOOT contains the /root mountpoint initramfs")
     script = boot / BOOT_SCRIPT
     if require_script:
         rep.check(script.is_file() and valid_boot_script(script.read_bytes()),
@@ -130,6 +136,9 @@ def boot_checks(rep: Report, boot: Path, kernel: Path, dtb: Path, *, require_scr
         if rep.check(man.is_file(), "BOOT/MANIFEST.json exists"):
             data = json.loads(man.read_text(encoding="utf-8"))
             files = data.get("files", {})
+            if has_rootdir and rootdir.is_file():
+                rep.check(sha256(rootdir) == files.get(ROOTDIR_INITRD),
+                          "BOOT mountpoint initramfs sha256 matches manifest")
             if require_script and script.is_file():
                 rep.check(sha256(script) == files.get(BOOT_SCRIPT),
                           "BOOT/boot.scr sha256 matches manifest")

@@ -104,18 +104,24 @@ def test_archr_v20(paths: dict[str, Path]) -> bool:
     dt_set(panel, "panel_description", working_mode)
     with kernel.open("r+b") as fh:
         fh.write(b"archr,generic-dsi\0")
-    shutil.copyfile(kernel, boot / "KERNEL")
-    manifest = boot / "MANIFEST.json"
-    data = json.loads(manifest.read_text())
-    data["files"]["KERNEL"] = sha256(kernel)
-    manifest.write_text(json.dumps(data))
-
     conf.write_text(archr_conf)
+    subprocess.run([sys.executable, str(ROOT / "tools/mkboot.py"),
+                    "--kernel", str(kernel), "--dtb", str(dtb), "--out", str(boot),
+                    "--extlinux", str(conf)], check=True, capture_output=True)
     result = run_preflight(paths["base"])
     ok = result.returncode == 0
     if not ok:
         print("FAIL  preflight: rejected the working Arch-R V20 profile")
         print(result.stdout, result.stderr)
+
+    rootdir = boot / "ROOTDIR.CPIO"
+    saved = rootdir.read_bytes()
+    rootdir.write_bytes(b"broken")
+    result = run_preflight(paths["base"])
+    if result.returncode == 0 or "/root mountpoint initramfs" not in result.stdout:
+        print("FAIL  preflight: accepted an invalid /root mountpoint initramfs")
+        ok = False
+    rootdir.write_bytes(saved)
 
     wrong_mode = "M clock=50000 horizontal=720,140,80,140 vertical=720,20,4,20 default=1"
     dt_set(panel, "panel_description", wrong_mode)

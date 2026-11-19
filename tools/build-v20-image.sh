@@ -14,7 +14,7 @@ joypad=$(realpath "$3")
 rootfs=$(realpath "$4")
 out=$5
 size=${6:-4096}
-version=${VERSION:-0.35-v20}
+version=${VERSION:-0.37-v20}
 
 if [ "$out" -ef "$donor" ] || [ "$out" -ef "$overlay" ] ||
    [ "$out" -ef "$joypad" ] || [ "$out" -ef "$rootfs" ]; then

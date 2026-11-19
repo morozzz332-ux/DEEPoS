@@ -70,7 +70,7 @@ donor=/path/to/ArchR-clone.img.gz
 overlay=/path/to/mipi-panel.dtbo
 joypad=/path/to/archr-singleadc-joypad.ko
 rootfs=build/rootfs.squashfs
-sh tools/build-v20-image.sh "$donor" "$overlay" "$joypad" "$rootfs" build/deepos-r36s-v20-0.35.img
+sh tools/build-v20-image.sh "$donor" "$overlay" "$joypad" "$rootfs" build/deepos-r36s-v20-0.37.img
 ```
 
 В Arch‑R Clone с ядром 6.12.114 модуль находится во втором разделе
@@ -101,3 +101,17 @@ ramoops в зарезервированной памяти после перез
 После теста на карте осталась отметка от 0.33. В 0.35 применяется
 проверенный скрипт 0.33 и фикс раннего UART. Старая метка сохранена
 перед установкой обновления BOOT, чтобы отделить результаты двух запусков.
+
+## Монтирование корневой системы
+
+На 0.35 Linux вывел журнал на экран. После добавления `panic=0`
+сообщение сохранилось на панели и показало ошибку `-2` при попытке
+смонтировать найденный `DEEPOS_A` на устройстве `179:2`.
+Разбор встроенного initramfs подтвердил наличие `/dev` и отсутствие
+`/root`. Функция `do_mount_root()` использует `/root` как точку
+монтирования. [Linux 6.12.114](https://github.com/gregkh/linux/blob/v6.12.114/init/do_mounts.c)
+
+В 0.37 U-Boot загружает дополнительный архив `ROOTDIR.CPIO`.
+Он содержит только каталог `/root`. Ядро получает точку монтирования
+и запускает `/sbin/init` из squashfs DEEPoS. Сборка и проверка
+готового образа сверяют содержимое архива и его SHA-256.

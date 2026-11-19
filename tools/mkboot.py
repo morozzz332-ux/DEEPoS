@@ -13,6 +13,7 @@ Usage:
 Layout produced:
     <out>/KERNEL                     uncompressed arm64 Image, name expected by extlinux
     <out>/dtbs/rk3326-r36s-v20.dtb   board device tree
+    <out>/ROOTDIR.CPIO              early mountpoint archive (Arch-R profile)
     <out>/extlinux/extlinux.conf     boot entry (LABEL DEEPoS)
     <out>/logo.bmp                   640x480 24-bit U-Boot splash (optional)
     <out>/MANIFEST.json              sha256 + sizes, used by tests and by update
@@ -33,6 +34,7 @@ DTB_NAME = "rk3326-r36s-v20.dtb"
 KERNEL_NAME = "KERNEL"
 BOARD_BOOT = pathlib.Path(__file__).resolve().parents[1] / "board/r36s-v20/boot"
 BOOT_SCRIPT = "boot.scr"
+ROOTDIR_INITRD = "ROOTDIR.CPIO"
 
 
 def sha256_file(path):
@@ -41,6 +43,18 @@ def sha256_file(path):
         for chunk in iter(lambda: fh.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def rootdir_initramfs():
+    """Build a newc directory entry for the kernel's early /root mount."""
+    archive = bytearray()
+    for inode, name, mode, links in ((1, b"root", 0o40755, 2), (2, b"TRAILER!!!", 0, 1)):
+        fields = (inode, mode, 0, 0, links, 0, 0, 0, 0, 0, 0, len(name) + 1, 0)
+        archive.extend(b"070701")
+        archive.extend("".join(f"{value:08x}" for value in fields).encode("ascii"))
+        archive.extend(name + b"\0")
+        archive.extend(bytes(-len(archive) % 4))
+    return bytes(archive)
 
 
 def validate_extlinux(text, *, archr_v20=False):
@@ -63,10 +77,14 @@ def validate_extlinux(text, *, archr_v20=False):
     if missing := required.difference(args):
         raise ValueError("extlinux.conf is missing: " + ", ".join(sorted(missing)))
 
+    initrds = [line for line in lines if line[0] == "INITRD"]
+    has_rootdir = initrds == [["INITRD", f"/{ROOTDIR_INITRD}"]]
     if archr_v20:
         directives = [line[0] for line in lines]
-        if directives.count("FDT") != 1 or {"FDTDIR", "FDTOVERLAYS", "INITRD"}.intersection(directives):
+        if directives.count("FDT") != 1 or {"FDTDIR", "FDTOVERLAYS"}.intersection(directives):
             raise ValueError("Arch-R V20 requires one explicit FDT with the panel overlay merged")
+        if not has_rootdir:
+            raise ValueError(f"Arch-R V20 requires INITRD /{ROOTDIR_INITRD} for the /root mountpoint")
         rdinit = [arg for arg in args if arg.startswith("rdinit=")]
         init = [arg for arg in args if arg.startswith("init=")]
         if rdinit != ["rdinit=/__deepos_mount_root__"] or init != ["init=/sbin/init"]:
@@ -74,6 +92,7 @@ def validate_extlinux(text, *, archr_v20=False):
         if any(arg.startswith("earlycon=uart8250,") and arg.count(",") == 3
                and arg.rsplit(",", 1)[1].startswith("1500000") for arg in args):
             raise ValueError("earlycon at 1500000 requires an explicit UART clock")
+    return has_rootdir
 
 
 def valid_boot_script(blob):
@@ -106,7 +125,7 @@ def build(kernel, dtb, out, extlinux=None, logo=None, version="0.1", extra=None,
     config = pathlib.Path(extlinux or BOARD_BOOT / "extlinux/extlinux.conf").read_text(
         encoding="utf-8")
     try:
-        validate_extlinux(config)
+        has_rootdir = validate_extlinux(config)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
 
@@ -121,6 +140,10 @@ def build(kernel, dtb, out, extlinux=None, logo=None, version="0.1", extra=None,
     (out / "extlinux" / "extlinux.conf").write_text(config, encoding="utf-8", newline="\n")
 
     files = {}
+    if has_rootdir:
+        target = out / ROOTDIR_INITRD
+        target.write_bytes(rootdir_initramfs())
+        files[ROOTDIR_INITRD] = sha256_file(target)
     if boot_script:
         target = out / BOOT_SCRIPT
         subprocess.run(["mkimage", "-A", "arm64", "-T", "script", "-C", "none",
@@ -134,7 +157,7 @@ def build(kernel, dtb, out, extlinux=None, logo=None, version="0.1", extra=None,
         src = pathlib.Path(item)
         if not src.is_file():
             raise SystemExit(f"extra file not found: {src}")
-        if src.name in {BOOT_SCRIPT, KERNEL_NAME, "MANIFEST.json"}:
+        if src.name.upper() in {BOOT_SCRIPT.upper(), KERNEL_NAME, "MANIFEST.JSON", ROOTDIR_INITRD}:
             raise SystemExit(f"reserved BOOT filename: {src.name}")
         dst = out / src.name
         shutil.copyfile(src, dst)

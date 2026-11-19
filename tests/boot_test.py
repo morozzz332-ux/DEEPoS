@@ -92,6 +92,22 @@ def test_mkboot():
             check("boot.scr digest recorded in manifest",
                   manifest["files"].get("boot.scr") == hashlib.sha256(data).hexdigest())
 
+        profile = ROOT / "board/r36s-v20/boot/extlinux/archr-v20.conf"
+        out_archr = tmp / "boot-archr"
+        p = run(MKBOOT, "--kernel", kernel, "--dtb", dtb, "--out", out_archr,
+                "--extlinux", profile)
+        archive = out_archr / "ROOTDIR.CPIO"
+        payload = archive.read_bytes() if archive.is_file() else b""
+        check("Arch-R BOOT includes a newc /root mountpoint",
+              p.returncode == 0 and payload.startswith(b"070701")
+              and payload[110:115] == b"root\0"
+              and int(payload[14:22], 16) == 0o40755
+              and payload[54:62] == b"00000000" and b"TRAILER!!!\0" in payload)
+        if archive.is_file():
+            mf = json.loads((out_archr / "MANIFEST.json").read_text())
+            check("mountpoint archive digest is recorded",
+                  mf["files"].get(archive.name) == hashlib.sha256(payload).hexdigest())
+
         tiny = tmp / "tiny.img"
         tiny.write_bytes(b"\x00" * 1024)
 

@@ -33,7 +33,8 @@ import tempfile
 import zlib
 
 from loader_donor import START as DONOR_START, donor_region
-from mkboot import BOOT_SCRIPT, sha256_file, valid_boot_script, validate_extlinux
+from mkboot import (BOOT_SCRIPT, ROOTDIR_INITRD, rootdir_initramfs,
+                    sha256_file, valid_boot_script, validate_extlinux)
 
 SECTOR = 512
 GPT_SIG = b"EFI PART"
@@ -255,11 +256,17 @@ def check_boot_payload(fh, parts, rep, *, require_script=False):
     config = extract_boot_member(fh, boot, name)
     if rep.check(f"BOOT contains {name}", config is not None):
         try:
-            validate_extlinux(config.decode("utf-8"))
+            has_rootdir = validate_extlinux(config.decode("utf-8"))
         except ValueError as exc:
             rep.check("BOOT extlinux kernel arguments", False, str(exc))
         else:
             rep.check("BOOT extlinux kernel arguments", True)
+            if has_rootdir:
+                initrd = extract_boot_member(fh, boot, ROOTDIR_INITRD)
+                if rep.check("BOOT has the /root mountpoint initramfs",
+                             initrd == rootdir_initramfs()):
+                    rep.check("BOOT mountpoint initramfs sha256 matches manifest",
+                              hashlib.sha256(initrd).hexdigest() == hashes.get(ROOTDIR_INITRD))
         rep.check("BOOT extlinux sha256 matches manifest",
                   hashlib.sha256(config).hexdigest() == hashes.get(name))
 
