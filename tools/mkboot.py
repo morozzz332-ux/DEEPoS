@@ -71,6 +71,9 @@ def validate_extlinux(text, *, archr_v20=False):
         init = [arg for arg in args if arg.startswith("init=")]
         if rdinit != ["rdinit=/__deepos_mount_root__"] or init != ["init=/sbin/init"]:
             raise ValueError("Arch-R V20 needs rdinit=/__deepos_mount_root__ init=/sbin/init")
+        if any(arg.startswith("earlycon=uart8250,") and arg.count(",") == 3
+               and arg.rsplit(",", 1)[1].startswith("1500000") for arg in args):
+            raise ValueError("earlycon at 1500000 requires an explicit UART clock")
 
 
 def valid_boot_script(blob):

@@ -36,7 +36,7 @@
 Параметр `rdinit=/__deepos_mount_root__` указывает на отсутствующий путь,
 поэтому Linux подключает squashfs `DEEPOS_A` и запускает DeepOS
 `/sbin/init` вместо `/init` встроенного initramfs Arch‑R.
-Профиль задаёт раннюю консоль на адресе UART из DTB.
+Профиль использует обычную консоль `ttyS2`. Её UART настраивает драйвер ядра.
 Для штатного USB ACM требуется поддержка со стороны ядра. Для раннего
 журнала этого варианта предназначен UART платы.
 
@@ -70,7 +70,7 @@ donor=/path/to/ArchR-clone.img.gz
 overlay=/path/to/mipi-panel.dtbo
 joypad=/path/to/archr-singleadc-joypad.ko
 rootfs=build/rootfs.squashfs
-sh tools/build-v20-image.sh "$donor" "$overlay" "$joypad" "$rootfs" build/deepos-r36s-v20-0.33.img
+sh tools/build-v20-image.sh "$donor" "$overlay" "$joypad" "$rootfs" build/deepos-r36s-v20-0.35.img
 ```
 
 В Arch‑R Clone с ядром 6.12.114 модуль находится во втором разделе
@@ -82,3 +82,22 @@ sh tools/build-v20-image.sh "$donor" "$overlay" "$joypad" "$rootfs" build/deepos
 перед передачей управления. `sysboot_returned` означает, что команда
 вернулась в U-Boot. Успешный запуск пользовательской системы оставляет
 `BOOT/report/boot.txt`. На консоли проверяются первый кадр и работа кнопок.
+
+## Проверка раннего UART
+
+На плате 0.33 записал `before_sysboot`. На BOOT после запуска отчёт
+DEEPoS отсутствовал. U-Boot донора выводит журнал через UART по
+`0xff160000`, а параметр `earlycon` в 0.33 обращался к `0xff178000`.
+Параметр задавал скорость 1 500 000 бод без частоты UART. Ранний
+драйвер 8250 вычислял нулевой делитель и ждал готовности передатчика.
+Обычная консоль загружается через драйвер с настройкой тактирования.
+[Linux earlycon](https://github.com/gregkh/linux/blob/v6.12.114/drivers/tty/serial/earlycon.c)
+· [Ранний драйвер 8250](https://github.com/gregkh/linux/blob/v6.12.114/drivers/tty/serial/8250/8250_early.c)
+
+Проверочный архив `0.34-v20-uartcheck` собран с исправленным
+extlinux. Его DTB задаёт мигание синего индикатора после инициализации
+драйвера LED. Скрипт сохраняет `KCONSOLE.BIN` при обнаружении сигнатуры
+ramoops в зарезервированной памяти после перезагрузки.
+После теста на карте осталась отметка от 0.33. В 0.35 применяется
+проверенный скрипт 0.33 и фикс раннего UART. Старая метка сохранена
+перед установкой обновления BOOT, чтобы отделить результаты двух запусков.

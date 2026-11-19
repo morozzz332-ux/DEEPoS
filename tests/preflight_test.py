@@ -130,6 +130,12 @@ def test_archr_v20(paths: dict[str, Path]) -> bool:
     if result.returncode == 0 or "rdinit" not in result.stdout:
         print("FAIL  preflight: accepted Arch-R embedded /init as PID 1")
         ok = False
+
+    conf.write_text(archr_conf.rstrip() + " earlycon=uart8250,mmio32,0xff178000,1500000\n")
+    result = run_preflight(paths["base"])
+    if result.returncode == 0 or "UART clock" not in result.stdout:
+        print("FAIL  preflight: accepted earlycon at 1500000 without a UART clock")
+        ok = False
     return ok
 
 
