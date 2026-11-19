@@ -1,3 +1,4 @@
+import gzip
 import hashlib
 import os
 import pathlib
@@ -53,6 +54,22 @@ class FlashTest(unittest.TestCase):
         initial = self.card.read_bytes()
         with self.assertRaises(SystemExit):
             dpflash.flash(self.image, self.card, expected_sha="0" * 64)
+        self.assertEqual(self.card.read_bytes(), initial)
+
+    def test_gzip_writes_decoded_bytes_and_checks_the_decoded_digest(self):
+        packed = self.image.with_suffix(".img.gz")
+        packed.write_bytes(gzip.compress(self.data))
+        expected = hashlib.sha256(self.data).hexdigest()
+        self.assertEqual(dpflash.main(["--inspect-image", "--image", str(packed),
+                                      "--expect-sha256", expected]), 0)
+        dpflash.flash(packed, self.card, expected_sha=expected, verify=True)
+        self.assertEqual(dpflash.hash_target(self.card, len(self.data)), expected)
+
+    def test_truncated_gzip_leaves_target_unchanged(self):
+        packed = self.image.with_suffix(".img.gz")
+        packed.write_bytes(gzip.compress(self.data)[:-4])
+        initial = self.card.read_bytes()
+        self.assertEqual(dpflash.main(["--image", str(packed), "--target", str(self.card)]), 1)
         self.assertEqual(self.card.read_bytes(), initial)
 
     def test_short_read_is_error(self):

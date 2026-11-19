@@ -40,21 +40,45 @@
 Для штатного USB ACM требуется поддержка со стороны ядра. Для раннего
 журнала этого варианта предназначен UART платы.
 
+## Исправления после 0.32
+
+На R36S‑V20 образ 0.30 записал `before_booti` после чтения ядра, DTB и
+initramfs. Это подтверждает исполнение U-Boot с GPT. Образ 0.32 успешно
+сверился побайтово с картой, но после попытки запуска на BOOT не было
+`BOOTDIAG.TXT`. Донорский U-Boot 2025.10 содержит команду `itest`.
+
+Профиль 0.33 использует явный путь к DTB с оверлеем 640×480. У DTB без
+оверлея штатный режим 720×720 и другая последовательность инициализации.
+Параметр `rdinit` даёт ядру смонтировать `DEEPOS_A` и запустить BusyBox.
+Встроенный ранний `/init` Arch-R ищет собственные разделы и запускает systemd.
+
+Управление требует ARM64-модуля `archr-singleadc-joypad.ko` из того же
+донорского образа, что и ядро. Сборка проверяет совместимость DT, релиз
+ядра и отсутствие зависимостей. DEEPoS загружает модуль до mdev в обоих
+системных слотах. Launcher обрабатывает коды крестовины, Select и
+раскладку физических A/B, описанную в DTB V20.
+
 ## Воспроизведение
 
-В окружении сборки DeepOS с mtools и device-tree-compiler подставить
-пути к архиву Arch‑R Clone, оверлею V20 и собранному squashfs DeepOS.
+В окружении сборки DEEPoS подставить пути к архиву Arch‑R Clone, оверлею
+панели V20 и модулю. Собрать squashfs текущей версией `tools/build-rootfs.sh`
+в кросс-контейнере. Скрипт образа проверяет сборку до упаковки и читает
+готовый образ с проверкой GPT, загрузчика и содержимого BOOT.
 
 ```sh
 donor=/path/to/ArchR-clone.img.gz
 overlay=/path/to/mipi-panel.dtbo
+joypad=/path/to/archr-singleadc-joypad.ko
 rootfs=build/rootfs.squashfs
-python3 tools/prepare-v20-kernel.py --archr-image "$donor" --panel-overlay "$overlay" --out build/v20-hw-kernel
-python3 tools/mkboot.py --kernel build/v20-hw-kernel/Image --dtb build/v20-hw-kernel/rk3326-r36s-v20.dtb --out build/boot-v20 --extlinux board/r36s-v20/boot/extlinux/archr-v20.conf --boot-script board/r36s-v20/boot/boot.cmd
-python3 tools/mkimage.py --out build/deepos-v20-test.img --size-mib 4096 --boot build/boot-v20 --sys-a "$rootfs" --loader-donor "$donor"
-python3 tools/preflight.py --root . --kernel build/v20-hw-kernel/Image --dtb build/v20-hw-kernel/rk3326-r36s-v20.dtb --boot build/boot-v20 --rootfs "$rootfs" --image build/deepos-v20-test.img --loader-donor "$donor"
+sh tools/build-v20-image.sh "$donor" "$overlay" "$joypad" "$rootfs" build/deepos-r36s-v20-0.33.img
 ```
 
-Проверка на устройстве начинается с журнала UART от включения, файла
-`BOOT/report/boot.txt` и первого кадра DeepOS. Фактические замеры
-загрузки, памяти и температур пока недоступны.
+В Arch‑R Clone с ядром 6.12.114 модуль находится во втором разделе
+(`ARCHR_ROOT`, ext4) по пути
+`/usr/lib/kernel-overlays/base/lib/modules/6.12.114/archr-joypad/archr-singleadc-joypad.ko`.
+Этот файл можно получить, открыв раздел только для чтения.
+
+При запуске диагностический `BOOTDIAG.TXT` фиксирует `before_sysboot`
+перед передачей управления. `sysboot_returned` означает, что команда
+вернулась в U-Boot. Успешный запуск пользовательской системы оставляет
+`BOOT/report/boot.txt`. На консоли проверяются первый кадр и работа кнопок.

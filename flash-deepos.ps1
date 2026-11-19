@@ -14,7 +14,7 @@ function Test-FlashAdministrator {
 
 function Get-FlashDisk([int]$Number) {
     $candidates = @(Get-Disk -ErrorAction Stop | Where-Object {
-        $_.FriendlyName -match 'STORAGE DEVICE' -and $_.Size -eq 53745811456 -and
+        $_.FriendlyName -match 'STORAGE DEVICE' -and $_.Size -in @(31104958464, 53745811456) -and
         $_.BusType -in @('USB', 'SD', 'MMC') -and $_.IsBoot -eq $false -and
         $_.IsSystem -eq $false -and $_.IsOffline -eq $false -and $_.IsReadOnly -eq $false
     })
@@ -94,10 +94,24 @@ function Invoke-DeepOSFlash {
         $Image = (Resolve-Path -LiteralPath $Image).ProviderPath
         # Block other processes from writing or replacing the verified source during the flash.
         $source = [IO.File]::Open($Image, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
-        if ($source.Length -lt (67 * 512) -or $source.Length % 512) { throw "Invalid image size: $($source.Length)" }
-        if ($source.Length -gt $target.Size) { throw "Disk is smaller than the image ($($source.Length) bytes)" }
-        Log "checking SHA-256 of $($source.Length) bytes before clearing disk"
-        $actual = (Get-FileHash -InputStream $source -Algorithm SHA256 -ErrorAction Stop).Hash
+        $imageSize = $source.Length
+        $actual = $null
+        if ([IO.Path]::GetExtension($Image) -eq '.gz') {
+            Log 'checking decoded gzip size and SHA-256 before clearing disk'
+            $writer = Join-Path $root 'tools\dpflash.py'
+            $info = @(& $Python $writer --inspect-image --image $Image --expect-sha256 $Sha256)
+            if ($LASTEXITCODE -ne 0 -or $info.Count -ne 1 -or $info[0] -notmatch '^(\d+) ([0-9a-f]{64})$') {
+                throw 'Cannot verify the decoded gzip image'
+            }
+            $imageSize = [long]$Matches[1]
+            $actual = $Matches[2]
+        }
+        if ($imageSize -lt (67 * 512) -or $imageSize % 512) { throw "Invalid image size: $imageSize" }
+        if ($imageSize -gt $target.Size) { throw "Disk is smaller than the image ($imageSize bytes)" }
+        if ($null -eq $actual) {
+            Log "checking SHA-256 of $imageSize bytes before clearing disk"
+            $actual = (Get-FileHash -InputStream $source -Algorithm SHA256 -ErrorAction Stop).Hash
+        }
         if ($actual -ne $Sha256) { throw "Image SHA-256 mismatch: expected=$Sha256 actual=$actual" }
         Log "source verified: sha256=$actual"
 

@@ -299,6 +299,10 @@ def test_rcs_order():
     rcs = ROOT / "board" / "r36s-v20" / "rootfs-overlay" / "etc" / "init.d" / "rcS"
     text = rcs.read_text(encoding="utf-8")
     check("rcS exists", rcs.is_file())
+    driver_load = text.find('insmod "$joypad"')
+    check("rcS loads the V20 joypad module before device discovery",
+          '/lib/modules/$(uname -r)/archr-singleadc-joypad.ko' in text
+          and 0 <= driver_load < text.find('mdev -s 2>'))
     check("rcS passes --boot /flash", "--boot /flash" in text)
     exit_at = text.find("\nexit 0")
     begin_at = text.find("updatr --state /data --boot /flash begin")

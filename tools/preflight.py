@@ -24,7 +24,7 @@ import subprocess
 
 from loader_donor import donor_region
 from mkboot import BOOT_SCRIPT, valid_boot_script, validate_extlinux
-from v20_display import display_checks
+from v20_display import ARCHR_COMPATIBLE, display_checks, get_string
 import sys
 from pathlib import Path
 
@@ -97,7 +97,8 @@ def boot_checks(rep: Report, boot: Path, kernel: Path, dtb: Path, *, require_scr
     if not rep.check(conf.is_file(), f"extlinux.conf present: {conf}"):
         return
     try:
-        validate_extlinux(conf.read_text(encoding="utf-8"))
+        board = get_string(dtb, "/", "compatible").split() if dtb.is_file() else ()
+        validate_extlinux(conf.read_text(encoding="utf-8"), archr_v20=ARCHR_COMPATIBLE in board)
     except ValueError as exc:
         rep.fail(str(exc))
     else:

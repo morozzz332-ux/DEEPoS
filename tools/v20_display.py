@@ -1,8 +1,10 @@
 """Check the display pipeline used by the R36S-V20 boot profile."""
 
+import re
 import subprocess
 
 PANEL = "/dsi@ff450000/panel@0"
+ARCHR_COMPATIBLE = "gameconsole,eeclone"
 
 
 def get_string(dtb, node, prop):
@@ -15,7 +17,7 @@ def get_string(dtb, node, prop):
 
 def display_checks(dtb, kernel):
     board = get_string(dtb, "/", "compatible").split()
-    yield (bool({"deepos,r36s-v20", "gameconsole,eeclone"}.intersection(board)),
+    yield (bool({"deepos,r36s-v20", ARCHR_COMPATIBLE}.intersection(board)),
            "dtb carries compatible deepos,r36s-v20 or gameconsole,eeclone")
     for name, node in (("VOP", "/vop@ff460000"), ("DSI", "/dsi@ff450000"),
                        ("subsystem", "/display-subsystem")):
@@ -25,3 +27,9 @@ def display_checks(dtb, kernel):
     image = kernel.read_bytes() if kernel.is_file() else b""
     yield (any(value.encode() + b"\0" in image for value in compatibles),
            "kernel supports the DTB panel compatible")
+    if ARCHR_COMPATIBLE in board:
+        description = get_string(dtb, PANEL, "panel_description")
+        modes = re.findall(
+            r"\bM clock=\d+ horizontal=(\d+),\d+,\d+,\d+ "
+            r"vertical=(\d+),\d+,\d+,\d+ default=1(?=\s|$)", description)
+        yield modes == [("640", "480")], "Arch-R V20 panel defaults to 640x480"

@@ -6,8 +6,10 @@ before invoking this writer. Keep the raw handle open and defer both GPT copies
 until the payload is complete so Windows cannot mount a writable volume.
 """
 import argparse
+from contextlib import contextmanager
 import ctypes
 from ctypes import wintypes
+import gzip
 import hashlib
 import json
 import math
@@ -18,6 +20,7 @@ import struct
 import subprocess
 import sys
 import time
+import zlib
 
 MIB = 1024 * 1024
 SECTOR = 512
@@ -65,6 +68,25 @@ def _image_stream(path):
         close(handle)
         raise
     return os.fdopen(fd, "rb")
+
+
+@contextmanager
+def _image_data(path):
+    with _image_stream(path) as source:
+        if pathlib.Path(path).suffix.lower() == ".gz":
+            with gzip.GzipFile(fileobj=source, mode="rb") as decoded:
+                yield decoded
+        else:
+            yield source
+
+
+def _scan_image(source):
+    size = 0
+    digest = hashlib.sha256()
+    for chunk in iter(lambda: source.read(4 * MIB), b""):
+        size += len(chunk)
+        digest.update(chunk)
+    return size, digest.hexdigest()
 
 
 def _windows_disk(number):
@@ -277,8 +299,12 @@ def flash(image_path, target_path, dry_run=False, defer_table=True, expected_sha
             raise SystemExit("dpflash: raw Windows flashing requires deferred GPT and no expansion")
         verify = True
 
-    with _image_stream(image_path) as src:
-        image_size = os.fstat(src.fileno()).st_size
+    with _image_data(image_path) as src:
+        if isinstance(src, gzip.GzipFile):
+            image_size, digest = _scan_image(src)
+        else:
+            image_size = os.fstat(src.fileno()).st_size
+            digest = None
         card_size = disk_size if raw and disk_size else target_size(path)
         if card_size < image_size:
             raise SystemExit(f"dpflash: target is {card_size} B, image needs {image_size} B")
@@ -287,7 +313,8 @@ def flash(image_path, target_path, dry_run=False, defer_table=True, expected_sha
         if raw and (image_size % SECTOR or card_size % SECTOR):
             raise SystemExit("dpflash: image and card sizes must be multiples of 512 bytes")
 
-        digest = _hash_range(src, 0, image_size, phase="hash image")
+        if digest is None:
+            digest = _hash_range(src, 0, image_size, phase="hash image")
         print(f"image   {image_path} ({image_size} B)")
         print(f"target  {target_path} ({card_size} B)")
         print(f"sha256  {digest}")
@@ -432,10 +459,12 @@ def list_disks(stream=sys.stdout):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Flash a DEEPoS image to a card")
-    parser.add_argument("--image", default=None)
+    parser.add_argument("--image", default=None, help="raw image or gzip-compressed raw image")
     parser.add_argument("--target", default=None,
                         help="\\\\.\\\\PhysicalDriveN on Windows, any file path for tests")
     parser.add_argument("--list", action="store_true", help="list candidate disks and exit")
+    parser.add_argument("--inspect-image", action="store_true",
+                        help="read the image and print its decoded size and SHA-256")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--no-defer-table", action="store_true",
                         help="write the table first (files/testing only)")
@@ -452,14 +481,21 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.list:
         return list_disks()
-    if not args.image or not args.target:
-        parser.error("--image and --target are required unless --list is used")
+    if not args.image or (not args.inspect_image and not args.target):
+        parser.error("use --image with --target or --inspect-image")
     try:
+        if args.inspect_image:
+            with _image_data(args.image) as source:
+                size, digest = _scan_image(source)
+            if args.expect_sha256 and digest != args.expect_sha256.lower():
+                raise ValueError("image sha256 does not match --expect-sha256")
+            print(size, digest)
+            return 0
         return flash(args.image, args.target, dry_run=args.dry_run,
                      defer_table=not args.no_defer_table, expected_sha=args.expect_sha256,
                      resume=args.resume, verify=args.verify, expand=args.expand,
                      disk_path=args.disk_path, disk_size=args.disk_size, disk_serial=args.disk_serial)
-    except (OSError, ValueError) as exc:
+    except (OSError, EOFError, ValueError, zlib.error) as exc:
         print(f"dpflash: {exc}", file=sys.stderr)
         return 1
 

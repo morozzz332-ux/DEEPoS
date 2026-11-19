@@ -10,14 +10,27 @@ try {
     $image = Join-Path $tmp 'verified card.img'
     [IO.File]::WriteAllBytes($image, [byte[]]::new(34816))
     $sha = (Get-FileHash -LiteralPath $image).Hash
+    $packed = $image + '.gz'
+    & $interpreter -c 'import gzip, pathlib, sys; pathlib.Path(sys.argv[2]).write_bytes(gzip.compress(pathlib.Path(sys.argv[1]).read_bytes()))' $image $packed
+    if ($LASTEXITCODE -ne 0) { throw 'Could not prepare the compressed image fixture' }
     $log = Join-Path $tmp 'build\flash.log'
     $env:DEEPOS_TEST_FLASH_MARKER = Join-Path $tmp 'python-called'
     @"
+import gzip
+import hashlib
 import os
 import pathlib
 import sys
 import time
 
+if "--inspect-image" in sys.argv:
+    image = pathlib.Path(sys.argv[sys.argv.index("--image") + 1])
+    data = gzip.decompress(image.read_bytes())
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != sys.argv[sys.argv.index("--expect-sha256") + 1].lower():
+        sys.exit(1)
+    print(len(data), digest)
+    sys.exit(0)
 assert "--verify" in sys.argv and "--expand" not in sys.argv
 assert "--resume" not in sys.argv and r"\\.\PhysicalDrive2" in sys.argv
 pathlib.Path(os.environ["DEEPOS_TEST_FLASH_MARKER"]).write_text("started")
@@ -48,6 +61,7 @@ sys.exit(23)
         }
         if ($script:case -eq 'already-empty') { $p.NumberOfPartitions = 0 }
         if ($script:case -eq 'small') { $p.Size = 512 }
+        if ($script:case -eq 'new-card') { $p.Size = 31104958464 }
         if ($script:case -eq 'sector') { $p.LogicalSectorSize = 4096 }
         if ($script:case -eq 'system') { $p.IsSystem = $true }
         $p
@@ -58,7 +72,7 @@ sys.exit(23)
         param($InputObject, [switch]$RemoveData, [switch]$RemoveOEM)
         $script:clears++
         try {
-            $writer = [IO.File]::Open($image, [IO.FileMode]::Open, [IO.FileAccess]::Write)
+            $writer = [IO.File]::Open($runImage, [IO.FileMode]::Open, [IO.FileAccess]::Write)
             $writer.Dispose()
             $script:sourceUnlocked = $true
         } catch [IO.IOException] {}
@@ -67,19 +81,20 @@ sys.exit(23)
     function Update-HostStorageCache { [CmdletBinding()] param() }
     function Start-Sleep { param([int]$Seconds) }
 
-    foreach ($script:case in 'sha', 'small', 'sector', 'system', 'ambiguous', 'clear-error', 'old-layout', 'python-error', 'empty-gpt', 'already-empty') {
+    foreach ($script:case in 'sha', 'small', 'sector', 'system', 'ambiguous', 'clear-error', 'old-layout', 'python-error', 'empty-gpt', 'already-empty', 'new-card', 'gzip', 'gzip-bad-sha') {
         $script:clears = 0
         $script:sourceUnlocked = $false
         Remove-Item -LiteralPath $env:DEEPOS_TEST_FLASH_MARKER -ErrorAction SilentlyContinue
         $expectedSha = $sha
-        if ($script:case -eq 'sha') { $expectedSha = '0' * 64 }
-        $code = Invoke-DeepOSFlash -Image $image -Sha256 $expectedSha -Python $interpreter -Fresh
+        if ($script:case -in @('sha', 'gzip-bad-sha')) { $expectedSha = '0' * 64 }
+        $runImage = if ($script:case -in @('gzip', 'gzip-bad-sha')) { $packed } else { $image }
+        $code = Invoke-DeepOSFlash -Image $runImage -Sha256 $expectedSha -Python $interpreter -Fresh
         $wrote = Test-Path -LiteralPath $env:DEEPOS_TEST_FLASH_MARKER
-        if ($script:case -in @('clear-error', 'old-layout', 'python-error', 'empty-gpt')) { $expectedClears = 1 }
+        if ($script:case -in @('clear-error', 'old-layout', 'python-error', 'empty-gpt', 'new-card', 'gzip')) { $expectedClears = 1 }
         else { $expectedClears = 0 }
         if ($script:clears -ne $expectedClears) { throw "Wrong number of clear calls for $($script:case)" }
         if ($script:sourceUnlocked) { throw 'Source allowed writes after verification' }
-        if ($script:case -in @('python-error', 'empty-gpt', 'already-empty')) {
+        if ($script:case -in @('python-error', 'empty-gpt', 'already-empty', 'new-card', 'gzip')) {
             if ($code -ne 23 -or -not $wrote) { throw "Expected child error 23, got $code" }
             $lines = Get-Content -LiteralPath $log
             if (($lines -match 'simulated failure').Count -ne 1 -or ($lines -match 'DONE').Count) {

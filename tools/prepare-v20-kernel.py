@@ -17,6 +17,7 @@ BOOT_START = 16 * 1024 * 1024
 BOOT_SIZE = 256 * 1024 * 1024
 ARCHR_DTB = "rk3326-gameconsole-eeclone.dtb"
 BOARD_DTB = "rk3326-r36s-v20.dtb"
+JOYPAD_MODULE = "archr-singleadc-joypad.ko"
 
 
 def extract_boot(image, destination):
@@ -39,7 +40,24 @@ def extract_boot(image, destination):
                 remaining -= len(chunk)
 
 
-def prepare(image, overlay, out):
+def prepare_joypad(module, release, out):
+    blob = module.read_bytes()
+    if len(blob) < 64 or blob[:6] != b"\x7fELF\x02\x01" or struct.unpack_from("<H", blob, 18)[0] != 183:
+        raise ValueError("expected an uncompressed AArch64 joypad module")
+    fields = blob.split(b"\0")
+    if not any(entry.startswith(b"alias=of:") and b"Carchr-singleadc-joypad" in entry
+               for entry in fields):
+        raise ValueError("module does not match the Arch-R V20 joypad compatible")
+    if not any(entry.startswith(b"vermagic=" + release.encode("ascii") + b" ") for entry in fields):
+        raise ValueError(f"joypad module vermagic does not match Linux {release}")
+    if b"depends=" not in fields:
+        raise ValueError("the Arch-R V20 joypad module must load without dependencies")
+    target = out / "lib/modules" / release / JOYPAD_MODULE
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(blob)
+
+
+def prepare(image, overlay, out, joypad=None):
     with tempfile.TemporaryDirectory(prefix="deepos-v20-") as temp:
         temp = pathlib.Path(temp)
         fat = temp / "archr-boot.fat"
@@ -63,6 +81,8 @@ def prepare(image, overlay, out):
             if not ok:
                 raise ValueError(name)
         banner = blob.split(b"Linux version ", 1)[1].split(b" ", 1)[0].decode("ascii")
+        if joypad is not None:
+            prepare_joypad(joypad, banner, out)
         out.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(kernel, out / "Image")
         shutil.copyfile(dtb, out / BOARD_DTB)
@@ -73,10 +93,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--archr-image", type=pathlib.Path, required=True)
     parser.add_argument("--panel-overlay", type=pathlib.Path, required=True)
+    parser.add_argument("--joypad-module", type=pathlib.Path)
     parser.add_argument("--out", type=pathlib.Path, required=True)
     args = parser.parse_args()
     try:
-        version, digest = prepare(args.archr_image, args.panel_overlay, args.out)
+        version, digest = prepare(args.archr_image, args.panel_overlay, args.out, args.joypad_module)
     except (OSError, EOFError, ValueError, subprocess.CalledProcessError) as exc:
         parser.exit(1, f"prepare-v20-kernel: {exc}\n")
     print(f"Arch-R Linux {version} prepared (kernel sha256={digest})")

@@ -31,6 +31,11 @@
 #define BTN_WEST 0x134
 #define BTN_TL 0x136
 #define BTN_TR 0x137
+#define BTN_SELECT 0x13a
+#define BTN_DPAD_UP 0x220
+#define BTN_DPAD_DOWN 0x221
+#define BTN_DPAD_LEFT 0x222
+#define BTN_DPAD_RIGHT 0x223
 
 #define EVIOCGNAME(len) _IOC(_IOC_READ, 'E', 0x06, len)
 
@@ -73,35 +78,43 @@ enum dp_key dp_key_from_name(const char *name)
     return DP_KEY_NONE;
 }
 
+enum pad_priority { PAD_OTHER = 1, PAD_CONSOLE, PAD_V20 };
+
 static int looks_like_pad(int fd)
 {
     char name[128] = {0};
     if (ioctl(fd, (int)EVIOCGNAME(sizeof(name) - 1), name) < 0)
         return 0;
+    if (strcasecmp(name, "r36s_Gamepad") == 0)
+        return PAD_V20;
     if (strcasestr(name, "r36s") || strcasestr(name, "deepos") ||
         strcasestr(name, "gamepad") || strcasestr(name, "gpio-keys"))
-        return 2;
-    return 1;
+        return PAD_CONSOLE;
+    return PAD_OTHER;
 }
 
-static enum dp_key map_code(unsigned int code)
+static enum dp_key map_code(unsigned int code, int swap_ab)
 {
     switch (code) {
     case BTN_SOUTH:
-        return DP_KEY_A;
+        return swap_ab ? DP_KEY_B : DP_KEY_A;
     case BTN_EAST:
-        return DP_KEY_B;
+        return swap_ab ? DP_KEY_A : DP_KEY_B;
     case BTN_NORTH:
         return DP_KEY_X;
     case BTN_WEST:
         return DP_KEY_Y;
     case KEY_UP:
+    case BTN_DPAD_UP:
         return DP_KEY_UP;
     case KEY_DOWN:
+    case BTN_DPAD_DOWN:
         return DP_KEY_DOWN;
     case KEY_LEFT:
+    case BTN_DPAD_LEFT:
         return DP_KEY_LEFT;
     case KEY_RIGHT:
+    case BTN_DPAD_RIGHT:
         return DP_KEY_RIGHT;
     case KEY_ENTER:
         return DP_KEY_A;
@@ -112,6 +125,7 @@ static enum dp_key map_code(unsigned int code)
     case BTN_TR:
         return DP_KEY_R1;
     case KEY_SELECT:
+    case BTN_SELECT:
         return DP_KEY_SELECT;
     case KEY_START:
         return DP_KEY_START;
@@ -124,6 +138,7 @@ int dp_input_open(struct dp_input *in)
 {
     in->fd = -1;
     in->ready = 0;
+    in->swap_ab = 0;
     int best = -1, best_score = 0;
     for (int i = 0; i < 32; i++) {
         char path[64];
@@ -137,7 +152,7 @@ int dp_input_open(struct dp_input *in)
                 close(best);
             best = fd;
             best_score = score;
-            if (score == 2)
+            if (score == PAD_V20)
                 break;
         } else {
             close(fd);
@@ -146,6 +161,7 @@ int dp_input_open(struct dp_input *in)
     if (best >= 0) {
         in->fd = best;
         in->ready = 1;
+        in->swap_ab = best_score == PAD_V20;
         return 0;
     }
     return -1;
@@ -171,7 +187,7 @@ enum dp_key dp_input_poll(struct dp_input *in, int timeout_ms)
             return DP_KEY_NONE;
         if (ev.type != EV_KEY || ev.value != 1)
             continue;
-        enum dp_key k = map_code(ev.code);
+        enum dp_key k = map_code(ev.code, in->swap_ab);
         if (k != DP_KEY_NONE)
             return k;
     }

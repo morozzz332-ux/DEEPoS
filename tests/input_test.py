@@ -53,7 +53,16 @@ def main():
         return 1
 
     with tempfile.TemporaryDirectory() as tmp:
-        roms, data = make_library(pathlib.Path(tmp))
+        tmp = pathlib.Path(tmp)
+        source = ROOT / "apps/launcher/src"
+        helper = tmp / "input-evdev"
+        subprocess.run(["cc", "-std=c11", "-D_GNU_SOURCE", "-I", str(source),
+                        str(source / "dp_input.c"), str(ROOT / "tests/fixtures/input_evdev.c"),
+                        "-Wl,--wrap=open,--wrap=ioctl", "-o", str(helper)], check=True)
+        evdev = subprocess.run([str(helper)], capture_output=True, text=True)
+        check("evdev accepts the V20 D-pad and physical A/B layout", evdev.returncode == 0,
+              evdev.stderr.strip())
+        roms, data = make_library(tmp)
 
         p, out = state(roms, data)
         check("default state is the continue list", out == "screen=continue level=0 sel=0 system=0", out)

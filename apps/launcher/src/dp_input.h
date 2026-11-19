@@ -27,6 +27,7 @@ enum dp_key {
 struct dp_input {
     int fd;
     int ready;
+    int swap_ab;
 };
 
 /* Open the first input device that looks like the console's keypad. */

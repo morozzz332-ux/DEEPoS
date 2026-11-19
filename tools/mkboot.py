@@ -43,7 +43,7 @@ def sha256_file(path):
     return h.hexdigest()
 
 
-def validate_extlinux(text):
+def validate_extlinux(text, *, archr_v20=False):
     lines = [line.split(None, 1) for raw in text.splitlines()
              if (line := raw.strip()) and not line.startswith("#")]
     for command, value in (("LABEL", "DEEPoS"), ("LINUX", "/KERNEL"),
@@ -62,6 +62,15 @@ def validate_extlinux(text):
                 "console=tty0"}
     if missing := required.difference(args):
         raise ValueError("extlinux.conf is missing: " + ", ".join(sorted(missing)))
+
+    if archr_v20:
+        directives = [line[0] for line in lines]
+        if directives.count("FDT") != 1 or {"FDTDIR", "FDTOVERLAYS", "INITRD"}.intersection(directives):
+            raise ValueError("Arch-R V20 requires one explicit FDT with the panel overlay merged")
+        rdinit = [arg for arg in args if arg.startswith("rdinit=")]
+        init = [arg for arg in args if arg.startswith("init=")]
+        if rdinit != ["rdinit=/__deepos_mount_root__"] or init != ["init=/sbin/init"]:
+            raise ValueError("Arch-R V20 needs rdinit=/__deepos_mount_root__ init=/sbin/init")
 
 
 def valid_boot_script(blob):

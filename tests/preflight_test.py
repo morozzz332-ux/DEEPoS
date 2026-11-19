@@ -86,6 +86,53 @@ def run_preflight(base: Path) -> subprocess.CompletedProcess:
         capture_output=True, text=True)
 
 
+def test_archr_v20(paths: dict[str, Path]) -> bool:
+    dtb = paths["dtb"]
+    kernel = paths["kernel"]
+    boot = paths["boot"]
+    conf = boot / "extlinux/extlinux.conf"
+    archr_conf = (ROOT / "board/r36s-v20/boot/extlinux/archr-v20.conf").read_text()
+
+    def dt_set(node, prop, value):
+        subprocess.run(["fdtput", "-t", "s", str(dtb), node, prop, value], check=True)
+        shutil.copyfile(dtb, boot / "dtbs/rk3326-r36s-v20.dtb")
+
+    dt_set("/", "compatible", "gameconsole,eeclone")
+    panel = "/dsi@ff450000/panel@0"
+    dt_set(panel, "compatible", "archr,generic-dsi")
+    working_mode = "M clock=30000 horizontal=640,150,50,150 vertical=480,20,6,12 default=1"
+    dt_set(panel, "panel_description", working_mode)
+    with kernel.open("r+b") as fh:
+        fh.write(b"archr,generic-dsi\0")
+    shutil.copyfile(kernel, boot / "KERNEL")
+    manifest = boot / "MANIFEST.json"
+    data = json.loads(manifest.read_text())
+    data["files"]["KERNEL"] = sha256(kernel)
+    manifest.write_text(json.dumps(data))
+
+    conf.write_text(archr_conf)
+    result = run_preflight(paths["base"])
+    ok = result.returncode == 0
+    if not ok:
+        print("FAIL  preflight: rejected the working Arch-R V20 profile")
+        print(result.stdout, result.stderr)
+
+    wrong_mode = "M clock=50000 horizontal=720,140,80,140 vertical=720,20,4,20 default=1"
+    dt_set(panel, "panel_description", wrong_mode)
+    result = run_preflight(paths["base"])
+    if result.returncode == 0 or "640x480" not in result.stdout:
+        print("FAIL  preflight: accepted the bare Arch-R 720x720 panel")
+        ok = False
+    dt_set(panel, "panel_description", working_mode)
+
+    conf.write_text(archr_conf.replace(" rdinit=/__deepos_mount_root__", ""))
+    result = run_preflight(paths["base"])
+    if result.returncode == 0 or "rdinit" not in result.stdout:
+        print("FAIL  preflight: accepted Arch-R embedded /init as PID 1")
+        ok = False
+    return ok
+
+
 def main() -> int:
     if not PREFLIGHT.is_file():
         print("FAIL  preflight: tool missing")
@@ -123,6 +170,10 @@ def main() -> int:
         set_prop(original)
         if res.returncode == 0 or reason not in res.stdout:
             print(f"FAIL  preflight: accepted broken display pipeline ({reason})")
+            ok = False
+
+    with tempfile.TemporaryDirectory(prefix="preflight-archr-") as archr_tmp:
+        if not test_archr_v20(make_tree(Path(archr_tmp))):
             ok = False
 
     # the classic mistake: extlinux points at a dtb that is not in BOOT

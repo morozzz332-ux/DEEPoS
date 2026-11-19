@@ -60,6 +60,10 @@ is_mounted /run || mount -t tmpfs tmpfs /run     -o mode=0755,nosuid,nodev 2>/de
     echo "DEEPoS: cannot mount /run" >&2
 
 # 2. Device nodes for early accesses (devtmpfs covers most, mdev -s the rest).
+joypad="/lib/modules/$(uname -r)/archr-singleadc-joypad.ko"
+if [ -r "$joypad" ] && ! insmod "$joypad"; then
+    echo "DEEPoS: cannot load the Arch-R V20 joypad driver" >&2
+fi
 [ -x /sbin/mdev ] && mdev -s 2>/dev/null || true
 
 # 3. Partitions. Layout (see board/r36s-v20/layout.json):
