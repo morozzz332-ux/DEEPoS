@@ -171,7 +171,7 @@ def _device_ioctl(handle, code, size):
         raise OSError(f"prepare: ioctl={code:#x} win32={ctypes.get_last_error()}")
     if got.value < 8:
         raise OSError(f"prepare: short response for ioctl={code:#x}")
-    return buf
+    return buf.raw[:got.value]
 
 
 def _refresh_windows_disk(path):
@@ -192,8 +192,18 @@ def _require_blank_disk(handle, disk_size):
         raise OSError("prepare: raw handle capacity differs from the selected disk")
     layout = _device_ioctl(handle, 0x70050, 4096)  # IOCTL_DISK_GET_DRIVE_LAYOUT_EX
     style, count = struct.unpack_from("<II", layout)
-    if count != 0 or style not in (0, 1, 2):
-        raise OSError(f"prepare: expected a blank raw disk, layout={style} partitions={count}")
+    if count == 0 and style in (0, 1, 2):
+        return
+    # Windows may enumerate the four empty MBR slots after Clear-Disk.
+    # DRIVE_LAYOUT_INFORMATION_EX places the 144-byte entries at offset 48.
+    entries = range(48, 48 + 4 * 144, 144)
+    if (style == 0 and count == 4 and len(layout) >= 48 + 4 * 144
+            and all(not any(layout[off:off + 28]) and layout[off + 32] == 0
+                    for off in entries)):
+        mbr = read_at(handle, 0, SECTOR, "prepare MBR")
+        if not any(mbr[446:510]):
+            return
+    raise OSError(f"prepare: expected a blank raw disk, layout={style} partitions={count}")
 
 
 def _hash_range(handle, offset, size, prefix=b"", suffix=b"", phase="hash"):

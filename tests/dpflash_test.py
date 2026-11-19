@@ -1,6 +1,7 @@
 import hashlib
 import os
 import pathlib
+import struct
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -58,6 +59,26 @@ class FlashTest(unittest.TestCase):
         with self.card.open("rb") as handle:
             with self.assertRaisesRegex(OSError, "expected 1024"):
                 dpflash.read_at(handle, self.card.stat().st_size - 512, 1024)
+
+    def test_blank_mbr_with_four_unused_driver_entries(self):
+        size = 31104958464
+        layout = bytearray(48 + 4 * 144)
+        struct.pack_into("<II", layout, 0, 0, 4)
+        mbr = bytearray(512)
+        with patch.object(dpflash, "_device_ioctl", side_effect=[
+                struct.pack("<Q", size), layout]), patch.object(dpflash, "read_at", return_value=mbr):
+            dpflash._require_blank_disk(1, size)
+
+        mbr[450] = 0x0C
+        with patch.object(dpflash, "_device_ioctl", side_effect=[
+                struct.pack("<Q", size), layout]), patch.object(dpflash, "read_at", return_value=mbr):
+            with self.assertRaisesRegex(OSError, "expected a blank raw disk"):
+                dpflash._require_blank_disk(1, size)
+
+        struct.pack_into("<q", layout, 48 + 16, 1024)
+        with patch.object(dpflash, "_device_ioctl", side_effect=[struct.pack("<Q", size), layout]):
+            with self.assertRaisesRegex(OSError, "expected a blank raw disk"):
+                dpflash._require_blank_disk(1, size)
 
     @unittest.skipUnless(os.name == "nt", "requires Windows routing")
     def test_larger_windows_target_publishes_only_relocated_gpt(self):
