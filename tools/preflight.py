@@ -24,6 +24,7 @@ import subprocess
 
 from loader_donor import donor_region
 from mkboot import BOOT_SCRIPT, valid_boot_script, validate_extlinux
+from v20_display import display_checks
 import sys
 from pathlib import Path
 
@@ -89,9 +90,8 @@ def boot_checks(rep: Report, boot: Path, kernel: Path, dtb: Path, *, require_scr
 
     rep.check(dtb.is_file(), f"device tree present: {dtb}")
     if dtb.is_file():
-        blob = dtb.read_bytes()
-        rep.check(b"deepos,r36s-v20" in blob, "dtb carries compatible deepos,r36s-v20")
-        rep.check(b"sitronix,st7703" in blob, "dtb carries the ST7703 panel")
+        for ok, name in display_checks(dtb, kernel):
+            rep.check(ok, name)
 
     conf = boot / "extlinux" / "extlinux.conf"
     if not rep.check(conf.is_file(), f"extlinux.conf present: {conf}"):
@@ -117,6 +117,8 @@ def boot_checks(rep: Report, boot: Path, kernel: Path, dtb: Path, *, require_scr
         if rep.check(named.is_file(), f"fdt file exists: {named.name}"):
             rep.check(named.name == dtb.name,
                       f"fdt name matches built dtb ({dtb.name})")
+            if dtb.is_file():
+                rep.check(sha256(named) == sha256(dtb), "BOOT DTB sha256 matches built DTB")
 
     kboot = boot / "KERNEL"
     if rep.check(kboot.is_file(), "BOOT/KERNEL exists"):

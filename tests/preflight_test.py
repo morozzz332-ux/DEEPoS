@@ -26,11 +26,24 @@ def make_tree(base: Path) -> dict[str, Path]:
     kernel = base / "build/kernel/Image"
     kernel.parent.mkdir(parents=True)
     with kernel.open("wb") as fh:
-        fh.write(b"\x00" * (11 * 1024 * 1024))
+        fh.write(b"sitronix,st7703\0" + b"\x00" * (11 * 1024 * 1024))
 
     dtb = base / "build/kernel/rk3326-r36s-v20.dtb"
-    dtb.write_bytes(b"\xd0\x0d\xfe\xed" + b"deepos,r36s-v20\x00sitronix,st7703\x00" + b"\x00" * 64)
-
+    dts = base / "test.dts"
+    dts.write_text("""
+/dts-v1/;
+/ {
+    compatible = "deepos,r36s-v20";
+    display-subsystem { status = "okay"; };
+    vop@ff460000 { status = "okay"; };
+    dsi@ff450000 {
+        status = "okay";
+        panel@0 { compatible = "sitronix,st7703"; };
+    };
+};
+""", encoding="utf-8")
+    subprocess.run(["dtc", "-q", "-I", "dts", "-O", "dtb", "-o", str(dtb),
+                    str(dts)], check=True)
     boot = base / "build/boot"
     (boot / "extlinux").mkdir(parents=True)
     (boot / "dtbs").mkdir(parents=True)
@@ -94,6 +107,22 @@ def main() -> int:
                    "rcS is executable"):
         if needle not in res.stdout:
             print(f"FAIL  preflight: missing check {needle!r}")
+            ok = False
+
+    for node, prop, replacement, original, reason in (
+        ("/vop@ff460000", "status", "disabled", "okay", "display VOP is enabled"),
+        ("/dsi@ff450000/panel@0", "compatible", "unmatched,panel", "sitronix,st7703",
+         "kernel supports the DTB panel"),
+    ):
+        def set_prop(value):
+            subprocess.run(["fdtput", "-t", "s", str(paths["dtb"]), node, prop,
+                            value], check=True)
+            shutil.copyfile(paths["dtb"], paths["boot"] / "dtbs/rk3326-r36s-v20.dtb")
+        set_prop(replacement)
+        res = run_preflight(tmp)
+        set_prop(original)
+        if res.returncode == 0 or reason not in res.stdout:
+            print(f"FAIL  preflight: accepted broken display pipeline ({reason})")
             ok = False
 
     # the classic mistake: extlinux points at a dtb that is not in BOOT

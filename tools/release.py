@@ -106,8 +106,8 @@ def collect(args):
         "Проверки перед записью:",
         "",
         "```sh",
-        f"python3 tools/preflight.py --root . --boot {args.boot} --rootfs {args.rootfs} "
-        f"--image {args.image} {loader_args}",
+        f"python3 tools/preflight.py --root . --kernel {args.kernel} --dtb {args.dtb} "
+        f"--boot {args.boot} --rootfs {args.rootfs} --image {args.image} {loader_args}",
         f"python3 tools/verify-image.py {loader_args} {args.image}",
         "python3 tools/dpflash.py --list          # номер карты, не гадать",
         "```",
