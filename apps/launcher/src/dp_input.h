@@ -7,6 +7,8 @@
 #ifndef DP_INPUT_H
 #define DP_INPUT_H
 
+#define DP_INPUT_NAME 64
+
 enum dp_key {
     DP_KEY_NONE = 0,
     DP_KEY_UP,
@@ -19,6 +21,8 @@ enum dp_key {
     DP_KEY_Y,
     DP_KEY_L1,
     DP_KEY_R1,
+    DP_KEY_L2,
+    DP_KEY_R2,
     DP_KEY_SELECT,
     DP_KEY_START,
     DP_KEY_QUIT
@@ -26,16 +30,27 @@ enum dp_key {
 
 struct dp_input {
     int fd;
-    int ready;
-    int swap_ab;
+    int ready;      /* 1 while the device is open and has not disappeared */
+    int swap_ab;    /* legacy vendor DTB labels the face buttons the other way */
+    int lost;       /* 1 after the device disappeared (POLLERR/POLLHUP) */
+    char name[DP_INPUT_NAME];
+    /* CLOCK_REALTIME stamp of the last delivered key, microseconds. The
+     * launcher subtracts its own clock to measure input-to-present latency. */
+    unsigned long long last_us;
 };
 
-/* Open the first input device that looks like the console's keypad. */
+/* Open the input device with the best gamepad score (capabilities, not just
+ * the name). Returns 0 on success. */
 int dp_input_open(struct dp_input *in);
 void dp_input_close(struct dp_input *in);
 
-/* Block up to timeout_ms; returns DP_KEY_NONE on timeout. */
+/* Block up to timeout_ms; returns DP_KEY_NONE on timeout.
+ *
+ * Kernel autorepeat (value 2) is accepted for the four directions only, so
+ * holding the D-pad scrolls a list but holding A never fires twice. */
 enum dp_key dp_input_poll(struct dp_input *in, int timeout_ms);
+
+const char *dp_input_name(const struct dp_input *in);
 
 /* Parse a textual key name ("UP", "down", "A", "SEL", "START", "QUIT"). */
 enum dp_key dp_key_from_name(const char *name);

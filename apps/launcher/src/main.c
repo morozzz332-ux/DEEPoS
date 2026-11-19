@@ -1,9 +1,13 @@
-/* DEEPoS launcher - prototype entry point (renders one screen to a PPM file). */
+/* DEEPoS launcher - entry point: screen rendering, navigation, game launch. */
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <sys/stat.h>
+#include <sys/statvfs.h>
+#include <sys/utsname.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,9 +55,10 @@ struct dp_nav {
     int system;
     int launch;     /* set when the user asked to start a game */
     char lsys[32];
-    char lrom[64];
+    char lrom[DP_ROM_NAME];
     int lslot;
     int settings_edit; /* card index + 1, applied after the key */
+    char notice[64];   /* one-shot message drawn above the hint bar */
 };
 
 static int tab_screen(const struct dp_nav *nav)
@@ -100,14 +105,14 @@ static int row_count(const struct dp_model *m, const struct dp_nav *nav)
         return m->ncont;
     if (scr == DP_SCR_SYSTEMS)
         return m->nsys;
-    if (scr == DP_SCR_GAMES && nav->system < m->nsys)
-        return (int)m->systems[nav->system].games;
+    if (scr == DP_SCR_GAMES)
+        return m->nroms;
     if (scr == DP_SCR_SETTINGS)
         return 12;
     if (scr == DP_SCR_MODULES)
-        return 5;
+        return m->nmods;
     if (scr == DP_SCR_FILES)
-        return 6;
+        return 3;
     return 0;
 }
 
@@ -159,7 +164,8 @@ static int settings_edit_card(struct dp_model *m, int card, const char *config_p
 
     char profile_path[512];
     snprintf(profile_path, sizeof(profile_path), "%s/cpu-profile", data_dir);
-    dp_config_save(&cfg, config_path);
+    if (dp_config_save(&cfg, config_path) != 0)
+        return 0;
     dp_config_apply(&cfg, sysfs_prefix, profile_path);
     m->cfg_brightness = cfg.brightness;
     m->cfg_volume = cfg.volume;
@@ -167,43 +173,145 @@ static int settings_edit_card(struct dp_model *m, int card, const char *config_p
     return 1;
 }
 
+static int apply_selected_setting(struct dp_nav *nav, struct dp_model *m,
+                                  const char *config, const char *sysfs, const char *data)
+{
+    if (!nav->settings_edit)
+        return 0;
+    int changed = settings_edit_card(m, nav->settings_edit - 1, config, sysfs, data);
+    nav->settings_edit = 0;
+    return changed;
+}
+
 /* Returns 1 when the launcher should quit. */
-static int nav_key(struct dp_nav *nav, const struct dp_model *m, enum dp_key key)
+static void nav_notice(struct dp_nav *nav, const char *message)
+{
+    snprintf(nav->notice, sizeof(nav->notice), "%s", message ? message : "");
+}
+
+static void nav_tab(struct dp_nav *nav, int tab)
+{
+    nav->tab = (tab + TABS_COUNT) % TABS_COUNT;
+    nav->level = 0;
+    nav->sel = 0;
+}
+
+static void nav_launch(struct dp_nav *nav, const char *system, const char *rom, int slot)
+{
+    snprintf(nav->lsys, sizeof(nav->lsys), "%s", system);
+    snprintf(nav->lrom, sizeof(nav->lrom), "%s", rom);
+    nav->lslot = slot;
+    nav->launch = 1;
+}
+
+/* 2 = two-column systems grid, 3 = settings cards, 1 = plain list. */
+static int nav_grid_cols(int scr)
+{
+    if (scr == DP_SCR_SYSTEMS)
+        return 2;
+    if (scr == DP_SCR_SETTINGS)
+        return 3;
+    return 1;
+}
+
+static void nav_clamp(struct dp_nav *nav, struct dp_model *m)
+{
+    int rows = row_count(m, nav);
+    if (rows <= 0) {
+        nav->sel = 0;
+        return;
+    }
+    if (nav->sel < 0)
+        nav->sel = 0;
+    if (nav->sel >= rows)
+        nav->sel = rows - 1;
+}
+
+/* Left/right inside the games list walks the neighbouring system. */
+static void nav_switch_system(struct dp_nav *nav, struct dp_model *m, const char *roms, int dir)
+{
+    if (m->nsys <= 0)
+        return;
+    int sys = (nav->system + dir + m->nsys) % m->nsys;
+    if (dp_model_load_games(m, roms, sys) == 0) {
+        nav->system = sys;
+        nav->sel = 0;
+    }
+}
+
+static int nav_key(struct dp_nav *nav, struct dp_model *m, const char *roms, enum dp_key key)
 {
     int rows = row_count(m, nav);
     int scr = tab_screen(nav);
+    int cols = nav_grid_cols(scr);
+
     switch (key) {
     case DP_KEY_QUIT:
         return 1;
+    case DP_KEY_L1:
+    case DP_KEY_L2:
+        nav_tab(nav, nav->tab - 1);
+        break;
+    case DP_KEY_R1:
+    case DP_KEY_R2:
+        nav_tab(nav, nav->tab + 1);
+        break;
     case DP_KEY_LEFT:
-        if (!(scr == DP_SCR_GAMES))
-            nav->tab = (nav->tab + TABS_COUNT - 1) % TABS_COUNT;
+    case DP_KEY_RIGHT: {
+        int dir = key == DP_KEY_RIGHT ? 1 : -1;
+        if (scr == DP_SCR_GAMES) {
+            nav_switch_system(nav, m, roms, dir);
+        } else if (cols > 1) {
+            int next = nav->sel + dir;
+            if (next >= 0 && next < rows && next / cols == nav->sel / cols)
+                nav->sel = next;
+        } else {
+            nav_tab(nav, nav->tab + dir);
+        }
         break;
-    case DP_KEY_RIGHT:
-        if (!(scr == DP_SCR_GAMES))
-            nav->tab = (nav->tab + 1) % TABS_COUNT;
-        break;
+    }
     case DP_KEY_UP:
-        nav->sel = nav->sel > 0 ? nav->sel - 1 : 0;
+    case DP_KEY_DOWN: {
+        int dir = key == DP_KEY_DOWN ? 1 : -1;
+        if (cols > 1) {
+            int next = nav->sel + dir * cols;
+            if (next >= 0 && next < rows)
+                nav->sel = next;
+        } else if (rows > 0) {
+            int next = nav->sel + dir;
+            if (next < 0)
+                next = 0;
+            if (next >= rows)
+                next = rows - 1;
+            nav->sel = next;
+        }
         break;
-    case DP_KEY_DOWN:
-        if (rows > 0 && nav->sel + 1 < rows)
-            nav->sel++;
-        break;
+    }
     case DP_KEY_A:
+    case DP_KEY_START:
+    case DP_KEY_X:
+        if (key == DP_KEY_X && scr != DP_SCR_CONTINUE)
+            break;
         if (scr == DP_SCR_SYSTEMS && m->nsys > 0) {
             nav->system = nav->sel < m->nsys ? nav->sel : 0;
+            dp_model_load_games(m, roms, nav->system);
             nav->level = 1;
             nav->sel = 0;
-        } else if (scr == DP_SCR_SETTINGS && nav->sel < 12) {
-            nav->settings_edit = nav->sel + 1;
-        } else if (scr == DP_SCR_CONTINUE && nav->sel < m->ncont) {
-            const struct dp_continue_item *it = &m->cont[nav->sel];
-            if (it->rom[0]) {
-                snprintf(nav->lsys, sizeof(nav->lsys), "%s", it->sys_id);
-                snprintf(nav->lrom, sizeof(nav->lrom), "%s", it->rom);
-                nav->lslot = it->slot;
-                nav->launch = 1;
+        } else if (scr == DP_SCR_SETTINGS) {
+            if (nav->sel == 2 || nav->sel == 3 || nav->sel == 5)
+                nav->settings_edit = nav->sel + 1;
+            else if (key != DP_KEY_X)
+                nav_notice(nav, "Этот параметр только для чтения");
+        } else if (scr == DP_SCR_GAMES && nav->sel < m->nroms &&
+                   nav->system >= 0 && nav->system < m->nsys) {
+            nav_launch(nav, m->systems[nav->system].id, m->rom_names[nav->sel], -1);
+        } else if (scr == DP_SCR_CONTINUE) {
+            if (m->ncont == 0 && key != DP_KEY_X) {
+                nav_tab(nav, 1);
+            } else if (nav->sel < m->ncont) {
+                const struct dp_continue_item *it = &m->cont[nav->sel];
+                if (it->sys_id[0] && it->rom[0])
+                    nav_launch(nav, it->sys_id, it->rom, key == DP_KEY_X ? -1 : it->slot);
             }
         }
         break;
@@ -211,11 +319,14 @@ static int nav_key(struct dp_nav *nav, const struct dp_model *m, enum dp_key key
         if (nav->level == 1) {
             nav->level = 0;
             nav->sel = nav->system;
+        } else if (nav->tab != 0) {
+            nav_tab(nav, 0);
         }
         break;
     default:
         break;
     }
+    nav_clamp(nav, m);
     return 0;
 }
 
@@ -298,33 +409,42 @@ static void replace_tag(const char *in, const char *tag, const char *value, char
         snprintf(out, n, "%s", in);
         return;
     }
+    const char *tail = at + strlen(tag);
+    if (at > in && (at[-1] == '\'' || at[-1] == '"') && *tail == at[-1]) {
+        at--;
+        tail++;
+    }
     head = (size_t)(at - in);
     if (head >= n)
         head = n - 1;
     memcpy(out, in, head);
     out[head] = '\0';
-    snprintf(out + head, n - head, "%s%s", value, at + strlen(tag));
+    snprintf(out + head, n - head, "%s%s", value, tail);
 }
 
-static void expand_rom(const char *tmpl, const char *rom_path, int save_slot, char *out,
+static void expand_rom(const char *tmpl, int save_slot, char *out,
                        size_t n) {
     char slot[16];
     char step[1200];
     snprintf(slot, sizeof(slot), "%d", save_slot < 0 ? 0 : save_slot);
-    replace_tag(tmpl, "%ROM%", rom_path, step, sizeof(step));
+    replace_tag(tmpl, "%ROM%", "\"$1\"", step, sizeof(step));
     replace_tag(step, "%SLOT%", slot, out, n);
 }
 
-static int run_command(const char *cmd) {
+static int run_command(const char *cmd, const char *arg) {
     pid_t pid = fork();
     int status = 0;
     if (pid < 0)
         return -1;
     if (pid == 0) {
-        execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+        execl("/bin/sh", "sh", "-c", cmd, "launcher", arg, (char *)NULL);
         _exit(127);
     }
-    if (waitpid(pid, &status, 0) < 0)
+    pid_t done;
+    do {
+        done = waitpid(pid, &status, 0);
+    } while (done < 0 && errno == EINTR);
+    if (done < 0)
         return -1;
     if (WIFEXITED(status))
         return WEXITSTATUS(status);
@@ -339,9 +459,11 @@ static void continue_update(const char *data_dir, const struct dp_model *m, cons
 {
     char path[1024];
     char tmp[1060];
-    char lines[DP_MAX_CONTINUE][512];
+    char lines[DP_MAX_CONTINUE][768];
     int nline = 0;
 
+    if (strpbrk(rom, "\t\r\n") || strpbrk(sys, "\t\r\n"))
+        return;
     snprintf(path, sizeof(path), "%s/continue.tsv", data_dir);
     snprintf(tmp, sizeof(tmp), "%s.tmp", path);
 
@@ -356,7 +478,7 @@ static void continue_update(const char *data_dir, const struct dp_model *m, cons
 
     FILE *f = fopen(path, "r");
     if (f) {
-        char line[512];
+        char line[768];
         while (fgets(line, sizeof(line), f) && nline < DP_MAX_CONTINUE) {
             size_t len = strlen(line);
             while (len && (line[len - 1] == '\n' || line[len - 1] == '\r'))
@@ -364,7 +486,7 @@ static void continue_update(const char *data_dir, const struct dp_model *m, cons
             if (!len || line[0] == '#')
                 continue;
             /* drop the row we are about to rewrite */
-            char copy[512];
+            char copy[768];
             snprintf(copy, sizeof(copy), "%s", line);
             char *fields[7] = { 0 };
             int nf = 0;
@@ -429,12 +551,80 @@ static int launch_game(const char *roms, const char *mods_socket, const char *em
         fprintf(stderr, "launcher: no emulator for '%s' in %s\n", sys, emulators_path);
         return 5;
     }
-    snprintf(rom_path, sizeof(rom_path), "%s/%s/%s", roms, sys, rom);
-    expand_rom(cfg.cmd, rom_path, slot, cmd, sizeof(cmd));
-    child = run_command(cmd);
+    int len = snprintf(rom_path, sizeof(rom_path), "%s/%s/%s", roms, sys, rom);
+    if (len < 0 || (size_t)len >= sizeof(rom_path))
+        return 1;
+    expand_rom(cfg.cmd, slot, cmd, sizeof(cmd));
+    child = run_command(cmd, rom_path);
     printf("launch\t%s\t%s\tslot=%d\t%d\n", sys, rom, slot, child);
     return child == 0 ? 0 : 1;
 }
+
+static int launch_selected(struct dp_nav *nav, struct dp_model *m, const char *roms,
+                           const char *mods_socket, const char *emulators, const char *data)
+{
+    int rc = launch_game(roms, mods_socket, emulators, nav->lsys, nav->lrom, nav->lslot);
+    if (rc == 0) {
+        continue_update(data, m, nav->lsys, nav->lrom, nav->lslot);
+        dp_model_load_continue(m, data);
+        if (tab_screen(nav) == DP_SCR_CONTINUE)
+            nav->sel = 0;
+    }
+    nav->launch = 0;
+    return rc;
+}
+
+static int count_event_devices(void);
+static void fill_sysinfo(struct dp_model *m, const char *fb_path);
+
+static void read_device_status(struct dp_model *m, const char *roms, const char *fb_path)
+{
+    time_t now = time(NULL);
+    struct tm local;
+    if (localtime_r(&now, &local))
+        strftime(m->st.clock, sizeof(m->st.clock), "%H:%M", &local);
+
+    struct statvfs fs;
+    if (m->roms_ok && statvfs(roms, &fs) == 0) {
+        m->rom_total_mb = (unsigned)((unsigned long long)fs.f_blocks * fs.f_frsize / 1048576);
+        m->rom_used_mb = (unsigned)((unsigned long long)(fs.f_blocks - fs.f_bfree)
+                                    * fs.f_frsize / 1048576);
+    }
+
+    DIR *supplies = opendir("/sys/class/power_supply");
+    if (!supplies) {
+        fill_sysinfo(m, fb_path);
+        return;
+    }
+    struct dirent *entry;
+    while ((entry = readdir(supplies)) != NULL) {
+        if (entry->d_name[0] == '.')
+            continue;
+        char path[512];
+        snprintf(path, sizeof(path), "/sys/class/power_supply/%s/capacity", entry->d_name);
+        FILE *reading = fopen(path, "r");
+        if (!reading)
+            continue;
+        int percent = -1;
+        int have_capacity = fscanf(reading, "%d", &percent) == 1;
+        fclose(reading);
+        if (!have_capacity || percent < 0 || percent > 100)
+            continue;
+        m->st.battery = percent;
+        snprintf(path, sizeof(path), "/sys/class/power_supply/%s/status", entry->d_name);
+        reading = fopen(path, "r");
+        if (reading) {
+            char status[24];
+            m->st.charging = fgets(status, sizeof(status), reading)
+                && strcmp(status, "Charging\n") == 0;
+            fclose(reading);
+        }
+        break;
+    }
+    closedir(supplies);
+    fill_sysinfo(m, fb_path);
+}
+
 static int count_event_devices(void)
 {
     DIR *d = opendir("/dev/input");
@@ -450,8 +640,111 @@ static int count_event_devices(void)
     return n;
 }
 
-/* Prints the environment the launcher is about to work in; first thing to run
- * on a new device. */
+static void read_first_line(const char *path, char *out, size_t n)
+{
+    out[0] = '\0';
+    FILE *f = fopen(path, "r");
+    if (!f)
+        return;
+    if (fgets(out, (int)n, f)) {
+        char *nl = strchr(out, '\n');
+        if (nl)
+            *nl = '\0';
+    }
+    fclose(f);
+}
+
+static long read_number_file(const char *path)
+{
+    FILE *f = fopen(path, "r");
+    long value = -1;
+    if (!f)
+        return -1;
+    if (fscanf(f, "%ld", &value) != 1)
+        value = -1;
+    fclose(f);
+    return value;
+}
+
+/* Real device facts for the INFO screen and the boot report; only meaningful
+ * on the console, the host test passes explicit values instead. */
+/* Bounded copy: keeps -Wformat-truncation= quiet and always terminates. */
+static void copy_field(char *dst, size_t size, const char *src)
+{
+    size_t n = strlen(src);
+    if (n >= size)
+        n = size - 1;
+    memcpy(dst, src, n);
+    dst[n] = '\0';
+}
+
+static void fill_sysinfo(struct dp_model *m, const char *fb_path)
+{
+    struct utsname u;
+    if (uname(&u) == 0)
+        copy_field(m->si.kernel, sizeof(m->si.kernel), u.release);
+
+    double uptime = 0.0;
+    FILE *f = fopen("/proc/uptime", "r");
+    if (f) {
+        if (fscanf(f, "%lf", &uptime) != 1)
+            uptime = 0.0;
+        fclose(f);
+    }
+    unsigned long secs = (unsigned long)uptime;
+    m->si.uptime_s = secs;
+
+    unsigned long total_kb = 0, avail_kb = 0;
+    f = fopen("/proc/meminfo", "r");
+    if (f) {
+        char line[128];
+        while (fgets(line, sizeof(line), f)) {
+            if (strncmp(line, "MemTotal:", 9) == 0)
+                sscanf(line + 9, "%lu", &total_kb);
+            else if (strncmp(line, "MemAvailable:", 13) == 0)
+                sscanf(line + 13, "%lu", &avail_kb);
+        }
+        fclose(f);
+    }
+    m->si.mem_total_mb = (unsigned)(total_kb / 1024UL);
+    m->si.mem_avail_mb = (unsigned)(avail_kb / 1024UL);
+
+    int temp = -1;
+    for (int zone = 0; zone < 8; zone++) {
+        char path[96];
+        snprintf(path, sizeof(path), "/sys/class/thermal/thermal_zone%d/temp", zone);
+        long t = read_number_file(path);
+        if (t > 0 && t < 1000)
+            t *= 1000;
+        if (t > 0 && t > temp)
+            temp = (int)t;
+    }
+    m->si.temp_mc = temp;
+
+    char size[48];
+    read_first_line("/sys/class/graphics/fb0/virtual_size", size, sizeof(size));
+    long bpp = read_number_file("/sys/class/graphics/fb0/bits_per_pixel");
+    if (size[0]) {
+        for (char *p = size; *p; p++)
+            if (*p == ',')
+                *p = 'x';
+        if (bpp > 0)
+            snprintf(m->si.fb, sizeof(m->si.fb), "%s %ldbpp", size, bpp);
+        else
+            snprintf(m->si.fb, sizeof(m->si.fb), "%s", size);
+    } else if (fb_path) {
+        snprintf(m->si.fb, sizeof(m->si.fb), "%s", fb_path);
+    }
+
+    m->si.input_events = count_event_devices();
+    struct dp_input in;
+    if (dp_input_open(&in) == 0) {
+        snprintf(m->si.input, sizeof(m->si.input), "%s", dp_input_name(&in));
+        dp_input_close(&in);
+    }
+    m->have_sysinfo = 1;
+}
+
 static void model_load_config(struct dp_model *m, const char *config_path)
 {
     struct dp_config cfg;
@@ -462,6 +755,8 @@ static void model_load_config(struct dp_model *m, const char *config_path)
     snprintf(m->cfg_profile, sizeof(m->cfg_profile), "%s", cfg.profile);
 }
 
+/* Prints the environment the launcher is about to work in; first thing to run
+ * on a new device. */
 static int selftest(const char *roms, const char *data, const char *emulators_path,
                     const char *mods_socket, const char *fb_path,
                     const char *config_path)
@@ -473,8 +768,25 @@ static int selftest(const char *roms, const char *data, const char *emulators_pa
     dp_model_load_continue(m, data);
     dp_modc_status(mods_socket, m);
     model_load_config(m, config_path);
+    fill_sysinfo(m, fb_path);
 
-    printf("version=0.4\n");
+    char temp[16] = "-";
+    if (m->si.temp_mc >= 0)
+        snprintf(temp, sizeof(temp), "%d.%d C",
+                 m->si.temp_mc / 1000, (m->si.temp_mc % 1000) / 100);
+
+    char uptime[24] = "-";
+    if (m->si.uptime_s > 0) {
+        unsigned long us = m->si.uptime_s;
+        if (us < 60)
+            snprintf(uptime, sizeof(uptime), "%lu s", us);
+        else if (us < 3600)
+            snprintf(uptime, sizeof(uptime), "%lu min", us / 60);
+        else
+            snprintf(uptime, sizeof(uptime), "%lu h %02lu", us / 3600, (us / 60) % 60);
+    }
+
+    printf("version=%s\n", DP_VERSION);
     printf("roms=%s systems=%d games=%u\n", roms, m->nsys, m->total_games);
     printf("data=%s continue=%d data_ok=%d\n", data, m->ncont, m->data_ok);
     printf("roms_ok=%d\n", m->roms_ok);
@@ -485,7 +797,13 @@ static int selftest(const char *roms, const char *data, const char *emulators_pa
     printf("config=%s brightness=%d volume=%d profile=%s\n", config_path,
            m->cfg_brightness, m->cfg_volume,
            m->cfg_profile[0] ? m->cfg_profile : "balanced");
-    printf("input_events=%d\n", count_event_devices());
+    printf("input_events=%d\n", m->si.input_events);
+    printf("sysinfo kernel=%s uptime=%s mem=%u/%u MB temp=%s fb=%s input=%s\n",
+           m->si.kernel[0] ? m->si.kernel : "-",
+           uptime,
+           m->si.mem_avail_mb, m->si.mem_total_mb, temp,
+           m->si.fb[0] ? m->si.fb : "-",
+           m->si.input[0] ? m->si.input : "-");
     printf("status=ok\n");
     dp_model_free(m);
     return 0;
@@ -497,7 +815,7 @@ static void boot_first_frame(void)
     fflush(stdout);
     if (access("/run/deepos-boot-report", F_OK) == 0) {
         run_command("(/usr/local/bin/selfcheck.sh /flash/report/checks.txt --first-frame "
-                    "&& rm -f /run/deepos-boot-report) </dev/null >/dev/null 2>&1 &");
+                    "&& rm -f /run/deepos-boot-report) </dev/null >/dev/null 2>&1 &", NULL);
     }
     if (access(ticket, R_OK) != 0)
         return;
@@ -519,6 +837,153 @@ static void boot_first_frame(void)
         fprintf(stderr, "launcher: cannot confirm boot after first frame\n");
 }
 
+struct bench_stats {
+    unsigned long long avg_us, p95_us, max_us;
+};
+
+static unsigned long long now_us(clockid_t clock_id)
+{
+    struct timespec ts;
+    clock_gettime(clock_id, &ts);
+    return (unsigned long long)ts.tv_sec * 1000000ull
+           + (unsigned long long)ts.tv_nsec / 1000ull;
+}
+
+static int cmp_ull(const void *a, const void *b)
+{
+    const unsigned long long *x = a;
+    const unsigned long long *y = b;
+    return (*x < *y) ? -1 : (*x > *y);
+}
+
+static struct bench_stats bench_stats_of(unsigned long long *samples, int n)
+{
+    struct bench_stats st = { 0, 0, 0 };
+    if (n <= 0)
+        return st;
+    unsigned long long sum = 0;
+    for (int i = 0; i < n; i++)
+        sum += samples[i];
+    st.avg_us = sum / (unsigned long long)n;
+    qsort(samples, (size_t)n, sizeof(samples[0]), cmp_ull);
+    st.max_us = samples[n - 1];
+    int idx = n * 95 / 100;
+    if (idx >= n)
+        idx = n - 1;
+    st.p95_us = samples[idx];
+    return st;
+}
+
+static void bench_write(const char *path, const char *bench_line, const char *device_line)
+{
+    FILE *f = fopen(path, "w");
+    if (!f)
+        return;
+    fprintf(f, "%s\n%s\n", bench_line, device_line);
+    fclose(f);
+}
+
+/* Repaint through the normal path so a pending notice is not swallowed. */
+static void paint_nav(struct dp_canvas *cv, struct dp_model *m, struct dp_nav *nav)
+{
+    dp_ui_paint(cv, m, (enum dp_screen)tab_screen(nav), nav->system, nav->sel);
+    if (nav->notice[0]) {
+        dp_ui_toast(cv, nav->notice);
+        nav->notice[0] = '\0';
+    }
+}
+
+/* Numbers the user will later take from the console: full repaint cost, the
+ * fb present cost, and the latency between the kernel event timestamp and the
+ * frame that shows it. */
+static int bench_run(struct dp_canvas *cv, struct dp_model *m, struct dp_nav *nav,
+                     struct dp_display *disp, const char *out_path, int frames)
+{
+    enum { MAX_FRAMES = 256, MAX_PRESSES = 20 };
+    unsigned long long paint[MAX_FRAMES], present[MAX_FRAMES], latency[MAX_PRESSES];
+    int npaint = 0, npresent = 0, npresses = 0;
+    if (frames < 1)
+        frames = 60;
+    if (frames > MAX_FRAMES)
+        frames = MAX_FRAMES;
+
+    for (int i = 0; i < frames; i++) {
+        unsigned long long t0 = now_us(CLOCK_MONOTONIC);
+        paint_nav(cv, m, nav);
+        paint[npaint++] = now_us(CLOCK_MONOTONIC) - t0;
+        if (disp) {
+            t0 = now_us(CLOCK_MONOTONIC);
+            dp_display_present(disp, cv);
+            present[npresent++] = now_us(CLOCK_MONOTONIC) - t0;
+        }
+    }
+
+    struct dp_input in;
+    int have_in = dp_input_open(&in) == 0 && in.ready;
+    if (have_in) {
+        unsigned long long started = now_us(CLOCK_MONOTONIC);
+        while (npresses < MAX_PRESSES
+               && now_us(CLOCK_MONOTONIC) - started < 30000000ull) {
+            if (disp) {
+                paint_nav(cv, m, nav);
+                dp_ui_overlay(cv, "Замер задержки", "Нажмите любую кнопку",
+                              "Собирается до 20 нажатий", npresses, MAX_PRESSES);
+                dp_display_present(disp, cv);
+            }
+            enum dp_key k = dp_input_poll(&in, 500);
+            if (!in.ready)
+                break;
+            if (k == DP_KEY_NONE)
+                continue;
+            if (in.last_us == 0)
+                continue;
+            unsigned long long t = now_us(CLOCK_REALTIME) - in.last_us;
+            if (t < 1000000ull)
+                latency[npresses++] = t;
+        }
+        dp_input_close(&in);
+    }
+
+    struct bench_stats ps = bench_stats_of(paint, npaint);
+    struct bench_stats ds = bench_stats_of(present, npresent);
+    struct bench_stats ls = bench_stats_of(latency, npresses);
+
+    char bench_line[512];
+    snprintf(bench_line, sizeof(bench_line),
+             "bench version=%s frames=%d paint_avg_us=%llu paint_p95_us=%llu "
+             "paint_max_us=%llu present_avg_us=%llu present_p95_us=%llu "
+             "present_max_us=%llu presses=%d latency_avg_us=%llu latency_p95_us=%llu "
+             "latency_max_us=%llu",
+             DP_VERSION, npaint, ps.avg_us, ps.p95_us, ps.max_us,
+             ds.avg_us, ds.p95_us, ds.max_us, npresses,
+             ls.avg_us, ls.p95_us, ls.max_us);
+
+    char device_line[256];
+    snprintf(device_line, sizeof(device_line), "device kernel=%s fb=%s input=%s",
+             m->si.kernel[0] ? m->si.kernel : "-",
+             m->si.fb[0] ? m->si.fb : (disp ? "fb" : "-"),
+             m->si.input[0] ? m->si.input : (have_in ? "unknown" : "-"));
+
+    puts(bench_line);
+    puts(device_line);
+    fflush(stdout);
+
+    if (out_path) {
+        bench_write(out_path, bench_line, device_line);
+    } else {
+        mkdir("/flash/report", 0755);
+        FILE *probe = fopen("/flash/report/bench.txt", "a");
+        if (probe) {
+            fclose(probe);
+            bench_write("/flash/report/bench.txt", bench_line, device_line);
+        } else {
+            mkdir("/data/report", 0755);
+            bench_write("/data/report/bench.txt", bench_line, device_line);
+        }
+    }
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     const char *roms = "/storage";
@@ -526,10 +991,10 @@ int main(int argc, char **argv)
     const char *screen = "continue";
     const char *out = NULL;
     int system_index = 0;
-    int battery = 78;
+    int battery = -1;
     int charging = 0;
-    const char *clock = "14:32";
-    unsigned rom_used = 12, rom_total = 36;
+    const char *clock = "";
+    unsigned rom_used = 0, rom_total = 0;
     const char *keys = NULL;
     int print_state = 0;
     const char *mods_socket = "/run/modd.sock";
@@ -546,6 +1011,8 @@ int main(int argc, char **argv)
     const char *set_kv = NULL;
     int print_config = 0;
     int do_apply = 0;
+    int bench_frames = 0;
+    const char *bench_out = NULL;
 
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
@@ -574,6 +1041,8 @@ int main(int argc, char **argv)
         else if (strcmp(a, "--set") == 0) set_kv = NEED_ARG();
         else if (strcmp(a, "--print-config") == 0) print_config = 1;
         else if (strcmp(a, "--apply") == 0) do_apply = 1;
+        else if (strcmp(a, "--bench") == 0) bench_frames = atoi(NEED_ARG());
+        else if (strcmp(a, "--bench-out") == 0) bench_out = NEED_ARG();
         else if (strcmp(a, "--list") == 0) {
             for (int s = 0; s < DP_SCR_COUNT; s++)
                 printf("%s\n", dp_screen_id((enum dp_screen)s));
@@ -660,7 +1129,7 @@ int main(int argc, char **argv)
     if (run_game) {
         char spec[512];
         char sys[32];
-        char rom[128];
+        char rom[DP_ROM_NAME];
         int rc_game;
         snprintf(spec, sizeof(spec), "%s", run_game);
         char *colon = strchr(spec, ':');
@@ -670,8 +1139,8 @@ int main(int argc, char **argv)
             return 2;
         }
         *colon = '\0';
-        snprintf(sys, sizeof(sys), "%s", spec);
-        snprintf(rom, sizeof(rom), "%s", colon + 1);
+        copy_field(sys, sizeof(sys), spec);
+        copy_field(rom, sizeof(rom), colon + 1);
         rc_game = launch_game(roms, mods_socket, emulators_path, sys, rom, save_slot);
         if (rc_game == 0)
             continue_update(data, m, sys, rom, save_slot);
@@ -707,6 +1176,8 @@ int main(int argc, char **argv)
     snprintf(m->st.clock, sizeof(m->st.clock), "%s", clock);
     m->rom_used_mb = rom_used;
     m->rom_total_mb = rom_total;
+    if (argc == 1)
+        read_device_status(m, roms, fb_path ? fb_path : "/dev/fb0");
 
     struct dp_canvas cv;
     if (dp_canvas_init(&cv, DP_W, DP_H) != 0) {
@@ -717,9 +1188,11 @@ int main(int argc, char **argv)
 
     struct dp_nav nav = { 0 };
     nav.tab = tab_from_screen(scr);
-    nav.level = 0;
-    nav.sel = system_index;
-    nav.system = system_index;
+    if (scr == DP_SCR_GAMES) {
+        nav.level = 1;
+        nav.system = system_index >= 0 && system_index < m->nsys ? system_index : 0;
+        dp_model_load_games(m, roms, nav.system);
+    }
 
     int quit = 0;
     if (keys) {
@@ -734,20 +1207,14 @@ int main(int argc, char **argv)
                 dp_model_free(m);
                 return 2;
             }
-            quit = nav_key(&nav, m, k);
-            if (!quit && nav.settings_edit) {
-                settings_edit_card(m, nav.settings_edit - 1, config_path,
-                                   sysfs_prefix, data);
-                nav.settings_edit = 0;
-            }
+            quit = nav_key(&nav, m, roms, k);
+            if (!quit)
+                apply_selected_setting(&nav, m, config_path, sysfs_prefix, data);
         }
     }
 
     if (nav.launch) {
-        int rc_game = launch_game(roms, mods_socket, emulators_path, nav.lsys, nav.lrom,
-                                  nav.lslot);
-        if (rc_game == 0)
-            continue_update(data, m, nav.lsys, nav.lrom, nav.lslot);
+        int rc_game = launch_selected(&nav, m, roms, mods_socket, emulators_path, data);
         dp_canvas_free(&cv);
         dp_model_free(m);
         return rc_game;
@@ -760,7 +1227,18 @@ int main(int argc, char **argv)
         return quit ? 0 : 0;
     }
 
-    dp_ui_paint(&cv, m, (enum dp_screen)tab_screen(&nav), nav.system, nav.sel);
+    if (bench_frames > 0) {
+        struct dp_display bdisp;
+        int have_bdisp = fb_path && dp_display_open(&bdisp, fb_path) == 0;
+        int brc = bench_run(&cv, m, &nav, have_bdisp ? &bdisp : NULL, bench_out, bench_frames);
+        if (have_bdisp)
+            dp_display_close(&bdisp);
+        dp_canvas_free(&cv);
+        dp_model_free(m);
+        return brc;
+    }
+
+    paint_nav(&cv, m, &nav);
 
     int rc = 0;
     if (out && write_ppm(out, &cv) != 0) {
@@ -780,6 +1258,11 @@ int main(int argc, char **argv)
             fprintf(stderr, "launcher: cannot present the frame\n");
             rc = 1;
         } else if (argc == 1 && !disp.fake) {
+            if (access("/flash/BENCH.ON", F_OK) == 0) {
+                bench_run(&cv, m, &nav, &disp, NULL, 60);
+                if (rename("/flash/BENCH.ON", "/flash/BENCH.DONE") != 0)
+                    fprintf(stderr, "launcher: cannot rename BENCH.ON\n");
+            }
             boot_first_frame();
         }
     }
@@ -787,15 +1270,35 @@ int main(int argc, char **argv)
     if (!out && !fb_path) {
         struct dp_input in;
         if (dp_input_open(&in) == 0) {
-            while (!quit && !nav.launch) {
+            while (!quit && in.ready) {
                 enum dp_key k = dp_input_poll(&in, 250);
                 if (k == DP_KEY_NONE)
                     continue;
-                quit = nav_key(&nav, m, k);
-                dp_ui_paint(&cv, m, (enum dp_screen)tab_screen(&nav), nav.system, nav.sel);
+                int old_tab = nav.tab, old_level = nav.level, old_sel = nav.sel;
+                quit = nav_key(&nav, m, roms, k);
+                if (quit)
+                    break;
+                int changed = apply_selected_setting(&nav, m, config_path, sysfs_prefix, data);
+                int game_status = -1;
+                if (nav.launch) {
+                    game_status = launch_selected(&nav, m, roms, mods_socket, emulators_path, data);
+                    changed = 1;
+                }
+                if (!changed && !nav.notice[0]
+                    && nav.tab == old_tab && nav.level == old_level && nav.sel == old_sel)
+                    continue;
+                paint_nav(&cv, m, &nav);
+                if (game_status > 0) {
+                    const char *message = game_status == 5 ? "Нет эмулятора для этой системы" :
+                                          game_status == 4 ? "Запуск отклонён модулем" :
+                                          "Не удалось запустить игру";
+                    dp_ui_toast(&cv, message);
+                }
                 if (have_disp)
                     dp_display_present(&disp, &cv);
             }
+            if (in.lost)
+                fprintf(stderr, "launcher: input device lost\n");
             dp_input_close(&in);
         } else if (!have_disp) {
             printf("screen=%s systems=%d games=%u continue=%d\n",

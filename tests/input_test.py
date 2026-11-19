@@ -68,6 +68,13 @@ def main():
         check("default state is the continue list", out == "screen=continue level=0 sel=0 system=0", out)
         check("default run exits cleanly", p.returncode == 0, p.returncode)
 
+        empty_data = tmp / "empty-data"
+        empty_data.mkdir()
+        _, out = state(roms, empty_data, "A")
+        check("A opens Games on a fresh card", out.startswith("screen=systems"), out)
+        _, out = state(roms, data, "R1,R2")
+        check("both right shoulder buttons switch tabs", out.startswith("screen=settings"), out)
+
         _, out = state(roms, data, "DOWN")
         check("DOWN moves the cursor", out.endswith("sel=1 system=0"), out)
 
@@ -86,20 +93,26 @@ def main():
         _, out = state(roms, data, "RIGHT,A")
         check("A opens the game list", out == "screen=games level=1 sel=0 system=0", out)
 
-        _, out = state(roms, data, "RIGHT,DOWN,A")
+        _, out = state(roms, data, "RIGHT,RIGHT,A")
         check("A opens the highlighted system", out == "screen=games level=1 sel=0 system=1", out)
 
-        _, out = state(roms, data, "RIGHT,DOWN,A,B")
+        _, out = state(roms, data, "RIGHT,RIGHT,A,B")
         check("B returns to the system list", out == "screen=systems level=0 sel=1 system=1", out)
 
-        _, out = state(roms, data, "RIGHT,DOWN,A,DOWN,DOWN")
+        _, out = state(roms, data, "RIGHT,RIGHT,A,DOWN,DOWN")
         check("game list cursor follows system size", out.endswith("sel=2 system=1"), out)
 
         _, out = state(roms, data, "RIGHT,RIGHT")
-        check("RIGHT cycles to settings", out.startswith("screen=settings"), out)
+        check("RIGHT moves inside the systems grid", out == "screen=systems level=0 sel=1 system=0", out)
 
-        _, out = state(roms, data, "LEFT")
-        check("LEFT wraps to the last tab", out.startswith("screen=info"), out)
+        _, out = state(roms, data, "RIGHT,DOWN")
+        check("DOWN keeps a one-row grid in place", out == "screen=systems level=0 sel=0 system=0", out)
+
+        _, out = state(roms, data, "RIGHT,R1")
+        check("R1 cycles to settings", out.startswith("screen=settings"), out)
+
+        _, out = state(roms, data, "L1")
+        check("L1 wraps to the last tab", out.startswith("screen=info"), out)
 
         _, out = state(roms, data, "LEFT,RIGHT")
         check("RIGHT from the last tab wraps to continue", out.startswith("screen=continue"), out)

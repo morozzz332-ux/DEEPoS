@@ -74,7 +74,19 @@ struct dp_model *dp_model_new(void)
 
 void dp_model_free(struct dp_model *m)
 {
+    if (m) {
+        for (int i = 0; i < m->nroms; i++)
+            free(m->rom_names[i]);
+        free(m->rom_names);
+    }
     free(m);
+}
+
+static int is_rom(DIR *dir, const char *name)
+{
+    struct stat st;
+    return name[0] != '.' && dp_has_ext(name)
+        && fstatat(dirfd(dir), name, &st, 0) == 0 && S_ISREG(st.st_mode);
 }
 
 static int dp_count_roms(const char *dir)
@@ -85,16 +97,7 @@ static int dp_count_roms(const char *dir)
     int n = 0;
     struct dirent *e;
     while ((e = readdir(d)) != NULL) {
-        if (e->d_name[0] == '.')
-            continue;
-        char path[2048];
-        /* Bounded widths keep -Wformat-truncation (fortify) quiet and cap the
-         * path well below PATH_MAX; deeper trees simply do not appear in scans. */
-        snprintf(path, sizeof(path), "%.1000s/%.200s", dir, e->d_name);
-        struct stat st;
-        if (stat(path, &st) != 0 || !S_ISREG(st.st_mode))
-            continue;
-        if (dp_has_ext(e->d_name))
+        if (is_rom(d, e->d_name))
             n++;
     }
     closedir(d);
@@ -148,17 +151,66 @@ int dp_model_scan(struct dp_model *m, const char *roms_dir)
     return m->nsys;
 }
 
+static int rom_cmp(const void *a, const void *b)
+{
+    const char *x = *(char *const *)a;
+    const char *y = *(char *const *)b;
+    int order = strcasecmp(x, y);
+    return order != 0 ? order : strcmp(x, y);
+}
+
+int dp_model_load_games(struct dp_model *m, const char *roms_dir, int system_index)
+{
+    for (int i = 0; i < m->nroms; i++)
+        free(m->rom_names[i]);
+    free(m->rom_names);
+    m->rom_names = NULL;
+    m->nroms = 0;
+    if (system_index < 0 || system_index >= m->nsys)
+        return 0;
+    char path[2048];
+    int len = snprintf(path, sizeof(path), "%s/%s", roms_dir, m->systems[system_index].id);
+    if (len < 0 || (size_t)len >= sizeof(path))
+        return -1;
+    DIR *d = opendir(path);
+    if (!d)
+        return -1;
+
+    size_t capacity = 0;
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        if (!is_rom(d, e->d_name))
+            continue;
+        if ((size_t)m->nroms == capacity) {
+            size_t next = capacity ? capacity * 2 : 32;
+            char **items = realloc(m->rom_names, next * sizeof(*items));
+            if (!items)
+                break;
+            m->rom_names = items;
+            capacity = next;
+        }
+        char *name = strdup(e->d_name);
+        if (!name)
+            break;
+        m->rom_names[m->nroms++] = name;
+    }
+    closedir(d);
+    if (m->nroms > 1)
+        qsort(m->rom_names, (size_t)m->nroms, sizeof(*m->rom_names), rom_cmp);
+    return m->nroms;
+}
+
 int dp_model_load_continue(struct dp_model *m, const char *data_dir)
 {
     m->data_ok = access(data_dir, R_OK | W_OK) == 0 ? 1 : 0;
     char path[1024];
     snprintf(path, sizeof(path), "%s/continue.tsv", data_dir);
+    m->ncont = 0;
     FILE *f = fopen(path, "r");
     if (!f)
         return 0;
 
-    char line[512];
-    m->ncont = 0;
+    char line[768];
     while (fgets(line, sizeof(line), f) && m->ncont < DP_MAX_CONTINUE) {
         size_t len = strlen(line);
         while (len && (line[len - 1] == '\n' || line[len - 1] == '\r'))

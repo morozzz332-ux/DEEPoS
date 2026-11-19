@@ -51,7 +51,7 @@ def test_first_frame(tmpdir):
     source = BIN.parent / "src"
     launcher = tmpdir / "launcher-boot-test"
     wrappers = ("dp_display_open", "dp_display_present", "dp_display_close",
-                "dp_input_open", "access", "execl")
+                "dp_input_open", "dp_input_poll", "access", "execl")
     cmd = ["cc", "-o", str(launcher), "-I", str(source),
            *(str(obj) for obj in sorted(source.glob("*.o"))),
            str(ROOT / "tests" / "fixtures" / "launcher_boot.c"),
@@ -78,6 +78,20 @@ def test_first_frame(tmpdir):
               p.returncode == rc and refreshed == logged == confirmed and
               (confirmed or "boot confirmation requested" not in p.stdout),
               (p.returncode, p.stdout, p.stderr))
+
+    data = tmpdir / "physical-data"
+    data.mkdir()
+    config = data / "settings.toml"
+    config.write_text("brightness = 20\n")
+    result = subprocess.run(
+        [str(launcher), "--screen", "settings", "--data", str(data),
+         "--config", str(config), "--sysfs", str(tmpdir / "fake-sys")],
+        capture_output=True, text=True, timeout=10,
+        env={**os.environ, "DEEPOS_TEST_FRAMEBUFFER": "hardware",
+             "DEEPOS_TEST_PHYSICAL_KEYS": "1"})
+    check("physical Right/Right/A saves and applies the display setting",
+          result.returncode == 0 and "brightness = 40" in config.read_text(),
+          (result.returncode, result.stdout, result.stderr))
 
 
 def main():

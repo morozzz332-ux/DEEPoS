@@ -7,7 +7,9 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <sys/ioctl.h>
@@ -31,13 +33,19 @@
 #define BTN_WEST 0x134
 #define BTN_TL 0x136
 #define BTN_TR 0x137
+#define BTN_TL2 0x138
+#define BTN_TR2 0x139
 #define BTN_SELECT 0x13a
 #define BTN_DPAD_UP 0x220
 #define BTN_DPAD_DOWN 0x221
 #define BTN_DPAD_LEFT 0x222
 #define BTN_DPAD_RIGHT 0x223
 
+#define KEY_MAX 0x2ff
+#define KEY_BYTES ((KEY_MAX + 8) / 8)
+
 #define EVIOCGNAME(len) _IOC(_IOC_READ, 'E', 0x06, len)
+#define EVIOCGBIT(ev, len) _IOC(_IOC_READ, 'E', 0x20 + (ev), len)
 
 struct dp_input_event {
     long sec;
@@ -56,6 +64,7 @@ static const struct {
     {"a", DP_KEY_A},         {"b", DP_KEY_B},
     {"x", DP_KEY_X},         {"y", DP_KEY_Y},
     {"l1", DP_KEY_L1},       {"r1", DP_KEY_R1},
+    {"l2", DP_KEY_L2},       {"r2", DP_KEY_R2},
     {"sel", DP_KEY_SELECT},  {"select", DP_KEY_SELECT},
     {"start", DP_KEY_START}, {"quit", DP_KEY_QUIT},
 };
@@ -78,19 +87,48 @@ enum dp_key dp_key_from_name(const char *name)
     return DP_KEY_NONE;
 }
 
-enum pad_priority { PAD_OTHER = 1, PAD_CONSOLE, PAD_V20 };
-
-static int looks_like_pad(int fd)
+const char *dp_input_name(const struct dp_input *in)
 {
-    char name[128] = {0};
-    if (ioctl(fd, (int)EVIOCGNAME(sizeof(name) - 1), name) < 0)
-        return 0;
+    return in && in->name[0] ? in->name : "none";
+}
+
+static int bit_test(const unsigned char *bits, unsigned bit)
+{
+    return (bits[bit / 8] >> (bit % 8)) & 1;
+}
+
+/* A gamepad must report at least the D-pad or a face button. This rules out
+ * power switches, accelerometers and the ADC joystick driver node (which only
+ * reports absolute axes). */
+static int pad_capabilities(int fd)
+{
+    unsigned char evbits[8] = { 0 };
+    unsigned char keys[KEY_BYTES] = { 0 };
+    if (ioctl(fd, EVIOCGBIT(0, sizeof(evbits)), evbits) < 0)
+        return -1;
+    if (!bit_test(evbits, EV_KEY))
+        return -1;
+    if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(keys)), keys) < 0)
+        return -1;
+    int arrows = bit_test(keys, KEY_UP) + bit_test(keys, KEY_DOWN) +
+                 bit_test(keys, KEY_LEFT) + bit_test(keys, KEY_RIGHT);
+    int face = bit_test(keys, BTN_SOUTH) + bit_test(keys, BTN_EAST) +
+               bit_test(keys, BTN_TL) + bit_test(keys, BTN_SELECT);
+    if (arrows == 0)
+        return -1;
+    if (arrows < 4 && face == 0)
+        return -1;
+    return arrows * 2 + face;
+}
+
+static int name_bonus(const char *name)
+{
     if (strcasecmp(name, "r36s_Gamepad") == 0)
-        return PAD_V20;
-    if (strcasestr(name, "r36s") || strcasestr(name, "deepos") ||
-        strcasestr(name, "gamepad") || strcasestr(name, "gpio-keys"))
-        return PAD_CONSOLE;
-    return PAD_OTHER;
+        return 50; /* legacy vendor DTB on Arch-R */
+    if (strcasestr(name, "gpio-keys") || strcasestr(name, "gamepad") ||
+        strcasestr(name, "deepos"))
+        return 20;
+    return 0;
 }
 
 static enum dp_key map_code(unsigned int code, int swap_ab)
@@ -124,6 +162,10 @@ static enum dp_key map_code(unsigned int code, int swap_ab)
         return DP_KEY_L1;
     case BTN_TR:
         return DP_KEY_R1;
+    case BTN_TL2:
+        return DP_KEY_L2;
+    case BTN_TR2:
+        return DP_KEY_R2;
     case KEY_SELECT:
     case BTN_SELECT:
         return DP_KEY_SELECT;
@@ -134,11 +176,16 @@ static enum dp_key map_code(unsigned int code, int swap_ab)
     }
 }
 
+static int is_direction(enum dp_key key)
+{
+    return key == DP_KEY_UP || key == DP_KEY_DOWN ||
+           key == DP_KEY_LEFT || key == DP_KEY_RIGHT;
+}
+
 int dp_input_open(struct dp_input *in)
 {
+    memset(in, 0, sizeof(*in));
     in->fd = -1;
-    in->ready = 0;
-    in->swap_ab = 0;
     int best = -1, best_score = 0;
     for (int i = 0; i < 32; i++) {
         char path[64];
@@ -146,30 +193,39 @@ int dp_input_open(struct dp_input *in)
         int fd = open(path, O_RDONLY | O_NONBLOCK);
         if (fd < 0)
             continue;
-        int score = looks_like_pad(fd);
+        int caps = pad_capabilities(fd);
+        if (caps < 0) {
+            close(fd);
+            continue;
+        }
+        char name[DP_INPUT_NAME] = { 0 };
+        if (ioctl(fd, (int)EVIOCGNAME(sizeof(name) - 1), name) < 0)
+            memset(name, 0, sizeof(name));
+        int score = caps + name_bonus(name);
         if (score > best_score) {
             if (best >= 0)
                 close(best);
             best = fd;
             best_score = score;
-            if (score == PAD_V20)
-                break;
+            snprintf(in->name, sizeof(in->name), "%s", name);
+            in->swap_ab = strcasecmp(name, "r36s_Gamepad") == 0;
         } else {
             close(fd);
         }
     }
-    if (best >= 0) {
-        in->fd = best;
-        in->ready = 1;
-        in->swap_ab = best_score == PAD_V20;
-        return 0;
-    }
-    return -1;
+    const char *force = getenv("DEEPOS_SWAP_AB");
+    if (best >= 0 && force && force[0] == '1')
+        in->swap_ab = 1;
+    if (best < 0)
+        return -1;
+    in->fd = best;
+    in->ready = 1;
+    return 0;
 }
 
 void dp_input_close(struct dp_input *in)
 {
-    if (in->ready && in->fd >= 0)
+    if (in->fd >= 0)
         close(in->fd);
     in->fd = -1;
     in->ready = 0;
@@ -177,18 +233,44 @@ void dp_input_close(struct dp_input *in)
 
 enum dp_key dp_input_poll(struct dp_input *in, int timeout_ms)
 {
-    (void)timeout_ms;
     if (!in->ready)
+        return DP_KEY_NONE;
+    struct pollfd event = { .fd = in->fd, .events = POLLIN };
+    int rc = poll(&event, 1, timeout_ms);
+    if (rc < 0)
+        return DP_KEY_NONE; /* EINTR: caller just retries */
+    if (rc == 0)
+        return DP_KEY_NONE;
+    if (event.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+        in->ready = 0;
+        in->lost = 1;
+        return DP_KEY_NONE;
+    }
+    if (!(event.revents & POLLIN))
         return DP_KEY_NONE;
     for (;;) {
         struct dp_input_event ev;
         ssize_t n = read(in->fd, &ev, sizeof(ev));
-        if (n != (ssize_t)sizeof(ev))
+        if (n < 0)
+            return DP_KEY_NONE; /* EAGAIN after a spurious wakeup */
+        if (n == 0) {
+            in->ready = 0;
+            in->lost = 1;
             return DP_KEY_NONE;
-        if (ev.type != EV_KEY || ev.value != 1)
+        }
+        if (n != (ssize_t)sizeof(ev))
+            continue;
+        if (ev.type != EV_KEY)
+            continue;
+        if (ev.value != 1 && ev.value != 2)
             continue;
         enum dp_key k = map_code(ev.code, in->swap_ab);
-        if (k != DP_KEY_NONE)
-            return k;
+        if (k == DP_KEY_NONE)
+            continue;
+        if (ev.value == 2 && !is_direction(k))
+            continue; /* only the D-pad repeats */
+        in->last_us = (unsigned long long)ev.sec * 1000000ULL +
+                      (unsigned long long)(ev.usec < 0 ? 0 : ev.usec);
+        return k;
     }
 }

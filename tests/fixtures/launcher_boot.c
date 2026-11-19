@@ -39,8 +39,17 @@ void __wrap_dp_display_close(struct dp_display *display)
 
 int __wrap_dp_input_open(struct dp_input *input)
 {
+    *input = (struct dp_input){ .fd = -1, .ready = 1 };
+    return getenv("DEEPOS_TEST_PHYSICAL_KEYS") ? 0 : -1;
+}
+
+enum dp_key __wrap_dp_input_poll(struct dp_input *input, int timeout_ms)
+{
     (void)input;
-    return -1;
+    (void)timeout_ms;
+    static unsigned next;
+    const enum dp_key keys[] = { DP_KEY_RIGHT, DP_KEY_RIGHT, DP_KEY_A, DP_KEY_QUIT };
+    return next < sizeof(keys) / sizeof(keys[0]) ? keys[next++] : DP_KEY_QUIT;
 }
 
 int __real_access(const char *path, int mode);

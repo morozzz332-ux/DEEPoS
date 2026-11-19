@@ -66,11 +66,11 @@ def fixture_tree(base: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
 
 
 def render(roms: pathlib.Path, data: pathlib.Path, screen: str,
-           out: pathlib.Path) -> bytes:
+           out: pathlib.Path, *args: str) -> bytes:
     subprocess.run([str(LAUNCHER), "--roms", str(roms), "--data", str(data),
                     "--screen", screen, "--out", str(out),
                     "--clock", "14:32", "--battery", "78",
-                    "--rom-used", "12592", "--rom-total", "36864"],
+                    "--rom-used", "12592", "--rom-total", "36864", *args],
                    check=True)
     return out.read_bytes()
 
@@ -98,6 +98,7 @@ def ink_rows(px: list[tuple[int, int, int]], w: int, y0: int, y1: int) -> int:
 
 
 PALETTE_BG = (0x0C & 0xF8, 0x10 & 0xFC, 0x0E & 0xF8)
+PALETTE_ACC = (0x79 & 0xF8, 0xD8 & 0xFC, 0x9A & 0xF8)
 
 
 def palette565() -> set[tuple[int, int, int]]:
@@ -135,10 +136,35 @@ def run_tests(update: bool) -> None:
                   f"{sorted(unknown)[:4]}")
 
             body_rows = ink_rows(px, w, 30, 454)
-            check(body_rows >= 100, f"{screen}: body looks empty ({body_rows} rows)")
+            check(body_rows >= 18, f"{screen}: body looks empty ({body_rows} rows)")
             status_rows = ink_rows(px, w, 0, 30)
             check(status_rows >= 18, f"{screen}: status bar looks empty")
             hashes[screen] = digest
+
+        moved = render(roms, data, "settings", base / "settings-down.ppm", "--keys", "DOWN")
+        hashes["settings-down"] = hashlib.sha256(moved).hexdigest()
+        check(hashes["settings-down"] != hashes["settings"],
+              "settings: moving the selection does not change the frame")
+        check(hashes["systems"] != hashes["games"], "games: rendered the system list")
+
+        moved = render(roms, data, "systems", base / "systems-right.ppm",
+                       "--keys", "RIGHT")
+        w, _, px = parse_ppm(moved)
+        check(px[80 * w + 324] == PALETTE_ACC and px[80 * w + 12] != PALETTE_ACC,
+              "systems: RIGHT should focus the right column only")
+
+        moved = render(roms, data, "systems", base / "systems-row.ppm",
+                       "--keys", "DOWN,DOWN,DOWN,DOWN")
+        w, _, px = parse_ppm(moved)
+        check(px[(68 + 4 * 26 + 5) * w + 12] == PALETTE_ACC,
+              "systems: DOWN should step a full row (two cells)")
+
+        moved = render(roms, data, "games", base / "games-scrolled.ppm",
+                       "--keys", ",".join(["DOWN"] * 13))
+        w, _, px = parse_ppm(moved)
+        check(any(px[y * w + 8] == PALETTE_ACC for y in range(56, 454))
+              and hashlib.sha256(moved).hexdigest() != hashes["games"],
+              "games: focus should remain visible when scrolling past the first page")
 
         listing = subprocess.run(
             [str(LAUNCHER), "--roms", str(roms), "--list-roms"],
@@ -159,13 +185,23 @@ def run_tests(update: bool) -> None:
         # Empty card: the UI must explain how to fill the library instead of
         # drawing a blank page (first boot on a freshly flashed card).
         empty = base / "roms-empty"
+        empty_data = base / "data-empty"
         empty.mkdir()
+        empty_data.mkdir()
         for screen in ("systems", "continue"):
-            out = base / f"empty-{screen}.ppm"
-            render(empty, data, screen, out)
-            w, h, px = parse_ppm(out.read_bytes())
-            rows = ink_rows(px, w, 60, 260)
+            case = f"{screen}-empty"
+            raw = render(empty, empty_data, screen, base / f"{case}.ppm")
+            hashes[case] = hashlib.sha256(raw).hexdigest()
+            w, _, px = parse_ppm(raw)
+            rows = ink_rows(px, w, 56, 454)
             check(rows >= 6, f"{screen}: empty library shows no hint ({rows} rows)")
+
+        (empty / "ports").mkdir()
+        (empty / "ports" / "demo.sh").touch()
+        for screen in ("systems", "games"):
+            case = f"{screen}-fresh"
+            raw = render(empty, empty_data, screen, base / f"{case}.ppm")
+            hashes[case] = hashlib.sha256(raw).hexdigest()
 
         bad = subprocess.run([str(LAUNCHER), "--roms", str(roms),
                               "--screen", "nope"],

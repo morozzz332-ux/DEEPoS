@@ -57,22 +57,22 @@ def main():
         tmp = pathlib.Path(name)
         roms, data = tree(tmp)
 
-        p = run(roms, data, "DOWN,DOWN,A")
+        p = run(roms, data, "RIGHT,RIGHT,A")
         values, text = read_cfg(data)
         check("display card cycles brightness", values.get("brightness") == "40",
               f"{values.get('brightness')!r} rc={p.returncode}")
         check("comment header survives the save", text.startswith("# DEEPoS settings"))
         check("no temp file left", not (data / "config" / "settings.toml.tmp").exists())
 
-        p = run(roms, data, "DOWN,DOWN,DOWN,A")
+        p = run(roms, data, "DOWN,A")
         values, _ = read_cfg(data)
         check("sound card cycles volume", values.get("volume") == "40")
 
-        p = run(roms, data, "DOWN,DOWN,DOWN,DOWN,DOWN,A")
+        p = run(roms, data, "DOWN,RIGHT,RIGHT,A")
         values, _ = read_cfg(data)
         check("power card cycles profile", values.get("profile") == "balanced")
 
-        p = run(roms, data, "DOWN,DOWN,DOWN,DOWN,DOWN,A")
+        p = run(roms, data, "DOWN,RIGHT,RIGHT,A")
         values, _ = read_cfg(data)
         check("profile cycles eco -> balanced -> max", values.get("profile") == "max")
 
@@ -81,7 +81,7 @@ def main():
         check("region card leaves the file alone",
               values.get("brightness") == "40" and p.returncode == 0)
 
-        p = run(roms, data, "DOWN,DOWN,A", "--sysfs", str(tmp / "sys"))
+        p = run(roms, data, "RIGHT,RIGHT,A", "--sysfs", str(tmp / "sys"))
         values, _ = read_cfg(data)
         check("missing sysfs still saves the value", values.get("brightness") == "60",
               f"{values.get('brightness')!r} rc={p.returncode}")
@@ -89,7 +89,7 @@ def main():
               (data / "cpu-profile").is_file() and
               (data / "cpu-profile").read_text(encoding="utf-8").strip() == "max")
 
-        p = run(roms, data, "DOWN,DOWN,A", "--config", str(tmp / "other.toml"))
+        p = run(roms, data, "RIGHT,RIGHT,A", "--config", str(tmp / "other.toml"))
         check("explicit --config is honoured",
               (tmp / "other.toml").is_file())
 

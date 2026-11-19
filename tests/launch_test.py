@@ -147,6 +147,16 @@ def main() -> int:
         check("2" in argv.split(), f"continue slot not passed: {argv!r}")
         check("slot=2" in res.stdout, f"stdout: {res.stdout!r}")
 
+        rom = roms / "md" / "A Hero's Quest.md"
+        rom.write_text("rom")
+        marker.unlink(missing_ok=True)
+        screen = run_launcher(["--roms", str(roms), "--data", str(data_dir),
+                               "--emulators", str(emu_slot), "--screen", "games",
+                               "--keys", "A"])
+        argv = marker.read_text().splitlines() if marker.exists() else []
+        check(screen.returncode == 0 and argv[:1] == [str(rom)],
+              f"game list A did not launch the selected file: {argv!r}")
+
         # 9. After a successful launch the Continue list is updated (atomically)
         upd = tmp / "data-upd"
         upd.mkdir()

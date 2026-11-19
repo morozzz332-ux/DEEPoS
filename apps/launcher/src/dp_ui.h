@@ -23,4 +23,11 @@ int dp_screen_from_id(const char *id);
 void dp_ui_paint(struct dp_canvas *cv, const struct dp_model *m, enum dp_screen scr,
                  int system_index, int selected);
 
+/* Transient message above the hint bar (failed launch, read-only card, ...). */
+void dp_ui_toast(struct dp_canvas *cv, const char *message);
+
+/* Centred panel for the guided hardware measurement (BENCH.ON on BOOT). */
+void dp_ui_overlay(struct dp_canvas *cv, const char *title, const char *line1,
+                   const char *line2, int done, int total);
+
 #endif /* DP_UI_H */

@@ -96,7 +96,7 @@ int main(int argc, char **argv)
     } else {
         struct dp_input in;
         if (dp_input_open(&in) == 0) {
-            while (!done) {
+            while (!done && in.ready) {
                 enum dp_key k = dp_input_poll(&in, 250);
                 if (k == DP_KEY_UP && level < 9)
                     level++;
