@@ -60,6 +60,8 @@ fi
 # exit; panfrost's on-demand governor otherwise idles between frames.
 boost=/usr/local/bin/perf-boost.sh
 [ -x "$boost" ] && "$boost" on
+# Same guard as run-port.sh: a killed wrapper must not leave the GPU pinned.
+[ -x "$boost" ] && ( while kill -0 $$ 2>/dev/null; do sleep 5; done; "$boost" off ) >/dev/null 2>&1 &
 trap '[ -x "$boost" ] && "$boost" off' EXIT INT TERM
 # A single-core SoC with a 60 Hz panel: let the emulator win against the
 # launcher's poll loop.

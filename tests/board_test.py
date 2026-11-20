@@ -475,9 +475,14 @@ def test_gpu_and_ports_stack():
               "performance" in boost.read_text(encoding="utf-8"))
     check("run-port.sh boosts the GPU for the port", "perf-boost.sh on" in run_port)
     check("run-port.sh restores the GPU after the port", "perf-boost.sh off" in run_port)
+    check("run-port.sh restores the GPU when the wrapper is killed", "kill -0 $$" in run_port)
+    check("rcS resets the GPU governor at boot",
+          "perf-boost.sh off" in (overlay / "etc/init.d/rcS").read_text(encoding="utf-8"))
     game = (overlay / "usr/local/bin/retroarch-game.sh").read_text(encoding="utf-8")
     check("retroarch-game.sh boosts the GPU for the core", '"$boost" on' in game)
     check("retroarch-game.sh restores the GPU on exit", '"$boost" off' in game)
+    check("retroarch-game.sh restores the GPU when the wrapper is killed",
+          "kill -0 $$" in game)
     check("retroarch-game.sh runs the core with a niceness bump", "nice -n -5" in game)
     check("run-port.sh runs the port with a niceness bump", "nice -n -5" in run_port)
     # BIOS dumps cannot be shipped, so the report has to say what is missing.

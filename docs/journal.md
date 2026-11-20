@@ -1132,3 +1132,31 @@ Google/OneDrive. BIOS-дампов в сборке нет — как и ожид
 video, виджетов 2.5, наличия и POSIX-ности `perf-boost.sh`, пиннинга governor,
 подъёма/отката GPU и `nice` в обоих лаунчерах — 222 проверки `ok`, `PASS board`.
 Версия: `VERSION` → `0.47-v20-test`.
+
+## 2026-11-20 · 0.48: governor не остаётся запиненным
+
+На живом прогоне порта под `timeout` обнаружилась дыра в 0.47: `timeout`
+убивает обёртку SIGTERM'ом, busybox ash откладывает `trap` до возврата
+дочернего процесса, поэтому `perf-boost.sh off` не выполнялся, GPU оставался на
+650 МГц, и в этом состоянии система жила до перезагрузки. Замерено: во время
+порта `governor=performance cur_freq=650000000`, через 40 с после `timeout 45`
+— всё ещё `performance`, процесс `nfsu1.aarch64` тоже жив (его не убивают,
+потому что убивали обёртку).
+
+Что сделано:
+
+- в `run-port.sh` и `retroarch-game.sh` рядом с `perf-boost.sh on` появился
+  сторожевой фоновый подпроцесс: `( while kill -0 $$; do sleep 5; done;
+  perf-boost.sh off ) &`. `$$` в подоболочке — pid обёртки, поэтому сторож
+  снимает пиннинг и при нормальном выходе, и при `kill`/`SIGKILL` обёртки;
+- `rcS` после загрузки модулей GPU вызывает `perf-boost.sh off`, чтобы
+  запиненный governor не пережил перезагрузку (например, если консоль выключили
+  во время игры);
+- тесты: `run-port.sh restores the GPU when the wrapper is killed`,
+  `retroarch-game.sh restores the GPU when the wrapper is killed`,
+  `rcS resets the GPU governor at boot` — 225 проверок `ok`, `PASS board`.
+
+Проверено на устройстве после заливки 0.47: `audio_driver = "alsathread"`,
+`video_threaded = "true"`, `menu_widget_scale_factor = "2.5"` доехали,
+`/usr/local/bin/perf-boost.sh` исполняемый, во время порта GPU на 650 МГц.
+Версия: `VERSION` → `0.48-v20-test`.

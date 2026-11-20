@@ -131,6 +131,10 @@ while [ ! -e /dev/dri/renderD128 ] && [ "$waited" -lt 10 ]; do
     sleep 0.1 2>/dev/null || sleep 1
     waited=$((waited + 1))
 done
+# A launch pins the GPU governor to performance and restores it on exit. If the
+# board lost power mid-game the pin can survive on /sys until the next reboot, so
+# start from the power-saving governor every time.
+[ -x /usr/local/bin/perf-boost.sh ] && /usr/local/bin/perf-boost.sh off
 
 # 3. Partitions. Layout (see board/r36s-v20/layout.json):
 #      p1 BOOT (FAT32)  -> /flash   boot chain, KERNEL, dtbs, extlinux

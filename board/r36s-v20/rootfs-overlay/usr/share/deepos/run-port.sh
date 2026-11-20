@@ -68,6 +68,10 @@ esac
 # already at "performance" here, so only the GPU needs it, plus a niceness bump:
 # the launcher's own poll loop must not compete with the port's render thread.
 /usr/local/bin/perf-boost.sh on
+# busybox ash defers traps until the foreground child returns, so a killed
+# wrapper would leave the GPU pinned at performance and drain the battery. The
+# guard watches this shell and restores the clock as soon as it disappears.
+( while kill -0 $$ 2>/dev/null; do sleep 5; done; /usr/local/bin/perf-boost.sh off ) >/dev/null 2>&1 &
 trap '/usr/local/bin/perf-boost.sh off' EXIT INT TERM
 if [ -x /bin/nice ]; then
     nice -n -5 /bin/bash "$@"
