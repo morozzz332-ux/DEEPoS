@@ -330,3 +330,18 @@ NES-программа прошла 120 кадров в FCEUmm под эмуля
 | Возврат питания после сеанса | Заглушка поднимала до 1 296 000 и GPU в `performance`; вернулись 1 008 000 и `simple_ondemand`, замок и снимок удалены |
 | Запись запуска на 0.52 | `session=463-…`, `system=md`, `runtime=native`, `exit=0`, `signal=0`, `save=unavailable` |
 | Свободное место `/data` после уборки | 287 644 kB (89 % занято до уборки образа и тестовых файлов) |
+
+## 2026-11-21 · 0.52, откат на карте и реальные коды ввода
+
+| Проверка | Результат |
+| --- | --- |
+| Откат A→B | `switch B` (generation 6) → `reboot -f` → `root=PARTLABEL=DEEPOS_B`, версия `0.51-v20-test`, `--selftest` = `status=ok`, `input=r36s_Gamepad` |
+| Возврат B→A | `switch A` (generation 7) → `reboot -f` → `root=PARTLABEL=DEEPOS_A`, версия `0.52-v20-test`, `attempts=0`, `rollback=false` |
+| Питание после цикла | На B остался `max` от прежних опытов; на A возвращён `--set-power balanced` → `applied`, `max=1008000`, `min=408000`, `cur=1008000`, `governor=performance`, GPU `simple_ondemand` |
+| Зависший потомок | Потомок с `trap '' TERM` добит группой через 1,5 с; лаунчер вернул 0, процесс исчез, время < 5 с (`launch_test`) |
+| Наборы `tests/run-all.sh` | 24 набора PASS, 0 FAIL |
+| Узлы ввода | `pwrkey` (event0), `adc-keys` (event1, только громкость), `Headphones` (event2), `r36s_Gamepad` (js0/event3) |
+| Коды кнопок геймпада | `0x130–0x13f` (A/B/X/Y, L1/R1/L2/R2, Select, Start, Mode, L3/R3) и `BTN_DPAD_* 0x220–0x223` |
+| Код Fn на V20 | Узел `/joypad/sw13` (`GPIO BTN_FN`) объявляет `linux,code = 0x13c` = `BTN_MODE`; `KEY_FN` (0x1d0) отсутствует в битовых картах всех устройств |
+| Расхождение DTB и репозитория | Наш DTS: Menu=`BTN_MODE`, Fn=`KEY_FN`; прошитый вендорский DTB: Fn=`BTN_MODE`, отдельного `KEY_FN` нет |
+| Fn в игровом режиме | Лаунчер получает `DP_KEY_FN`, но `game_only` фильтр его отбрасывает; прямого биндинга Fn в RetroArch нет (в строке `r36s_Gamepad` для SDL отсутствует `guide`) |
