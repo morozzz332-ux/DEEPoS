@@ -138,6 +138,19 @@ static void system_extensions(FILE *registry, struct dp_system *system)
     }
 }
 
+static int is_reserved_folder(const char *name)
+{
+    /* Folders the launcher owns itself. A stray .sh in /storage/report used to
+     * show up as a "REPORT" console full of helper scripts. */
+    static const char *const reserved[] = {
+        "bios", "roms", "modules", "report", "portmaster", "saves", "lost+found",
+    };
+    for (size_t i = 0; i < sizeof(reserved) / sizeof(reserved[0]); i++)
+        if (strcasecmp(name, reserved[i]) == 0)
+            return 1;
+    return 0;
+}
+
 static int scan_library(struct dp_model *m, const char *roms_dir, const char *prefix,
                         FILE *registry, enum dp_rom_source source)
 {
@@ -150,8 +163,7 @@ static int scan_library(struct dp_model *m, const char *roms_dir, const char *pr
     struct dirent *e;
     while ((e = readdir(d)) != NULL) {
         if (e->d_name[0] == '.' || strlen(e->d_name) >= DP_SYS_ID ||
-            strcasecmp(e->d_name, "bios") == 0 || strcasecmp(e->d_name, "roms") == 0 ||
-            strcasecmp(e->d_name, "modules") == 0)
+            is_reserved_folder(e->d_name))
             continue;
         struct dp_system s = {0};
         char *folder = s.folders[source - 1];
@@ -194,7 +206,16 @@ int dp_model_scan(struct dp_model *m, const char *roms_dir)
 {
     m->nsys = 0;
     m->total_games = 0;
-    FILE *registry = fopen("/data/emus/extensions.tsv", "r");
+    /* DP_EXTENSIONS lets the test harness point the scanner at a throw-away
+     * registry instead of the one the image ships in /data/emus. */
+    const char *registry_path = getenv("DP_EXTENSIONS");
+    FILE *registry = fopen(registry_path ? registry_path : "/data/emus/extensions.tsv",
+                           "r");
+    if (getenv("DP_DEBUG_SCAN"))
+        fprintf(stderr, "scan: root=%s registry=%s tf2=%s\n", roms_dir,
+                registry ? (registry_path ? registry_path : "/data/emus/extensions.tsv")
+                         : "(none)",
+                m->tf2_root ? m->tf2_root : "(none)");
     m->roms_ok = scan_library(m, roms_dir, "", registry, DP_ROM_TF1) == 0;
     if (m->roms_ok)
         scan_library(m, roms_dir, "roms/", registry, DP_ROM_TF1);

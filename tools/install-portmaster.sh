@@ -26,7 +26,10 @@ for stub in libpthread.so.0 libdl.so.2 librt.so.1 libutil.so.1 libresolv.so.2; d
 done
 
 # Keep the SDL controller database below MAX_ARG_STRLEN so port children can exec.
-python3 tools/curate-controllerdb.py /w/$root/opt/deepos
+# Resolve the helper relative to this script: build-rootfs.sh calls us from the
+# busybox build directory, so a bare "tools/..." path does not exist.
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+python3 "$here/curate-controllerdb.py" "$opt/portmaster"
 
 ln -sf /data/portmaster/PortMaster "$root/opt/tools/PortMaster"
 ln -sf /storage "$root/roms"

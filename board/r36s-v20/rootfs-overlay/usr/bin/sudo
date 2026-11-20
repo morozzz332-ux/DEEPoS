@@ -1,16 +1,18 @@
 #!/bin/sh
-# DEEPoS runs ports as root and ships no sudo. PortMaster's control.txt probes it
-# and, when missing, prints "No sudo present." and exports an empty ESUDO, which
-# makes ports skip chmod of /dev/tty*, swapon and other privileged setup. The
-# shim keeps those paths working: the arguments are executed as they are.
+# DEEPoS runs ports as root and ships no sudo. PortMaster's control.txt probes
+# it and, when missing, prints "No sudo present." and exports an empty ESUDO.
+# Some ports hardcode sudo anyway, and PortMaster turns sudo back on as
+# "sudo --preserve-env=..." once the probe succeeds, so the shim has to accept
+# the usual option zoo before running the command as root.
 set -u
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --) shift; break ;;
-        -E|-H|-n|-S|-k) shift ;;
-        -u|-g|-p|-C|-T|--user|--group|--prompt|--chdir)
+        --*=*) shift ;;
+        -u|-g|-p|-C|-T|-U|--user|--group|--prompt|--chdir|--close-from|--host|--role|--type)
             [ "$#" -ge 2 ] || exit 1
             shift; shift ;;
+        -*) shift ;;
         *) break ;;
     esac
 done

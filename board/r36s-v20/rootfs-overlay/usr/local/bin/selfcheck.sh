@@ -42,17 +42,22 @@ if [ "${2:-}" = "--first-frame" ] || pgrep -x launcher >/dev/null 2>&1; then
     launcher=running
 fi
 
-zram=absent; zram_active=0
+zram=absent; swap_active=0
 [ -e /sys/block/zram0/disksize ] && zram=present
-swaptotal=$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo 2>/dev/null)
-[ "${swaptotal:-0}" -gt 0 ] 2>/dev/null && zram_active=1
+# /proc files report size 0, so "test -s /proc/swaps" never fires: count devices.
+swaps=$(awk 'NR > 1 { print $1 }' /proc/swaps 2>/dev/null)
+swap_count=$(printf '%s\n' "$swaps" | grep -c . 2>/dev/null)
+[ "${swap_count:-0}" -gt 0 ] 2>/dev/null && swap_active=1
+swap=none
+[ "${swap_count:-0}" -gt 0 ] 2>/dev/null && swap=$(printf '%s\n' "$swaps" | head -n 1)
+if [ "${swap_count:-0}" -gt 1 ] 2>/dev/null; then
+    swap="$swap+$((swap_count - 1))"
+fi
 
 # OpenGL needs both the panfrost module (render node) and its devfreq entry;
 # reporting them separately tells a black screen apart from a missing module.
 gpu=absent
 [ -e /sys/class/devfreq/ff400000.gpu/cur_freq ] && [ -e /dev/dri/renderD128 ] && gpu=present
-swap=none
-[ -s /proc/swaps ] && swap=$(awk 'NR == 2 {print $1}' /proc/swaps 2>/dev/null)
 
 mem_total=$(awk '/^MemTotal:/ {print int($2/1024)}' /proc/meminfo 2>/dev/null)
 mem_avail=$(awk '/^MemAvailable:/ {print int($2/1024)}' /proc/meminfo 2>/dev/null)
@@ -82,7 +87,7 @@ verdict=PASS
     echo "modd=$modd"
     echo "launcher=$launcher"
     echo "zram=$zram"
-    echo "swap_active=$zram_active"
+    echo "swap_active=$swap_active"
     echo "swap=$swap"
     echo "gpu=$gpu"
     echo "mem_total_mb=$mem_total"

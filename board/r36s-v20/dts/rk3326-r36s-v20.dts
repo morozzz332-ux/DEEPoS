@@ -261,6 +261,16 @@
 		simple-audio-card,name = "rk817-codec";
 		simple-audio-card,format = "i2s";
 		simple-audio-card,mclk-fs = <256>;
+		/* The speaker is driven by the codec class-D stage. Routing the
+		 * speaker pin to SPKO leaves "Enable Class D" unpowered and the
+		 * console stays silent; SPK DAC pulls the class-D widgets in. */
+		simple-audio-card,widgets =
+			"Headphone", "Headphones",
+			"Speaker", "Internal Speakers";
+		simple-audio-card,routing =
+			"Headphones", "HPOL",
+			"Headphones", "HPOR",
+			"Internal Speakers", "SPK DAC";
 
 		simple-audio-card,cpu {
 			sound-dai = <&i2s1_2ch>;

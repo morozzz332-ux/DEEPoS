@@ -979,3 +979,33 @@ U-Boot + служебные блоки копируются байт-в-байт
 - **Тесты.** `tests/board_test.py` получил `test_gpu_and_ports_stack()` (модули и порядок, GBM, sudo, curate, `sdl2`, tsv, zram+swap, hostname, `sync`). `tests/ci/Dockerfile` — `alsa-lib-dev`, без него host-сборка лаунчера не находит `<sound/asound.h>`. Golden-хеш экрана «Сведения» обновлён: версия в UI изменилась.
 - Полный набор (`run`, `modd`, `saved`, `modules`, `image`, `board`, `boot`) — PASS. Живая консоль: `ping`, порт-шелл и `httpd` переживают перезагрузку канала; образ 0.42 собран и записан в слот B.
 
+
+
+### 2026-11-20 · 0.43: звук через класс-D и чистка сканера
+
+Всё проверено на живой консоли (DEEPoS 0.42-v20-test, слот B, канал по USB-NCM).
+
+- **Звук молчал из-за маршрута в дереве устройств.** Рабочий DTB (донорский) держит
+  `rk817-sound-simple`: пин `Internal Speakers` идёт прямо на `SPKO`. DAPM включает `SPKO`,
+  но не включает `Enable Class D` (R64 бит 0x80) и `Class D Mode` (R56 бит 0x10) — выход
+  класса-D остаётся заглушённым, тон «играет» в никуда. Вторая карта в том же DTB
+  (`rk817-sound-amplified`) ведёт усилитель `simple-audio-amplifier` от HPOL/HPOR: линия
+  `enable` (gpio103) поднимается, а звука всё равно нет — класс-D обойдён.
+  Решение: маршрут `Internal Speakers` → `SPK DAC`. Тогда DAPM тянет `Enable Class D`
+  через цепочку питания, и тон 660 Гц слышен. DTB патчится `tools/dtb-sound-fix.py`
+  (dtc внутри `deepos-build:boot-repair`), результат лежит в
+  `board/r36s-v20/boot/dtbs/rk3326-r36s-v20.dtb` (sha256 848c361b…, 72 919 B), Makefile
+  берёт его через `BOARD_DTB`/`KERNEL_DTB`. На консоли файл заменён в `/flash/dtbs`
+  с бэкапами `/flash/dtbs/rk3326-r36s-v20.dtb.stock` и `/data/dtb-stock-backup.dtb`.
+- **Диагностический инструментарий.** `rk817-reg.py` (i2c-dev: `get/set/or/and`) на консоли
+  получает `EBUSY` — шину держит MFD RK8xx, поэтому регистры кодека читались только через
+  `debugfs`: `/tmp/dbg/regmap/0-0020/registers` (`0x38 = 0x21`, `0x40 = 0x65`, то есть класс-D
+  выключен), а состояние DAPM — `/tmp/dbg/asoc/rk817_ext/**/dapm/*`.
+- **Сканер библиотеки считал `/storage/report` консолью «REPORT»** после того, как в отчётах
+  остались `ra-probe.sh`/`ra-probe2.sh`. В `dp_scan.c` добавлен `is_reserved_folder()`
+  (`bios`, `roms`, `modules`, `report`, `portmaster`, `saves`, `lost+found`); реестр расширений
+  теперь можно подменить переменной `DP_EXTENSIONS` — это нужно тесту и отладке на ПК.
+- **Тесты.** `tests/launch_test.py` проверяет `--roms <tmp> --list-roms`: `snes`/`ports` в
+  списке, `report`/`bios` — нет. `tests/board_test.py` → `test_sound_route()`: исходник DTS и
+  закоммиченный DTB обязаны содержать маршрут `Internal Speakers` → `SPK DAC`, в DTB не должно
+  остаться маршрута на `SPKO`. Полный набор в контейнере — PASS.

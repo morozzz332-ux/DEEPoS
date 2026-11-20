@@ -354,6 +354,12 @@ def test_usb_gadget() -> None:
     check("USB does not start a login console", "gadget-getty.sh" not in inittab)
     rcs = (overlay / "etc/init.d/rcS").read_text(encoding="utf-8")
     check("USB starts only on explicit selection", "usb-gadget.sh" not in rcs and "telnetd" not in rcs)
+    check("debug shell needs the card flag", "[ -f /flash/DEBUG.ON ]" in rcs)
+    debug = overlay / "usr/local/bin/usb-shell.sh"
+    check("debug shell ships in the image", debug.exists())
+    if debug.exists():
+        check("debug shell listens on 23 and 8080",
+              "nc -l -p 23 -e /bin/sh" in debug.read_text(encoding="utf-8"))
     check("rcS records same-card ROMS for USB", "/run/deepos-roms-device" in rcs)
     conf = (ROOT / "board/r36s-v20/linux.config").read_text(encoding="utf-8")
     for sym in ("CONFIG_USB_CONFIGFS_ACM=y", "CONFIG_USB_CONFIGFS_NCM=y",
@@ -438,6 +444,17 @@ def test_gpu_and_ports_stack():
           run_port.find("curate-controllerdb.sh") < run_port.find("exec /bin/bash"))
     check("run-port.sh points Mesa at the rootfs GBM backend",
           "GBM_BACKENDS_PATH" in run_port and "/usr/lib/gbm" in run_port)
+    # 5. SDL dlopen()s these by soname before it can create a window: without
+    #    libudev it segfaults inside the kmsdrm driver, without libEGL every
+    #    port reports "EGL not initialized".
+    for soname, minimum in (("libudev.so.1", 200000),
+                            ("libEGL.so.1", 100000),
+                            ("libGLdispatch.so.0", 1000000)):
+        p = overlay / "usr/lib" / soname
+        check(f"overlay ships /usr/lib/{soname}",
+              p.is_file() and p.stat().st_size >= minimum)
+    check("run-port.sh keeps /usr/lib on the library path",
+          "LD_LIBRARY_PATH=$runtime/lib:/usr/lib" in run_port)
     retro = (overlay / "usr/share/deepos/retroarch.cfg").read_text(encoding="utf-8")
     check("RetroArch uses the SDL2 input driver (no udevd, no tty)",
           'input_driver = "sdl2"' in retro)
@@ -474,6 +491,27 @@ def test_gpu_and_ports_stack():
     check("rcS mounts BOOT with sync (FAT has no journal)", "/flash sync" in rc)
 
 
+def test_sound_route():
+    """The speaker must hang off the codec class-D stage, not bare SPKO."""
+    dts = BOARD / "dts" / "rk3326-r36s-v20.dts"
+    check("dts exists for the sound check", dts.is_file())
+    text = dts.read_text(encoding="utf-8") if dts.is_file() else ""
+    check("dts routes the speaker to SPK DAC",
+          '"Internal Speakers", "SPK DAC"' in text)
+    check("dts keeps headphones on HPOL/HPOR",
+          '"Headphones", "HPOL"' in text and '"Headphones", "HPOR"' in text)
+
+    dtb = BOARD / "boot" / "dtbs" / "rk3326-r36s-v20.dtb"
+    check("patched board dtb is checked in", dtb.is_file())
+    blob = dtb.read_bytes() if dtb.is_file() else b""
+    check("patched dtb routes the speaker to SPK DAC",
+          b"Internal Speakers\x00SPK DAC" in blob, f"{len(blob)} bytes")
+    check("patched dtb no longer routes the speaker to SPKO",
+          b"Internal Speakers\x00SPKO" not in blob)
+    tool = ROOT / "tools" / "dtb-sound-fix.py"
+    check("dtb-sound-fix.py regenerates the patched dtb", tool.is_file())
+
+
 def main():
     print("board tests (R36S-V20):")
     test_dts()
@@ -490,6 +528,7 @@ def main():
     test_usb_gadget()
     test_selfcheck()
     test_rcs_order()
+    test_sound_route()
     test_gpu_and_ports_stack()
     print()
     if fails:

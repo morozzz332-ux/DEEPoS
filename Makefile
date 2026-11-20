@@ -126,6 +126,11 @@ uboot: docker-cross
 # repository VERSION file is the single source; override with make VERSION=...
 VERSION ?= $(shell cat VERSION 2>/dev/null || echo 0.26-dev)
 BOOT_EXTRA ?= board/r36s-v20/boot/README-FIRST.txt
+# Board DTB: the one checked in under board/ is the stock tree with the speaker
+# routed to the codec class-D stage (tools/dtb-sound-fix.py), because the tree
+# built from board/dts is mainline and does not describe this panel/PLL setup.
+BOARD_DTB ?= board/r36s-v20/boot/dtbs/rk3326-r36s-v20.dtb
+KERNEL_DTB = $(if $(wildcard $(BOARD_DTB)),$(BOARD_DTB),build/kernel/rk3326-r36s-v20.dtb)
 LOADER_DONOR ?=
 DONOR_BIND = $(if $(LOADER_DONOR),--mount "type=bind,source=$(abspath $(LOADER_DONOR)),target=$(DONOR_PATH),readonly")
 DONOR_PATH = /rockchip-donor$(suffix $(LOADER_DONOR))
@@ -136,7 +141,7 @@ boot: docker-image
 	@test -f build/kernel/Image || (echo "missing build/kernel/Image - run 'make kernel' first" >&2; exit 1)
 	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(IMAGE) \
 		-c "python3 tools/mkboot.py --kernel build/kernel/Image \
-			--dtb build/kernel/rk3326-r36s-v20.dtb --out build/boot \
+			--dtb $(KERNEL_DTB) --out build/boot \
 			--extlinux board/r36s-v20/boot/extlinux/extlinux.conf \
 			--logo branding/deepos-boot.bmp \
 			--extra $(BOOT_EXTRA) $(BOOT_SCRIPT_ARG) --version $(VERSION)"

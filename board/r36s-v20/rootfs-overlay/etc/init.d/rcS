@@ -147,6 +147,19 @@ if is_mounted /run && [ -d /games ]; then
     mount_game_card
 fi
 
+# 3a. Development escape hatch. A card that carries /flash/DEBUG.ON gets the USB
+#     network shell before the launcher starts, so a broken UI or a bad overlay
+#     can still be diagnosed and reverted over USB, without a card reader.
+#     Without the flag nothing listens on the network at all.
+if [ -f /flash/DEBUG.ON ] && [ -x /usr/local/bin/usb-shell.sh ]; then
+    if [ -x /usr/local/bin/usb-mode.sh ] &&
+       [ "$(cat /run/deepos-usb.mode 2>/dev/null)" != network ]; then
+        /usr/local/bin/usb-mode.sh network >/dev/null 2>&1 || true
+    fi
+    /bin/sh /usr/local/bin/usb-shell.sh >/dev/null 2>&1 &
+    echo "DEEPoS: debug shell requested by DEBUG.ON" >&2
+fi
+
 # 4. Writable places the launcher expects even on a fresh card.
 if [ "$data_mounted" = yes ]; then
     mkdir -p /data/config /data/saves 2>/dev/null || true
@@ -173,11 +186,15 @@ if [ -e /sys/block/zram0/disksize ]; then
             echo "DEEPoS: cannot enable zram swap" >&2
     fi
 fi
+# The overflow file is small on purpose: DATA also carries the emulator bundle,
+# so a wrong-sized swap file can fill the partition and break saves.
 swap_file=/data/swapfile
+swap_mib=128
 if [ "$data_mounted" = yes ] && [ -w /data ]; then
     (
-        if [ ! -s "$swap_file" ]; then
-            dd if=/dev/zero of="$swap_file" bs=1M count=256 2>/dev/null &&
+        free_mib=$(df -m /data 2>/dev/null | awk 'NR == 2 { print $4 }')
+        if [ ! -s "$swap_file" ] && [ "${free_mib:-0}" -ge $((swap_mib + 256)) ]; then
+            dd if=/dev/zero of="$swap_file" bs=1M count=$swap_mib 2>/dev/null &&
                 chmod 600 "$swap_file" || rm -f "$swap_file"
             mkswap "$swap_file" >/dev/null 2>&1 || rm -f "$swap_file"
         fi

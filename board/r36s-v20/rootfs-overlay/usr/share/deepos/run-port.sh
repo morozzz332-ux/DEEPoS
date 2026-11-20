@@ -33,7 +33,10 @@ export XDG_CONFIG_HOME=$HOME/.config
 export XDG_DATA_HOME=$data
 export PATH="$runtime/bin:$PATH"
 export PYTHONHOME=$runtime
-export LD_LIBRARY_PATH=$runtime/lib
+# SDL dlopen()s libudev.so.1 and libEGL.so.1 by soname. Without them SDL_Init
+# dies with SIGSEGV inside the kmsdrm driver and every port "just crashes";
+# the rootfs ships both, so keep /usr/lib on the search path.
+export LD_LIBRARY_PATH=$runtime/lib:/usr/lib
 export LIBGL_DRIVERS_PATH=$runtime/lib/dri
 # Mesa's KMS/GBM backend lives in /usr/lib/gbm (shipped by the rootfs): without
 # it every EGL surface creation fails with "failed to open dri: dri_gbm.so".

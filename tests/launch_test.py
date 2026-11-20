@@ -254,6 +254,26 @@ def main() -> int:
             except subprocess.TimeoutExpired:
                 proc.kill()
 
+    # 8. The scanner must not turn the launcher's own folders into consoles:
+    #    a stray /storage/report/ra-probe.sh used to show up as "REPORT".
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp)
+        for name in ("ports", "report", "bios", "snes"):
+            (root / name).mkdir()
+        (root / "ports" / "demo.sh").write_text("#!/bin/sh\n")
+        (root / "report" / "ra-probe.sh").write_text("#!/bin/sh\n")
+        (root / "snes" / "smoke.sfc").write_text("rom")
+        registry = root / "extensions.tsv"
+        registry.write_text("snes\t.sfc .smc\nports\t.sh\n")
+        res = run_launcher(["--roms", str(root), "--list-roms"],
+                           env={"DP_EXTENSIONS": str(registry)})
+        check(res.returncode == 0, f"--list-roms exit {res.returncode}: {res.stderr}")
+        ids = [line.split("\t")[0] for line in res.stdout.splitlines() if "\t" in line]
+        check("snes" in ids, f"game console missing from the scan: {ids!r}")
+        check("ports" in ids, f"ports console missing from the scan: {ids!r}")
+        check("report" not in ids, f"report folder leaked into the scan: {ids!r}")
+        check("bios" not in ids, f"bios folder leaked into the scan: {ids!r}")
+
     if failures:
         print("FAIL")
         for f in failures:
