@@ -1,6 +1,6 @@
 # DEEPoS на R36S‑V20. Сохранения, совместимость и план передачи разработки
 
-Этот документ фиксирует состояние после проверки 0.50 и сборки 0.51. Он дополняет [FIRMWARE-SPEC.md](FIRMWARE-SPEC.md), [правила репозитория](../AGENTS.md), [аудит всех 16 настроек](V20-ARCHITECTURE-AUDIT.md) и [метрики](metrics.md). Просьбы о будущих изменениях ниже описаны как задачи для отдельной реализации и проверки.
+Этот документ фиксирует состояние после проверки 0.50 и установки 0.51. Он дополняет [FIRMWARE-SPEC.md](FIRMWARE-SPEC.md), [правила репозитория](../AGENTS.md), [аудит всех 16 настроек](V20-ARCHITECTURE-AUDIT.md) и [метрики](metrics.md). Для следующего агента подготовлены [спецификация настроек и архитектуры](V20-SETTINGS-ARCHITECTURE-SPEC.md) и [стартовый промпт](V20-AGENT-START.md).
 
 ## Точка входа для следующего агента
 
@@ -133,6 +133,23 @@ python3 tests/board_test.py
 ```
 
 После изменений версии обновить только ожидаемые строки `tests/golden/hashes.json` через `python3 tests/run.py --update`. Перепроверить staged diff командой `tools/check-secrets.ps1 -Staged`. Изменения сохранений, BOOT или аппаратных дефолтов сопровождаются выводом конкретных тестов и замером по образцу [metrics.md](metrics.md).
+
+Для сборки прошивки монтировать исходники в `/src` только для чтения и локальный `build/` в `/w/build` в контейнере `deepos-cross:local`. Команды ниже используют пакеты, с которыми собрана 0.51. При отсутствии пакета сначала восстановить его по [EMULATORS.md](EMULATORS.md) и сверить состав. Записать контрольные суммы входов и итоговую версию в журнал. Для отдельного кандидата использовать собственные `STAGE` и `OUT`.
+
+```sh
+cd /w
+tar -C /src --exclude=.git --exclude=build --exclude=tests/out --exclude='*.o' -cf /tmp/deepos-src.tar .
+tar -C /w -xf /tmp/deepos-src.tar
+export PORTMASTER_PACKAGE=/w/build/deepos-portmaster-aarch64.tar.gz
+export EXTRA_CORES_PACKAGE=/w/build/deepos-extra-cores-aarch64-r2.tar.gz
+export STAGE=/w/build/rootfs-stage-candidate
+export OUT=/w/build/deepos-rootfs-candidate.squashfs
+sh tools/build-rootfs.sh
+unsquashfs -cat "$OUT" etc/deepos-version
+sha256sum "$OUT"
+```
+
+`launcher --selftest` выполняется ARM64-бинарником из `STAGE`. В контейнере без SD и панели ожидается отсутствие локальной библиотеки и framebuffer. На физической V20 результат дополняется фактическими загрузкой, вводом, звуком и записью слота.
 
 ## Применение решений других систем
 
