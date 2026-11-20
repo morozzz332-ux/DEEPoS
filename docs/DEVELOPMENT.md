@@ -66,7 +66,9 @@ apps/launcher/launcher --screen settings --out /tmp/settings.ppm
    через `RETROARCH_PACKAGE`. [Импорт эмуляторов](EMULATORS.md)
    Для расширенного каталога ядер передайте в сборку rootfs переменную
    `EXTRA_CORES_PACKAGE` с архивом, созданным
-   [package-extra-cores.py](../tools/package-extra-cores.py). PortMaster
+   [package-extra-cores.py](../tools/package-extra-cores.py). Для EmuSCV
+   используйте `--emuscv` и архив с SHA‑256, указанным в скрипте.
+   PortMaster
    подключается через `PORTMASTER_PACKAGE`. [Сборка PortMaster](PORTMASTER.md)
 4. Запустите `tools/preflight.py` и `tools/verify-image.py` для итоговых
    артефактов. Фиксируйте точную версию, размер и SHA‑256 образа и rootfs в

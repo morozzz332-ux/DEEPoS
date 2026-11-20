@@ -17,7 +17,7 @@
    команда выглядит так:
 
    ```powershell
-   Get-FileHash -Algorithm SHA256 .\deepos-r36s-v20-0.41-test.img.gz
+   Get-FileHash -Algorithm SHA256 .\deepos-r36s-v20-0.41-bundle-r2.img.gz
    ```
 
 Если готового образа для вашей ревизии нет, его можно собрать по
