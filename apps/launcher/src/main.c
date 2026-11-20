@@ -760,6 +760,7 @@ static void expand_rom(const char *tmpl, int save_slot, char *out,
 static const char *g_vol_config;
 static const char *g_vol_sysfs;
 static const char *g_power_sysfs;
+static int g_child_signal;
 static unsigned long long now_us(clockid_t clock_id);
 
 static void volume_step(int delta) {
@@ -837,6 +838,7 @@ static int wait_for_command(pid_t pid, int *status, int watch_game) {
 static int run_command(const char *cmd, const char *arg, int watch_game) {
     pid_t pid = fork();
     int status = 0;
+    g_child_signal = 0;
     if (pid < 0)
         return -1;
     if (pid == 0) {
@@ -852,6 +854,7 @@ static int run_command(const char *cmd, const char *arg, int watch_game) {
         return 0;
     if (WIFEXITED(status))
         return WEXITSTATUS(status);
+    g_child_signal = WIFSIGNALED(status) ? WTERMSIG(status) : 0;
     return -1;
 }
 
@@ -939,6 +942,63 @@ static void continue_update(const char *data_dir, const struct dp_model *m, cons
     }
 }
 
+/* One launch result, written after the child is gone: the matrix, "Сведения"
+ * and the next agent read the route that actually ran instead of re-deriving
+ * it. Only a resolved route produces a record, so a missing emulator does not
+ * overwrite the last real session. Written atomically like continue.tsv. */
+static void launch_record_write(const char *data_dir, const char *sys, const char *rom,
+                                enum dp_rom_source source, const char *cmd, int slot,
+                                int child, int signal_no)
+{
+    char path[1024], tmp[1060], dir[1024];
+    const char *runtime = "native";
+    char core[64] = "-";
+
+    if (strstr(cmd, "retroarch-game.sh") != NULL) {
+        runtime = "retroarch";
+        const char *p = strstr(cmd, "retroarch-game.sh") + strlen("retroarch-game.sh");
+        while (*p == ' ' || *p == '\t')
+            p++;
+        size_t i = 0;
+        while (*p && *p != ' ' && *p != '\t' && i + 1 < sizeof(core))
+            core[i++] = *p++;
+        core[i] = '\0';
+        if (i == 0)
+            snprintf(core, sizeof(core), "-");
+    } else if (strstr(cmd, "run-port.sh") != NULL || strcmp(sys, "ports") == 0) {
+        runtime = "port";
+    }
+
+    snprintf(path, sizeof(path), "%s/last-launch.tsv", data_dir);
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    FILE *out = fopen(tmp, "w");
+    if (!out)
+        return;
+    fprintf(out, "session=%ld-%lld\n", (long)getpid(), (long long)time(NULL));
+    fprintf(out, "system=%s\n", sys);
+    fprintf(out, "rom=%s\n", rom);
+    fprintf(out, "source=%s\n", source == DP_ROM_TF2 ? "tf2" : "tf1");
+    fprintf(out, "runtime=%s\n", runtime);
+    fprintf(out, "core=%s\n", core);
+    fprintf(out, "slot=%d\n", slot);
+    fprintf(out, "exit=%d\n", child);
+    fprintf(out, "signal=%d\n", signal_no);
+    fprintf(out, "save=unavailable\n");
+    fflush(out);
+    fsync(fileno(out));
+    fclose(out);
+    if (rename(tmp, path) != 0) {
+        fprintf(stderr, "launcher: cannot rename %s\n", tmp);
+        return;
+    }
+    snprintf(dir, sizeof(dir), "%s", data_dir);
+    int dfd = open(dir, O_RDONLY);
+    if (dfd >= 0) {
+        fsync(dfd);
+        close(dfd);
+    }
+}
+
 static int game_emulator(const char *emulators_path, const char *system, struct dp_launch_cfg *cfg)
 {
     if (parse_emulators(emulators_path, system, cfg) == 0)
@@ -1014,6 +1074,7 @@ static int launch_game(const struct dp_model *m, const char *roms, const char *m
         }
     }
     child = run_command(cmd, rom_path, 1);
+    launch_record_write(data, sys, rom, card, cmd, slot, child, g_child_signal);
     if (power_saved) {
         char reason[96];
         dp_power_restore(g_power_sysfs, &power, reason, sizeof(reason));

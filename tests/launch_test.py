@@ -334,6 +334,54 @@ def main() -> int:
         check(not (pdata / "power-before.tsv").exists(),
               "stale snapshot must be consumed once")
 
+        # 11. One launch record per resolved route: system, card, runtime, core,
+        #     slot, child code and signal. A route that never resolved (missing
+        #     emulator) must not overwrite the last real session.
+        rec_data = tmp / "rec-data"
+        rec_data.mkdir()
+        ra_stub = tmp / "retroarch-game.sh"
+        ra_stub.write_text("#!/bin/sh\nexit 0\n")
+        ra_stub.chmod(0o755)
+        rec_emu = tmp / "emulators-rec.toml"
+        rec_emu.write_text(f'md = "/bin/sh {ra_stub} fceumm %ROM%"\n')
+        res = run_launcher(["--roms", str(roms), "--data", str(rec_data),
+                            "--emulators", str(rec_emu), "--save-slot", "2",
+                            "--run-game", "md:g0.md"])
+        check(res.returncode == 0, f"launch record exit {res.returncode}: {res.stderr}")
+        record = rec_data / "last-launch.tsv"
+        check(record.exists(), "resolved route must leave a launch record")
+        fields = dict(line.split("=", 1) for line in record.read_text().splitlines() if "=" in line) if record.exists() else {}
+        check(fields.get("system") == "md", f"record system: {fields}")
+        check(fields.get("rom") == "g0.md", f"record rom: {fields}")
+        check(fields.get("source") == "tf1", f"record source: {fields}")
+        check(fields.get("runtime") == "retroarch", f"record runtime: {fields}")
+        check(fields.get("core") == "fceumm", f"record core: {fields}")
+        check(fields.get("slot") == "2", f"record slot: {fields}")
+        check(fields.get("exit") == "0" and fields.get("signal") == "0",
+              f"record result: {fields}")
+        check(fields.get("session", "") != "", f"record must name its session: {fields}")
+
+        res = run_launcher(["--roms", str(roms), "--data", str(rec_data),
+                            "--emulators", str(emu), "--run-game", "md:g0.md"],
+                           {"STUB_RC": "3"})
+        fields = dict(line.split("=", 1) for line in record.read_text().splitlines() if "=" in line)
+        check(res.returncode == 1 and fields.get("exit") == "3" and
+              fields.get("runtime") == "native", f"record after failing child: {fields}")
+
+        sig_emu = tmp / "emulators-sig.toml"
+        sig_emu.write_text('md = "kill -TERM $$"\n')
+        res = run_launcher(["--roms", str(roms), "--data", str(rec_data),
+                            "--emulators", str(sig_emu), "--run-game", "md:g0.md"])
+        fields = dict(line.split("=", 1) for line in record.read_text().splitlines() if "=" in line)
+        check(res.returncode == 1 and fields.get("signal") == "15",
+              f"record must keep the child signal: {fields}")
+
+        before = record.read_text()
+        res = run_launcher(["--roms", str(roms), "--data", str(rec_data),
+                            "--emulators", str(rec_emu), "--run-game", "snes:g0.sfc"])
+        check(res.returncode == 5 and record.read_text() == before,
+              "unresolved route must not overwrite the last launch record")
+
     # 8. The scanner must not turn the launcher's own folders into consoles:
     #    a stray /storage/report/ra-probe.sh used to show up as "REPORT".
     with tempfile.TemporaryDirectory() as tmp:
