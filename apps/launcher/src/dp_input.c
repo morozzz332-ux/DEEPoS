@@ -204,10 +204,19 @@ static int is_direction(enum dp_key key)
            key == DP_KEY_LEFT || key == DP_KEY_RIGHT;
 }
 
+static int has_volume_keys(int fd)
+{
+    unsigned char bits[KEY_BYTES] = { 0 };
+    if (ioctl(fd, (int)EVIOCGBIT(EV_KEY, sizeof(bits)), bits) < 0)
+        return 0;
+    return bit_test(bits, KEY_VOLUMEUP) && bit_test(bits, KEY_VOLUMEDOWN);
+}
+
 int dp_input_open(struct dp_input *in)
 {
     memset(in, 0, sizeof(*in));
     in->fd = -1;
+    in->key_fd = -1;
     int best = -1, best_score = 0;
     for (int i = 0; i < 32; i++) {
         char path[64];
@@ -235,6 +244,31 @@ int dp_input_open(struct dp_input *in)
             close(fd);
         }
     }
+    for (int i = 0; i < 32; i++) {
+        char path[64];
+        snprintf(path, sizeof(path), "/dev/input/event%d", i);
+        int fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+        if (fd < 0)
+            continue;
+        if (!has_volume_keys(fd)) {
+            close(fd);
+            continue;
+        }
+        if (in->key_fd >= 0 && strcasecmp(in->key_name, "adc-keys") == 0) {
+            close(fd);
+            continue;
+        }
+        char name[DP_INPUT_NAME] = { 0 };
+        ioctl(fd, (int)EVIOCGNAME(sizeof(name) - 1), name);
+        if (in->key_fd >= 0 && strcasecmp(name, "adc-keys") != 0) {
+            close(fd);
+            continue;
+        }
+        if (in->key_fd >= 0)
+            close(in->key_fd);
+        in->key_fd = fd;
+        snprintf(in->key_name, sizeof(in->key_name), "%s", name);
+    }
     const char *force = getenv("DEEPOS_SWAP_AB");
     if (best >= 0 && force && force[0] == '1')
         in->swap_ab = 1;
@@ -249,7 +283,10 @@ void dp_input_close(struct dp_input *in)
 {
     if (in->fd >= 0)
         close(in->fd);
+    if (in->key_fd >= 0)
+        close(in->key_fd);
     in->fd = -1;
+    in->key_fd = -1;
     in->ready = 0;
 }
 
@@ -257,18 +294,51 @@ enum dp_key dp_input_poll(struct dp_input *in, int timeout_ms)
 {
     if (!in->ready)
         return DP_KEY_NONE;
-    struct pollfd event = { .fd = in->fd, .events = POLLIN };
-    int rc = poll(&event, 1, timeout_ms);
+    struct pollfd fds[2];
+    int nfds = 0;
+    fds[nfds].fd = in->fd;
+    fds[nfds].events = POLLIN;
+    fds[nfds].revents = 0;
+    nfds++;
+    if (in->key_fd >= 0) {
+        fds[nfds].fd = in->key_fd;
+        fds[nfds].events = POLLIN;
+        fds[nfds].revents = 0;
+        nfds++;
+    }
+    int rc = poll(fds, (nfds_t)nfds, timeout_ms);
     if (rc < 0)
         return DP_KEY_NONE; /* EINTR: caller just retries */
     if (rc == 0)
         return DP_KEY_NONE;
-    if (event.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+    /* The volume rocker is a separate node; read it before the pad so a
+     * simultaneous press is not delayed by the gamepad queue. */
+    for (int i = 1; i < nfds; i++) {
+        if (fds[i].revents & (POLLERR | POLLHUP | POLLNVAL)) {
+            close(in->key_fd);
+            in->key_fd = -1;
+            continue;
+        }
+        if (!(fds[i].revents & POLLIN))
+            continue;
+        for (;;) {
+            struct dp_input_event ev;
+            ssize_t n = read(in->key_fd, &ev, sizeof(ev));
+            if (n != (ssize_t)sizeof(ev) || ev.type != EV_KEY)
+                break;
+            if (ev.value != 1)
+                continue;
+            enum dp_key k = map_code(ev.code, in->swap_ab);
+            if (k == DP_KEY_VOL_UP || k == DP_KEY_VOL_DOWN)
+                return k;
+        }
+    }
+    if (fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) {
         in->ready = 0;
         in->lost = 1;
         return DP_KEY_NONE;
     }
-    if (!(event.revents & POLLIN))
+    if (!(fds[0].revents & POLLIN))
         return DP_KEY_NONE;
     for (;;) {
         struct dp_input_event ev;

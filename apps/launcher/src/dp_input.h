@@ -35,10 +35,14 @@ enum dp_key {
 
 struct dp_input {
     int fd;
+    /* Volume rocker sits on the adc-keys node, a different evdev device than
+     * the gamepad. Keeping a second descriptor is cheaper than a daemon. */
+    int key_fd;
     int ready;      /* 1 while the device is open and has not disappeared */
     int swap_ab;    /* legacy vendor DTB labels the face buttons the other way */
     int lost;       /* 1 after the device disappeared (POLLERR/POLLHUP) */
     char name[DP_INPUT_NAME];
+    char key_name[DP_INPUT_NAME];
     /* CLOCK_REALTIME stamp of the last delivered key, microseconds. The
      * launcher subtracts its own clock to measure input-to-present latency. */
     unsigned long long last_us;

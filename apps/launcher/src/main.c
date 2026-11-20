@@ -227,6 +227,9 @@ static int settings_edit_card(struct dp_nav *nav, struct dp_model *m, int card, 
     }
     if (!applied)
         snprintf(nav->notice, sizeof(nav->notice), "Сохранено. Устройство не применило значение");
+    /* The volume rocker has no card of its own: show the level right away. */
+    if (applied && card == 3 && nav->volume_delta)
+        snprintf(nav->notice, sizeof(nav->notice), "Громкость %d %%", cfg.volume);
     m->cfg_brightness = cfg.brightness;
     m->cfg_volume = cfg.volume;
     memcpy(m->prefs, cfg.prefs, sizeof(m->prefs));

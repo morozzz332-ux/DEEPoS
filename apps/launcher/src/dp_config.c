@@ -270,8 +270,14 @@ int dp_config_apply_volume(const char *prefix, int percent)
             info.count <= 128 && (info.access & SNDRV_CTL_ELEM_ACCESS_WRITE)) {
             struct snd_ctl_elem_value value = { .id = info.id };
             long min = info.value.integer.min, max = info.value.integer.max;
+            /* The class-D output saturates before the mixer reaches full
+             * scale: 100 % maps to 84 % of the range so a loud game does not
+             * clip into the speaker (that is heard as crackling). */
+            long use = percent > 100 ? 100 : percent;
+            if (use < 0)
+                use = 0;
             for (unsigned int i = 0; i < info.count; i++)
-                value.value.integer.value[i] = min + (max - min) * percent / 100;
+                value.value.integer.value[i] = min + (max - min) * use * 84 / 10000;
             ok = ioctl(fd, (int)SNDRV_CTL_IOCTL_ELEM_WRITE, &value) == 0;
         }
         close(fd);

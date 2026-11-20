@@ -512,6 +512,29 @@ def test_sound_route():
     check("dtb-sound-fix.py regenerates the patched dtb", tool.is_file())
 
 
+def test_volume_rocker():
+    """Volume keys live on adc-keys, not on the gamepad, and must reach both
+    the launcher and RetroArch."""
+    src_input = (ROOT / "apps" / "launcher" / "src" / "dp_input.c").read_text(encoding="utf-8")
+    check("input code looks for volume keys",
+          "KEY_VOLUMEUP" in src_input and "KEY_VOLUMEDOWN" in src_input)
+    check("input code opens a second evdev node for the rocker",
+          "has_volume_keys" in src_input and "key_fd" in src_input)
+    check("input code prefers the adc-keys node", "adc-keys" in src_input)
+
+    src_cfg = (ROOT / "apps" / "launcher" / "src" / "dp_config.c").read_text(encoding="utf-8")
+    check("mixer level keeps headroom for the class-D stage", "* use * 84 / 10000" in src_cfg)
+
+    src_main = (ROOT / "apps" / "launcher" / "src" / "main.c").read_text(encoding="utf-8")
+    check("launcher shows the volume level as a toast", "volume_delta" in src_main and "notice" in src_main)
+
+    ra = (BOARD / "rootfs-overlay" / "usr" / "share" / "deepos" / "retroarch.cfg").read_text(encoding="utf-8")
+    for key in ("input_volume_up", "input_volume_down", "audio_volume", "menu_enable_widgets"):
+        check("retroarch.cfg sets " + key, key in ra)
+    check("retroarch volume keys use the adc-keys keycodes",
+          'keycode 115' in ra and 'keycode 114' in ra)
+
+
 def main():
     print("board tests (R36S-V20):")
     test_dts()
@@ -529,6 +552,7 @@ def main():
     test_selfcheck()
     test_rcs_order()
     test_sound_route()
+    test_volume_rocker()
     test_gpu_and_ports_stack()
     print()
     if fails:
