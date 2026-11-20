@@ -122,8 +122,9 @@ kernel: docker-cross
 uboot: docker-cross
 	$(DOCKER) run --rm -v "$(CURDIR):/w" -w /w $(CROSS_IMAGE) -c "sh tools/build-uboot.sh"
 
-# BOOT volume: kernel, DTB, extlinux, splash and the owner's README.
-VERSION ?= 0.26-dev
+# Version of the whole build (BOOT manifest, os-release, launcher banner). The
+# repository VERSION file is the single source; override with make VERSION=...
+VERSION ?= $(shell cat VERSION 2>/dev/null || echo 0.26-dev)
 BOOT_EXTRA ?= board/r36s-v20/boot/README-FIRST.txt
 LOADER_DONOR ?=
 DONOR_BIND = $(if $(LOADER_DONOR),--mount "type=bind,source=$(abspath $(LOADER_DONOR)),target=$(DONOR_PATH),readonly")

@@ -16,5 +16,17 @@ ln -sf /opt/deepos/portmaster/runtime/bin/python3 "$root/usr/bin/python3"
 ln -sf /opt/deepos/portmaster/runtime/lib/ld-linux-aarch64.so.1 "$root/lib/ld-linux-aarch64.so.1"
 ln -sf /opt/deepos/portmaster/runtime/lib/ld-linux-aarch64.so.1 "$root/usr/lib/ld-linux-aarch64.so.1"
 ln -sf /opt/deepos/portmaster/runtime/lib/libc.so.6 "$root/lib/libc.so.6"
+
+# glibc 2.34 merged libpthread/libdl/librt/libutil/libresolv into libc, but port
+# binaries still carry the old DT_NEEDED names and would otherwise die with
+# "error while loading shared libraries: libpthread.so.0".
+for stub in libpthread.so.0 libdl.so.2 librt.so.1 libutil.so.1 libresolv.so.2; do
+    ln -sf libc.so.6 "$runtime/lib/$stub"
+    ln -sf /opt/deepos/portmaster/runtime/lib/libc.so.6 "$root/lib/$stub"
+done
+
+# Keep the SDL controller database below MAX_ARG_STRLEN so port children can exec.
+python3 tools/curate-controllerdb.py /w/$root/opt/deepos
+
 ln -sf /data/portmaster/PortMaster "$root/opt/tools/PortMaster"
 ln -sf /storage "$root/roms"

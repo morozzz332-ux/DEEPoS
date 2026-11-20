@@ -47,6 +47,13 @@ zram=absent; zram_active=0
 swaptotal=$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo 2>/dev/null)
 [ "${swaptotal:-0}" -gt 0 ] 2>/dev/null && zram_active=1
 
+# OpenGL needs both the panfrost module (render node) and its devfreq entry;
+# reporting them separately tells a black screen apart from a missing module.
+gpu=absent
+[ -e /sys/class/devfreq/ff400000.gpu/cur_freq ] && [ -e /dev/dri/renderD128 ] && gpu=present
+swap=none
+[ -s /proc/swaps ] && swap=$(awk 'NR == 2 {print $1}' /proc/swaps 2>/dev/null)
+
 mem_total=$(awk '/^MemTotal:/ {print int($2/1024)}' /proc/meminfo 2>/dev/null)
 mem_avail=$(awk '/^MemAvailable:/ {print int($2/1024)}' /proc/meminfo 2>/dev/null)
 
@@ -76,6 +83,8 @@ verdict=PASS
     echo "launcher=$launcher"
     echo "zram=$zram"
     echo "swap_active=$zram_active"
+    echo "swap=$swap"
+    echo "gpu=$gpu"
     echo "mem_total_mb=$mem_total"
     echo "mem_available_mb=$mem_avail"
     echo "soc_c=$soc"

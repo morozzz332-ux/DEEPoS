@@ -41,6 +41,11 @@ print_overrides() {
                 return
             done
         done ;;
+    *)
+        # ROMs on the internal card keep their BIOS next to them on the ROMS
+        # partition; without this override a config from another card wins.
+        [ -d /storage/bios ] &&
+            printf 'system_directory = "%s"\n' /storage/bios ;;
     esac
 }
 if print_overrides > "$tmp" &&
@@ -63,10 +68,14 @@ if [ -x "$runtime/lib/ld-linux-aarch64.so.1" ]; then
         export LD_PRELOAD="$runtime/lib/libvorbisfile.so.3${LD_PRELOAD:+:$LD_PRELOAD}"
     fi
     export LIBGL_DRIVERS_PATH="$runtime/lib/dri"
+    # Mesa's KMS/GBM backend is shipped by the rootfs, not by the imported
+    # runtime; without it EGL never initialises and the menu stays black.
+    export GBM_BACKENDS_PATH="${GBM_BACKENDS_PATH:-/usr/lib/gbm}"
     export __EGL_VENDOR_LIBRARY_FILENAMES="$runtime/egl/50_mesa.json"
     export ALSOFT_DRIVERS=alsa
     export ALSA_CONFIG_DIR="$runtime/alsa"
     exec "$runtime/lib/ld-linux-aarch64.so.1" "$runtime/retroarch" \
         --config "$cfg" --appendconfig "$hotkeys" -L "$core" "$rom"
 fi
+export GBM_BACKENDS_PATH="${GBM_BACKENDS_PATH:-/usr/lib/gbm}"
 exec "$runtime/retroarch" --config "$cfg" --appendconfig "$hotkeys" -L "$core" "$rom"

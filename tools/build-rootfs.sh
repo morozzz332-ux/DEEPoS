@@ -59,6 +59,18 @@ sh "$REPO/tools/build-userland.sh" --out "$STAGE/usr/bin"
 # --- 3. overlay -----------------------------------------------------------
 echo "applying rootfs overlay"
 cp -a "$REPO/board/r36s-v20/rootfs-overlay/." "$STAGE/"
+# One version for the whole build: the BOOT manifest, /etc/os-release and the
+# launcher banner all read the VERSION file, so the report can no longer claim
+# 0.39 while the root filesystem is 0.41.
+VERSION=${VERSION:-$(cat "$REPO/VERSION" 2>/dev/null || echo 0.1-dev)}
+VERSION_ID=${VERSION%%-*}
+echo "version $VERSION (id $VERSION_ID)"
+if [ -f "$STAGE/etc/os-release" ]; then
+    sed -e "s|@VERSION@|$VERSION|g" -e "s|@VERSION_ID@|$VERSION_ID|g" \
+        "$STAGE/etc/os-release" > "$STAGE/etc/.os-release.new" &&
+        mv -f "$STAGE/etc/.os-release.new" "$STAGE/etc/os-release"
+fi
+printf '%s\n' "$VERSION" > "$STAGE/etc/deepos-version"
 ln -sf /run/deepos-usb-resolv.conf "$STAGE/etc/resolv.conf"
 sh "$REPO/tools/install-zones.sh" "$REPO/apps/launcher/src/dp_zones.def" "$STAGE"
 mkdir -p "$STAGE/proc" "$STAGE/sys" "$STAGE/dev" "$STAGE/run" "$STAGE/tmp" \
@@ -66,7 +78,8 @@ mkdir -p "$STAGE/proc" "$STAGE/sys" "$STAGE/dev" "$STAGE/run" "$STAGE/tmp" \
          "$STAGE/usr/share/deepos" "$STAGE/sbin"
 chmod 1777 "$STAGE/tmp"
 chmod 0755 "$STAGE/etc/init.d/rcS" "$STAGE/usr/local/bin/"*.sh \
-           "$STAGE/usr/share/deepos/roms/ports/demo.sh"
+           "$STAGE/usr/share/deepos/roms/ports/demo.sh" \
+           "$STAGE/usr/bin/sudo" "$STAGE/usr/share/deepos/curate-controllerdb.sh"
 if [ -n "${PORTMASTER_PACKAGE:-}" ]; then
     sh "$REPO/tools/install-portmaster.sh" "$STAGE" "$PORTMASTER_PACKAGE"
 fi
@@ -86,6 +99,7 @@ chmod 0755 "$STAGE/usr/share/deepos/modules/"*/main.sh \
            "$STAGE/usr/share/deepos/modules/"*/root/*.sh
 cp "$REPO/board/r36s-v20/data/emulators.toml" "$STAGE/usr/share/deepos/"
 cp "$REPO/board/r36s-v20/data/rom-folders.txt" "$STAGE/usr/share/deepos/"
+cp "$REPO/board/r36s-v20/data/bios-required.tsv" "$STAGE/usr/share/deepos/"
 install -D -m 0644 "$REPO/tools/fonts/terminus/OFL.TXT" \
     "$STAGE/usr/share/licenses/deepos/terminus-OFL.txt"
 

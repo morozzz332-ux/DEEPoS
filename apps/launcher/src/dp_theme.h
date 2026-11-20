@@ -4,7 +4,9 @@
 
 #include "dp_canvas.h"
 
-#define DP_VERSION "0.41-v20-test"
+#ifndef DP_VERSION
+#define DP_VERSION "0.0-dev"
+#endif
 
 #define DP_W 640
 #define DP_H 480

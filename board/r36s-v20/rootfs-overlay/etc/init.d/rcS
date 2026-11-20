@@ -9,7 +9,7 @@
 is_mounted() { grep -q " $1 " /proc/mounts 2>/dev/null; }
 
 mount_part() {
-    partition="$1/$2"; dev="/dev/$2"; dir="$3"
+    partition="$1/$2"; dev="/dev/$2"; dir="$3"; opts="${4:-noatime}"
     if [ ! -r "$partition/partition" ]; then
         echo "DEEPoS: $dev missing for $dir" >&2
         return 1
@@ -19,7 +19,7 @@ mount_part() {
         echo "DEEPoS: $dir already mounted from another device" >&2
         return 1
     fi
-    mount -o noatime "$dev" "$dir" 2>/dev/null && return 0
+    mount -o "$opts" "$dev" "$dir" 2>/dev/null && return 0
     echo "DEEPoS: cannot mount $dev on $dir" >&2
     return 1
 }
@@ -42,9 +42,12 @@ mount_boot_card() {
         echo "DEEPoS: cannot identify the MMC card for the squashfs root" >&2
         return 0
     fi
-    mount_part "$card_path" "${card}p1" /flash && flash_mounted=yes
-    mount_part "$card_path" "${card}p4" /data && data_mounted=yes
-    mount_part "$card_path" "${card}p5" /storage && roms_mounted=yes
+    # FAT has no journal: switching the console off mid-write leaves the volume
+    # dirty and every later mount on a PC asks for fsck. /flash is written rarely
+    # (boot report), so mounting it sync costs nothing and keeps it clean.
+    mount_part "$card_path" "${card}p1" /flash sync && flash_mounted=yes
+    mount_part "$card_path" "${card}p4" /data noatime && data_mounted=yes
+    mount_part "$card_path" "${card}p5" /storage noatime && roms_mounted=yes
 }
 
 mount_game_card() {
@@ -88,6 +91,9 @@ mount_game_card() {
 mount -t proc     proc     /proc                 2>/dev/null || true
 mount -t sysfs    sysfs    /sys                  2>/dev/null || true
 mount -t devtmpfs devtmpfs /dev                  2>/dev/null || true
+# The kernel inherits its hostname from the bootloader and keeps it, so /etc/hostname
+# alone never reaches uname -n or the USB gadget description.
+hostname deepos 2>/dev/null || true
 mkdir -p /dev/pts /dev/shm
 [ -e /dev/fd ] || ln -s /proc/self/fd /dev/fd
 # Draw before probing storage or starting services. The launcher owns the next frame.
@@ -107,6 +113,25 @@ if [ -r "$joypad" ] && ! insmod "$joypad"; then
 fi
 [ -x /sbin/mdev ] && mdev -s 2>/dev/null || true
 
+# 2a. Mali-G31 (panfrost) is modular in this kernel: nothing else creates the
+#     render node, so every OpenGL application (RetroArch gl, PortMaster ports)
+#     fails with "EGL not initialized" until the module set is loaded.
+#     Order matters: panfrost depends on drm_shmem_helper and gpu-sched.
+gpu_modules="drm_shmem_helper gpu-sched panfrost"
+gpu_dir="/lib/modules/$(uname -r)"
+for module in $gpu_modules; do
+    [ -r "$gpu_dir/$module.ko" ] || continue
+    insmod "$gpu_dir/$module.ko" 2>/dev/null ||
+        echo "DEEPoS: cannot load $module" >&2
+done
+# The render node appears asynchronously after the DRM probe; wait briefly so
+# the first launch after boot does not race it.
+waited=0
+while [ ! -e /dev/dri/renderD128 ] && [ "$waited" -lt 10 ]; do
+    sleep 0.1 2>/dev/null || sleep 1
+    waited=$((waited + 1))
+done
+
 # 3. Partitions. Layout (see board/r36s-v20/layout.json):
 #      p1 BOOT (FAT32)  -> /flash   boot chain, KERNEL, dtbs, extlinux
 #      p2 SYS_A, p3 SYS_B (squashfs roots) - never mounted at runtime
@@ -125,6 +150,42 @@ fi
 # 4. Writable places the launcher expects even on a fresh card.
 if [ "$data_mounted" = yes ]; then
     mkdir -p /data/config /data/saves 2>/dev/null || true
+fi
+
+# 4a. Memory. zram is a module set in this kernel (nothing is built in and
+#     zswap is absent), while the ports expect a swap device and cannot create
+#     one on the exFAT ROMS card. Load the zram stack, give it 512 MiB with lz4
+#     (the cheapest codec for these four A35 cores) and keep a small file on
+#     /data as cold overflow: the kernel drains the higher-priority zram first.
+zram_modules="lz4_compress lz4hc_compress zstd_compress zsmalloc zram"
+for module in $zram_modules; do
+    [ -r "$gpu_dir/$module.ko" ] || continue
+    insmod "$gpu_dir/$module.ko" 2>/dev/null ||
+        echo "DEEPoS: cannot load $module" >&2
+done
+if [ -e /sys/block/zram0/disksize ]; then
+    # The codec must be chosen before the size: once the device is initialised
+    # the kernel refuses the change with EBUSY.
+    echo lz4 > /sys/block/zram0/comp_algorithm 2>/dev/null || true
+    if echo 536870912 > /sys/block/zram0/disksize 2>/dev/null; then
+        mkswap /dev/zram0 >/dev/null 2>&1 &&
+            swapon -p 100 /dev/zram0 2>/dev/null ||
+            echo "DEEPoS: cannot enable zram swap" >&2
+    fi
+fi
+swap_file=/data/swapfile
+if [ "$data_mounted" = yes ] && [ -w /data ]; then
+    (
+        if [ ! -s "$swap_file" ]; then
+            dd if=/dev/zero of="$swap_file" bs=1M count=256 2>/dev/null &&
+                chmod 600 "$swap_file" || rm -f "$swap_file"
+            mkswap "$swap_file" >/dev/null 2>&1 || rm -f "$swap_file"
+        fi
+        if [ -s "$swap_file" ] && ! grep -q "^$swap_file " /proc/swaps; then
+            swapon -p 10 "$swap_file" 2>/dev/null ||
+                echo "DEEPoS: cannot enable the swap file" >&2
+        fi
+    ) >/dev/null 2>&1 &
 fi
 
 # 5. Record this boot before init starts the launcher. The ticket is valid only
@@ -237,6 +298,9 @@ if [ "$flash_mounted" = yes ]; then
         grep joypad /proc/modules > $rep/input-modules.txt 2>/dev/null || true
         if [ -x /usr/bin/launcher ]; then
             /usr/bin/launcher --selftest > $rep/selftest.txt 2>&1 || true
+        fi
+        if [ -x /usr/local/bin/bios-check.sh ]; then
+            /usr/local/bin/bios-check.sh > $rep/bios.txt 2>/dev/null || true
         fi
         sync 2>/dev/null || true
     fi

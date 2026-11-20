@@ -13,6 +13,13 @@ if [ ! -x "$runtime/bin/bash" ]; then
 fi
 mountpoint -q /data && mountpoint -q /storage || exit 6
 mkdir -p "$data/home"
+
+# A 470 KiB SDL_GAMECONTROLLERCONFIG exceeds MAX_ARG_STRLEN, which makes every
+# execve() in the port fail with E2BIG ("Argument list too long"). Trim before
+# control.txt turns the file into an environment variable.
+[ -x /usr/share/deepos/curate-controllerdb.sh ] &&
+    /usr/share/deepos/curate-controllerdb.sh "$data" >/dev/null 2>&1 || true
+
 if [ ! -d "$control" ]; then
     staged=$(mktemp -d "$data/.package.XXXXXX")
     if ! cp -a "$package/PortMaster/." "$staged/" || ! mv -T "$staged" "$control"; then
@@ -28,6 +35,9 @@ export PATH="$runtime/bin:$PATH"
 export PYTHONHOME=$runtime
 export LD_LIBRARY_PATH=$runtime/lib
 export LIBGL_DRIVERS_PATH=$runtime/lib/dri
+# Mesa's KMS/GBM backend lives in /usr/lib/gbm (shipped by the rootfs): without
+# it every EGL surface creation fails with "failed to open dri: dri_gbm.so".
+export GBM_BACKENDS_PATH="${GBM_BACKENDS_PATH:-/usr/lib/gbm}"
 export __EGL_VENDOR_LIBRARY_FILENAMES=$runtime/egl/50_mesa.json
 export ALSA_CONFIG_DIR=$runtime/alsa
 export SDL_VIDEODRIVER="${SDL_VIDEODRIVER:-kmsdrm}"

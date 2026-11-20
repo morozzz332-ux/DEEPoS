@@ -403,6 +403,77 @@ def test_rcs_provisioning():
     check("ports are launched through the shell", "ports = " in table and "%ROM%" in table)
 
 
+def test_gpu_and_ports_stack():
+    """OpenGL and PortMaster need four things the old image shipped without."""
+    overlay = ROOT / "board/r36s-v20/rootfs-overlay"
+    # 1. panfrost is a module in the donor kernel; without it there is no
+    #    render node and every GL application fails with "EGL not initialized".
+    for module in ("panfrost.ko", "gpu-sched.ko", "drm_shmem_helper.ko"):
+        p = overlay / "lib/modules/6.12.114" / module
+        check(f"overlay ships {module}", p.is_file() and p.stat().st_size > 0)
+    # 2. Mesa's KMS backend: control.txt needs /usr/lib/gbm/dri_gbm.so.
+    gbm = overlay / "usr/lib/gbm/dri_gbm.so"
+    check("overlay ships /usr/lib/gbm/dri_gbm.so", gbm.is_file() and gbm.stat().st_size > 0)
+    rc = (overlay / "etc/init.d/rcS").read_text(encoding="utf-8")
+    modules_line = next((ln for ln in rc.splitlines() if ln.startswith("gpu_modules=")), "")
+    order = [modules_line.find(m) for m in ("drm_shmem_helper", "gpu-sched", "panfrost")]
+    check("rcS loads the GPU modules in dependency order",
+          all(pos >= 0 for pos in order) and order == sorted(order),
+          modules_line.strip())
+    check("rcS loads the modules before the launcher starts",
+          'insmod "$gpu_dir/$module.ko"' in rc and
+          0 <= rc.find("gpu_modules=") < rc.find("/usr/bin/launcher --apply"))
+    check("rcS waits for the render node", "/dev/dri/renderD128" in rc)
+    # 3. PortMaster control.txt probes sudo; without it ports skip privileged setup.
+    sudo = overlay / "usr/bin/sudo"
+    check("overlay ships the sudo shim", sudo.is_file())
+    if sudo.is_file():
+        check("sudo shim executes its arguments", 'exec "$@"' in sudo.read_text(encoding="utf-8"))
+    # 4. A single env string above MAX_ARG_STRLEN (128 KiB) kills every exec.
+    curate = overlay / "usr/share/deepos/curate-controllerdb.sh"
+    check("overlay ships the controller database trimmer", curate.is_file())
+    run_port = (overlay / "usr/share/deepos/run-port.sh").read_text(encoding="utf-8")
+    check("run-port.sh trims the controller database first",
+          "curate-controllerdb.sh" in run_port and
+          run_port.find("curate-controllerdb.sh") < run_port.find("exec /bin/bash"))
+    check("run-port.sh points Mesa at the rootfs GBM backend",
+          "GBM_BACKENDS_PATH" in run_port and "/usr/lib/gbm" in run_port)
+    retro = (overlay / "usr/share/deepos/retroarch.cfg").read_text(encoding="utf-8")
+    check("RetroArch uses the SDL2 input driver (no udevd, no tty)",
+          'input_driver = "sdl2"' in retro)
+    check("RetroArch keeps the udev joypad driver", 'input_joypad_driver = "udev"' in retro)
+    # BIOS dumps cannot be shipped, so the report has to say what is missing.
+    table = ROOT / "board/r36s-v20/data/bios-required.tsv"
+    check("bios-required.tsv exists", table.is_file() and table.stat().st_size > 0)
+    bios = overlay / "usr/local/bin/bios-check.sh"
+    check("bios-check.sh exists", bios.is_file())
+    if bios.is_file():
+        check("bios-check.sh is POSIX sh",
+              subprocess.run(["sh", "-n", str(bios)], capture_output=True).returncode == 0)
+    check("rcS writes the BIOS report", "/usr/local/bin/bios-check.sh" in rc)
+    # Swap: zram is modular here, and ports cannot swap on the exFAT card, so
+    # the image ships the zram stack plus a small file on /data as overflow.
+    for module in ("zram", "zsmalloc", "lz4_compress", "lz4hc_compress", "zstd_compress"):
+        p = overlay / "lib/modules/6.12.114" / f"{module}.ko"
+        check(f"overlay ships {module}.ko", p.is_file() and p.stat().st_size > 0)
+    zram_line = next((ln for ln in rc.splitlines() if ln.startswith("zram_modules=")), "")
+    listed = zram_line.split("=", 1)[1].strip().strip('"\'').split() if "=" in zram_line else []
+    check("rcS loads zram in dependency order",
+          [m for m in listed if m in ("lz4_compress", "lz4hc_compress", "zstd_compress",
+                                      "zsmalloc", "zram")] ==
+          ["lz4_compress", "lz4hc_compress", "zstd_compress", "zsmalloc", "zram"],
+          zram_line.strip())
+    check("rcS gives zram 512 MiB", "536870912 > /sys/block/zram0/disksize" in rc)
+    check("rcS picks the zram codec before setting the size",
+          0 <= rc.find("> /sys/block/zram0/comp_algorithm") <
+          rc.find("> /sys/block/zram0/disksize"))
+    check("rcS swaps zram on with a high priority", "swapon -p 100 /dev/zram0" in rc)
+    check("rcS keeps the /data swap file as cold overflow",
+          "/data/swapfile" in rc and "swapon -p 10" in rc)
+    check("rcS sets the hostname", rc.find("hostname deepos") > 0)
+    check("rcS mounts BOOT with sync (FAT has no journal)", "/flash sync" in rc)
+
+
 def main():
     print("board tests (R36S-V20):")
     test_dts()
@@ -419,6 +490,7 @@ def main():
     test_usb_gadget()
     test_selfcheck()
     test_rcs_order()
+    test_gpu_and_ports_stack()
     print()
     if fails:
         print("FAIL  board: " + ", ".join(fails))
