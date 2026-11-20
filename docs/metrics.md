@@ -311,3 +311,21 @@ NES-программа прошла 120 кадров в FCEUmm под эмуля
 | Отложенный запрос модуля | Применён при старте меню: `eco` → 816 000, статус `applied`, запрос удалён |
 | Помощник `thermal-apply.sh` на реальном sysfs | `max` → 1 296 000, `balanced` → 1 008 000, `eco` → 816 000; статус `applied` с причиной и `governor=performance`, `gpu_max_hz=650000000`, запрос удалён; `turbo` отклонён с кодом 2 |
 | Перезагрузка с проверкой после неё | Не выполнена: после `reboot` USB-гаджет не перечисляется без переподключения кабеля |
+
+## 2026-11-21 · 0.52, собранный образ и установка в слот A
+
+| Проверка | Результат |
+| --- | --- |
+| Версия | `VERSION` = `0.52-v20-test`, внутри образа `etc/deepos-version` = `0.52-v20-test` |
+| Наборы `tests/run-all.sh` | 24 набора PASS, 0 FAIL (добавлен `session_lock_test.py`) |
+| Голдены кадров | Изменилась одна строка `info` (в кадре «Сведения» есть версия); обновлена через `run.py --update` |
+| Образ rootfs | `build/deepos-rootfs-0.52-v20-test.squashfs`, 130 842 624 B, sha256 `837e00f71e04cad140c562f11bdfd84364056062ad029a9bae593c2bb605af7c` |
+| Установка в A | `updatr install` записал 130 842 624 B, обратное чтение раздела дало тот же sha256; `switch A` — `root=PARTLABEL=DEEPOS_A`, generation 5 |
+| Загрузка после `reboot -f` | Консоль вернулась без переподключения кабеля; версия 0.52, слот A, `attempts=0`, `rollback=false` |
+| `launcher --selftest` на 0.52 | `status=ok`, `fb=/dev/fb0`, `fb_present=1`, `input_events=4`, `input=r36s_Gamepad` |
+| Память и PSI после загрузки | `MemAvailable` 652 836 kB из 749 580 kB, `PSI some avg10=0.00` |
+| Питание после загрузки | `balanced` применён: `max=1008000`, `min=408000`, `cur=1008000`, `governor=performance`; GPU `simple_ondemand`, 200 из 650 МГц; `thermal/status` = `applied` |
+| Два одновременных запуска | Первый → 0 и строка `launch`, второй → 7 с `another game session is still running` |
+| Возврат питания после сеанса | Заглушка поднимала до 1 296 000 и GPU в `performance`; вернулись 1 008 000 и `simple_ondemand`, замок и снимок удалены |
+| Запись запуска на 0.52 | `session=463-…`, `system=md`, `runtime=native`, `exit=0`, `signal=0`, `save=unavailable` |
+| Свободное место `/data` после уборки | 287 644 kB (89 % занято до уборки образа и тестовых файлов) |
