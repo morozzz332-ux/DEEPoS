@@ -531,8 +531,8 @@ def test_volume_rocker():
     ra = (BOARD / "rootfs-overlay" / "usr" / "share" / "deepos" / "retroarch.cfg").read_text(encoding="utf-8")
     for key in ("input_volume_up", "input_volume_down", "audio_volume", "menu_enable_widgets"):
         check("retroarch.cfg sets " + key, key in ra)
-    check("retroarch volume keys use the adc-keys keycodes",
-          'keycode 115' in ra and 'keycode 114' in ra)
+    check("retroarch volume keys use SDL scancodes",
+          'keycode 128' in ra and 'keycode 129' in ra and 'keycode 127' in ra)
 
 
 def main():

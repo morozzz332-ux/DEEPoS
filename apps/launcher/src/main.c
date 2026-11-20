@@ -656,6 +656,62 @@ static void expand_rom(const char *tmpl, int save_slot, char *out,
     replace_tag(step, "%SLOT%", slot, out, n);
 }
 
+/* Set once main() knows where the settings live. While a game runs the
+ * launcher is parked in waitpid() and cannot use its usual input loop, so the
+ * rocker is read here instead: it sits on its own evdev node and stays readable.
+ * There is no overlay - the game owns the framebuffer - but the level does
+ * change, which is what the keys are for. */
+static const char *g_vol_config;
+static const char *g_vol_sysfs;
+
+static void volume_step(int delta) {
+    struct dp_config cfg;
+    if (!g_vol_config)
+        return;
+    dp_config_init(&cfg);
+    if (dp_config_load(&cfg, g_vol_config) != 0)
+        return;
+    int next = cfg.volume + delta;
+    if (next < 1)
+        next = 1;
+    if (next > DP_CONFIG_VOLUME_MAX)
+        next = DP_CONFIG_VOLUME_MAX;
+    if (next == cfg.volume)
+        return;
+    cfg.volume = next;
+    if (dp_config_save(&cfg, g_vol_config) == 0)
+        dp_config_apply_volume(g_vol_sysfs, cfg.volume);
+}
+
+/* Waits for `pid`, feeding volume-key presses to the mixer meanwhile. */
+static int wait_with_volume(pid_t pid, int *status) {
+    struct dp_input in;
+    int armed = 0;
+    int st = 0;
+    memset(&in, 0, sizeof(in));
+    in.fd = -1;
+    in.key_fd = -1;
+    if (g_vol_config && dp_input_open(&in) == 0)
+        armed = 1;
+    for (;;) {
+        pid_t done = waitpid(pid, &st, armed ? WNOHANG : 0);
+        if (!armed)
+            break;
+        if (done == pid || (done < 0 && errno != EINTR))
+            break;
+        enum dp_key k = dp_input_poll(&in, 200);
+        if (k == DP_KEY_VOL_UP)
+            volume_step(5);
+        else if (k == DP_KEY_VOL_DOWN)
+            volume_step(-5);
+    }
+    if (armed)
+        dp_input_close(&in);
+    if (status)
+        *status = st;
+    return 0;
+}
+
 static int run_command(const char *cmd, const char *arg) {
     pid_t pid = fork();
     int status = 0;
@@ -665,11 +721,7 @@ static int run_command(const char *cmd, const char *arg) {
         execl("/bin/sh", "sh", "-c", cmd, "launcher", arg, (char *)NULL);
         _exit(127);
     }
-    pid_t done;
-    do {
-        done = waitpid(pid, &status, 0);
-    } while (done < 0 && errno == EINTR);
-    if (done < 0)
+    if (wait_with_volume(pid, &status) != 0)
         return -1;
     if (WIFEXITED(status))
         return WEXITSTATUS(status);
@@ -1601,6 +1653,8 @@ int main(int argc, char **argv)
         snprintf(config_buf, sizeof(config_buf), "%s/config/settings.toml", data);
         config_path = config_buf;
     }
+    g_vol_config = config_path;
+    g_vol_sysfs = sysfs_prefix;
     if (print_retroarch) {
         struct dp_config cfg;
         dp_config_init(&cfg);
