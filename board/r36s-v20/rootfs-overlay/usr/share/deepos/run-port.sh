@@ -64,4 +64,16 @@ case "$1" in
         ;;
 esac
 
-exec /bin/bash "$@"
+# dArkOSRE boosts the clocks around every launch (perfmax/perfnorm). policy0 is
+# already at "performance" here, so only the GPU needs it, plus a niceness bump:
+# the launcher's own poll loop must not compete with the port's render thread.
+/usr/local/bin/perf-boost.sh on
+trap '/usr/local/bin/perf-boost.sh off' EXIT INT TERM
+if [ -x /bin/nice ]; then
+    nice -n -5 /bin/bash "$@"
+else
+    /bin/bash "$@"
+fi
+rc=$?
+/usr/local/bin/perf-boost.sh off
+exit "$rc"

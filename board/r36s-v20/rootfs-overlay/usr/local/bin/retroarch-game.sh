@@ -56,6 +56,16 @@ else
 fi
 [ -r "$rom" ] || exit 2
 
+# dArkOSRE raises the GPU clock for the whole emulator run and restores it on
+# exit; panfrost's on-demand governor otherwise idles between frames.
+boost=/usr/local/bin/perf-boost.sh
+[ -x "$boost" ] && "$boost" on
+trap '[ -x "$boost" ] && "$boost" off' EXIT INT TERM
+# A single-core SoC with a 60 Hz panel: let the emulator win against the
+# launcher's poll loop.
+nice_cmd=
+command -v nice >/dev/null 2>&1 && nice_cmd="nice -n -5"
+
 # Keep the donor loader and libraries together. A native build can omit lib/.
 if [ -x "$runtime/lib/ld-linux-aarch64.so.1" ]; then
     if [ -f "$runtime/lib/dri/panfrost_dri.so" ] && [ ! -e "$runtime/lib/dri/rockchip_dri.so" ]; then
@@ -74,8 +84,14 @@ if [ -x "$runtime/lib/ld-linux-aarch64.so.1" ]; then
     export __EGL_VENDOR_LIBRARY_FILENAMES="$runtime/egl/50_mesa.json"
     export ALSOFT_DRIVERS=alsa
     export ALSA_CONFIG_DIR="$runtime/alsa"
-    exec "$runtime/lib/ld-linux-aarch64.so.1" "$runtime/retroarch" \
+    $nice_cmd "$runtime/lib/ld-linux-aarch64.so.1" "$runtime/retroarch" \
         --config "$cfg" --appendconfig "$hotkeys" -L "$core" "$rom"
+else
+    export GBM_BACKENDS_PATH="${GBM_BACKENDS_PATH:-/usr/lib/gbm}"
+    $nice_cmd "$runtime/retroarch" --config "$cfg" --appendconfig "$hotkeys" \
+        -L "$core" "$rom"
 fi
-export GBM_BACKENDS_PATH="${GBM_BACKENDS_PATH:-/usr/lib/gbm}"
-exec "$runtime/retroarch" --config "$cfg" --appendconfig "$hotkeys" -L "$core" "$rom"
+
+rc=$?
+[ -x "$boost" ] && "$boost" off
+exit "$rc"

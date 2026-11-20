@@ -459,6 +459,27 @@ def test_gpu_and_ports_stack():
     check("RetroArch uses the SDL2 input driver (no udevd, no tty)",
           'input_driver = "sdl2"' in retro)
     check("RetroArch keeps the udev joypad driver", 'input_joypad_driver = "udev"' in retro)
+    # 6. Launch-time tuning taken from dArkOSRE: a threaded ALSA driver, sinc
+    #    resampling, threaded video and a readable widget scale.
+    check("RetroArch writes audio from its own thread", 'audio_driver = "alsathread"' in retro)
+    check("RetroArch resamples with sinc", 'audio_resampler = "sinc"' in retro)
+    check("RetroArch enables threaded video", 'video_threaded = "true"' in retro)
+    check("RetroArch scales its widgets for the 640x480 panel",
+          'menu_widget_scale_factor = "2.5"' in retro)
+    boost = overlay / "usr/local/bin/perf-boost.sh"
+    check("overlay ships the GPU clock boost helper", boost.is_file())
+    if boost.is_file():
+        check("perf-boost.sh is POSIX sh",
+              subprocess.run(["sh", "-n", str(boost)], capture_output=True).returncode == 0)
+        check("perf-boost.sh pins the panfrost governor",
+              "performance" in boost.read_text(encoding="utf-8"))
+    check("run-port.sh boosts the GPU for the port", "perf-boost.sh on" in run_port)
+    check("run-port.sh restores the GPU after the port", "perf-boost.sh off" in run_port)
+    game = (overlay / "usr/local/bin/retroarch-game.sh").read_text(encoding="utf-8")
+    check("retroarch-game.sh boosts the GPU for the core", '"$boost" on' in game)
+    check("retroarch-game.sh restores the GPU on exit", '"$boost" off' in game)
+    check("retroarch-game.sh runs the core with a niceness bump", "nice -n -5" in game)
+    check("run-port.sh runs the port with a niceness bump", "nice -n -5" in run_port)
     # BIOS dumps cannot be shipped, so the report has to say what is missing.
     table = ROOT / "board/r36s-v20/data/bios-required.tsv"
     check("bios-required.tsv exists", table.is_file() and table.stat().st_size > 0)
