@@ -324,6 +324,7 @@ NES-программа прошла 120 кадров в FCEUmm под эмуля
 | Загрузка после `reboot -f` | Консоль вернулась без переподключения кабеля; версия 0.52, слот A, `attempts=0`, `rollback=false` |
 | `launcher --selftest` на 0.52 | `status=ok`, `fb=/dev/fb0`, `fb_present=1`, `input_events=4`, `input=r36s_Gamepad` |
 | Память и PSI после загрузки | `MemAvailable` 652 836 kB из 749 580 kB, `PSI some avg10=0.00` |
+| Повторная загрузка 0.52 | Снова слот A, `attempts=0`, версия 0.52; `MemAvailable` 654 052 kB, PSI 0, `balanced` (`max=1008000`, `governor=performance`), `modd` поднят |
 | Питание после загрузки | `balanced` применён: `max=1008000`, `min=408000`, `cur=1008000`, `governor=performance`; GPU `simple_ondemand`, 200 из 650 МГц; `thermal/status` = `applied` |
 | Два одновременных запуска | Первый → 0 и строка `launch`, второй → 7 с `another game session is still running` |
 | Возврат питания после сеанса | Заглушка поднимала до 1 296 000 и GPU в `performance`; вернулись 1 008 000 и `simple_ondemand`, замок и снимок удалены |
