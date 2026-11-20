@@ -72,8 +72,7 @@ def validate_extlinux(text, *, archr_v20=False):
     roots = [arg for arg in args if arg.startswith("root=")]
     if roots not in (["root=PARTLABEL=DEEPOS_A"], ["root=PARTLABEL=DEEPOS_B"]):
         raise ValueError("extlinux.conf requires a DEEPOS_A or DEEPOS_B GPT root label")
-    required = {"rootfstype=squashfs", "ro", "rootwait", "console=ttyS2,1500000n8",
-                "console=tty0"}
+    required = {"rootfstype=squashfs", "ro", "rootwait", "console=ttyS2,1500000n8"}
     if missing := required.difference(args):
         raise ValueError("extlinux.conf is missing: " + ", ".join(sorted(missing)))
 

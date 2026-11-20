@@ -13,7 +13,7 @@ KARCH  ?= linux-6.12.56
 .PHONY: playdemo-test settings-test preflight preflight-test release release-test config-test help selftest-test fonts launcher modd saved updatr updatr render test modd-test saved-test launch-test modules-test image-test board-test boot-test kconfig-check verify-image docker-image docker-cross docker-test kernel uboot image-full image boot clean
 
 help:
-	@echo "make fonts        - regenerate bitmap fonts from tools/fonts/DejaVuSansMono.ttf"
+	@echo "make fonts        - regenerate bitmap glyph tables from the bundled Terminus fonts"
 	@echo "make launcher     - build apps/launcher (native, needs cc + make)"
 	@echo "make modd         - build apps/modd (native, needs cc + make)"
 	@echo "make saved        - build apps/saved (native, needs cc + make)"

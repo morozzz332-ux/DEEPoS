@@ -93,6 +93,19 @@ def main():
         check("explicit --config is honoured",
               (tmp / "other.toml").is_file())
 
+        p = run(roms, data, "DOWN,DOWN,RIGHT,A")
+        check("modules shortcut opens the modules tab", "screen=modules" in p.stdout)
+        p = run(roms, data, "DOWN,DOWN,RIGHT,A,B")
+        check("back returns to the settings shortcut", "screen=settings level=0 sel=7" in p.stdout)
+
+        policy = tmp / "sys/devices/system/cpu/cpufreq/policy0"
+        policy.mkdir(parents=True)
+        (policy / "scaling_available_frequencies").write_text("408000 816000 1008000 1416000 1512000\n")
+        (policy / "scaling_max_freq").write_text("1416000\n")
+        (policy / "scaling_min_freq").write_text("408000\n")
+        p = run(roms, data, "DOWN,RIGHT,RIGHT,A", "--sysfs", str(tmp / "sys"))
+        check("eco applies the hardware CPU cap", (policy / "scaling_max_freq").read_text().strip() == "816000")
+
     if failures:
         print(f"\nFAIL  settings: {len(failures)} problem(s)")
         return 1

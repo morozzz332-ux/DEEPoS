@@ -15,6 +15,8 @@ rootfs=$(realpath "$4")
 out=$5
 size=${6:-4096}
 version=${VERSION:-0.37-v20}
+# Optional local archive made by tools/import-retroarch.py.
+retroarch_package=${RETROARCH_PACKAGE:-}
 
 if [ "$out" -ef "$donor" ] || [ "$out" -ef "$overlay" ] ||
    [ "$out" -ef "$joypad" ] || [ "$out" -ef "$rootfs" ]; then
@@ -29,6 +31,11 @@ kernel="$work/kernel/Image"
 dtb="$work/kernel/rk3326-r36s-v20.dtb"
 mkdir "$work/data"
 cp "$board/data/emulators.toml" "$work/data/"
+if [ -n "$retroarch_package" ]; then
+    python3 -m tarfile --filter data -e "$retroarch_package" "$work/data"
+    test -x "$work/data/emus/retroarch"
+    test -f "$work/data/emus/systems.toml"
+fi
 
 python3 "$repo/tools/prepare-v20-kernel.py" --archr-image "$donor" \
     --panel-overlay "$overlay" --joypad-module "$joypad" --out "$work/kernel"

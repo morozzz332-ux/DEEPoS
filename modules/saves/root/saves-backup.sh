@@ -12,7 +12,8 @@ STATES="${STATES_DIR:-/storage/.config/retroarch/states}"
 BACKUP="${BACKUP_DIR:-/storage/backup/saves}"
 KEEP="${KEEP:-10}"
 
-[ -r "$DATA/request" ] || exit 0
+[ -r "$DATA/request" ] || exit 1
+[ "$(cat "$DATA/request")" = backup ] || exit 1
 rm -f "$DATA/request"
 mkdir -p "$BACKUP" "$DATA"
 
@@ -30,9 +31,10 @@ done
 files=$(wc -l < "$tmp_list" | tr -d ' ')
 rm -f "$tmp_list"
 
-if tar -czf "$archive.tmp" \
-        -C "$(dirname "$SAVES")" "$(basename "$SAVES")" \
-        -C "$(dirname "$STATES")" "$(basename "$STATES")" 2>/dev/null; then
+set --
+[ ! -d "$SAVES" ] || set -- "$@" -C "$(dirname "$SAVES")" "$(basename "$SAVES")"
+[ ! -d "$STATES" ] || set -- "$@" -C "$(dirname "$STATES")" "$(basename "$STATES")"
+if [ "$files" -gt 0 ] && tar -czf "$archive.tmp" "$@" 2>/dev/null; then
     mv "$archive.tmp" "$archive"
     ok=true
 else
@@ -56,3 +58,4 @@ printf '{"ok":%s,"ts":%s,"file":"%s","bytes":%s,"files":%s}\n' \
     "$ok" "$ts" "$archive" "$bytes" "$files" > "$DATA/status.tmp"
 mv "$DATA/status.tmp" "$DATA/status"
 chmod 644 "$DATA/status" 2>/dev/null || true
+[ "$ok" = true ]

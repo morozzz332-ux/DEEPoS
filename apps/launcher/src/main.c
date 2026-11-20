@@ -18,16 +18,18 @@
 #include "dp_config.h"
 #include "dp_modc.h"
 #include "dp_model.h"
+#include "dp_sound.h"
 #include "dp_theme.h"
 #include "dp_ui.h"
 
 static void usage(void)
 {
     puts("usage: launcher [options]\n"
-         "  --roms DIR        ROM library root (default /storage/roms)\n"
+         "  --roms DIR        ROM library root (default /storage)\n"
          "  --data DIR        DEEPoS data dir (default /data)\n"
          "  --screen NAME     continue|systems|games|settings|modules|files|info\n"
          "  --out FILE.ppm    write the rendered frame (P6)\n"
+         "  --boot-splash     draw the startup logo once and exit\n"
          "  --system N        system index for the games screen\n"
          "  --battery N       battery percentage 0..100\n"
          "  --charging        draw the charging mark\n"
@@ -47,6 +49,9 @@ static void usage(void)
 }
 
 #define TABS_COUNT 6
+#define DEFAULT_EMULATORS "/data/emulators.toml"
+#define BUILTIN_EMULATORS "/usr/share/deepos/emulators.toml"
+#define IMPORTED_EMULATORS "/data/emus/systems.toml"
 
 struct dp_nav {
     int tab;        /* 0 continue, 1 games, 2 settings, 3 modules, 4 files, 5 info */
@@ -58,7 +63,12 @@ struct dp_nav {
     char lrom[DP_ROM_NAME];
     int lslot;
     int settings_edit; /* card index + 1, applied after the key */
-    char notice[64];   /* one-shot message drawn above the hint bar */
+    int volume_delta;
+    struct { int tab, sel; } back[2];
+    int nback;
+    int module_action;
+    pid_t backup_pid;
+    char notice[128];  /* one-shot message drawn above the hint bar */
 };
 
 static int tab_screen(const struct dp_nav *nav)
@@ -118,7 +128,7 @@ static int row_count(const struct dp_model *m, const struct dp_nav *nav)
 
 /* Settings cards that own a value: brightness, volume and the cpu profile.
  * A press cycles the value, writes settings.toml and applies it right away. */
-static int settings_edit_card(struct dp_model *m, int card, const char *config_path,
+static int settings_edit_card(struct dp_nav *nav, struct dp_model *m, int card, const char *config_path,
                               const char *sysfs_prefix, const char *data_dir)
 {
     struct dp_config cfg;
@@ -149,6 +159,13 @@ static int settings_edit_card(struct dp_model *m, int card, const char *config_p
         for (int i = 0; i < nsteps; i++)
             if (cur >= steps[i])
                 next = steps[(i + 1) % nsteps];
+        if (nav->volume_delta) {
+            next = (cur > 0 ? cur : 50) + nav->volume_delta;
+            if (next > 100)
+                next = 100;
+            if (next < 1)
+                next = 1;
+        }
         cfg.volume = next;
         changed = 1;
     } else if (card == 5) { /* power */
@@ -164,9 +181,21 @@ static int settings_edit_card(struct dp_model *m, int card, const char *config_p
 
     char profile_path[512];
     snprintf(profile_path, sizeof(profile_path), "%s/cpu-profile", data_dir);
-    if (dp_config_save(&cfg, config_path) != 0)
-        return 0;
-    dp_config_apply(&cfg, sysfs_prefix, profile_path);
+    if (dp_config_save(&cfg, config_path) != 0) {
+        snprintf(nav->notice, sizeof(nav->notice), "Настройки не сохранены: проверьте DATA");
+        return 1;
+    }
+    int applied;
+    if (card == 2)
+        applied = dp_config_apply_brightness(sysfs_prefix, cfg.brightness);
+    else if (card == 3)
+        applied = dp_config_apply_volume(sysfs_prefix, cfg.volume);
+    else {
+        dp_config_write_profile(profile_path, cfg.profile);
+        applied = dp_config_apply_cpu(sysfs_prefix, cfg.profile);
+    }
+    if (!applied)
+        snprintf(nav->notice, sizeof(nav->notice), "Сохранено. Устройство не применило значение");
     m->cfg_brightness = cfg.brightness;
     m->cfg_volume = cfg.volume;
     snprintf(m->cfg_profile, sizeof(m->cfg_profile), "%s", cfg.profile);
@@ -178,8 +207,9 @@ static int apply_selected_setting(struct dp_nav *nav, struct dp_model *m,
 {
     if (!nav->settings_edit)
         return 0;
-    int changed = settings_edit_card(m, nav->settings_edit - 1, config, sysfs, data);
+    int changed = settings_edit_card(nav, m, nav->settings_edit - 1, config, sysfs, data);
     nav->settings_edit = 0;
+    nav->volume_delta = 0;
     return changed;
 }
 
@@ -192,6 +222,18 @@ static void nav_notice(struct dp_nav *nav, const char *message)
 static void nav_tab(struct dp_nav *nav, int tab)
 {
     nav->tab = (tab + TABS_COUNT) % TABS_COUNT;
+    nav->level = 0;
+    nav->sel = 0;
+    nav->nback = 0;
+}
+
+static void nav_shortcut(struct dp_nav *nav, int tab)
+{
+    if (nav->nback == 2)
+        nav->nback = 0;
+    nav->back[nav->nback].tab = nav->tab;
+    nav->back[nav->nback++].sel = nav->sel;
+    nav->tab = tab;
     nav->level = 0;
     nav->sel = 0;
 }
@@ -245,6 +287,15 @@ static int nav_key(struct dp_nav *nav, struct dp_model *m, const char *roms, enu
     int scr = tab_screen(nav);
     int cols = nav_grid_cols(scr);
 
+    if (m->input_test && key != DP_KEY_QUIT) {
+        if (key == DP_KEY_B && strcmp(m->si.last_key, "b") == 0) {
+            m->input_test = 0;
+        } else {
+            snprintf(m->si.last_key, sizeof(m->si.last_key), "%s", dp_key_name(key));
+            return 0;
+        }
+    }
+
     switch (key) {
     case DP_KEY_QUIT:
         return 1;
@@ -255,6 +306,22 @@ static int nav_key(struct dp_nav *nav, struct dp_model *m, const char *roms, enu
     case DP_KEY_R1:
     case DP_KEY_R2:
         nav_tab(nav, nav->tab + 1);
+        break;
+    case DP_KEY_VOL_UP:
+    case DP_KEY_VOL_DOWN:
+        nav->settings_edit = 4;
+        nav->volume_delta = key == DP_KEY_VOL_UP ? 5 : -5;
+        break;
+    case DP_KEY_FN:
+    case DP_KEY_SELECT:
+        if (scr != DP_SCR_INFO)
+            nav_tab(nav, 5);
+        break;
+    case DP_KEY_Y:
+        if (scr == DP_SCR_GAMES) {
+            nav->level = 0;
+            nav->sel = nav->system;
+        }
         break;
     case DP_KEY_LEFT:
     case DP_KEY_RIGHT: {
@@ -275,6 +342,8 @@ static int nav_key(struct dp_nav *nav, struct dp_model *m, const char *roms, enu
         int dir = key == DP_KEY_DOWN ? 1 : -1;
         if (cols > 1) {
             int next = nav->sel + dir * cols;
+            if (dir > 0 && next >= rows && rows > 0 && (rows - 1) / cols > nav->sel / cols)
+                next = rows - 1;
             if (next >= 0 && next < rows)
                 nav->sel = next;
         } else if (rows > 0) {
@@ -300,8 +369,22 @@ static int nav_key(struct dp_nav *nav, struct dp_model *m, const char *roms, enu
         } else if (scr == DP_SCR_SETTINGS) {
             if (nav->sel == 2 || nav->sel == 3 || nav->sel == 5)
                 nav->settings_edit = nav->sel + 1;
+            else if (nav->sel == 7)
+                nav_shortcut(nav, 3);
+            else if (nav->sel == 1) {
+                nav_shortcut(nav, 5);
+                m->input_test = 1;
+                m->si.last_key[0] = '\0';
+            } else if (nav->sel == 8 || nav->sel == 9)
+                nav_shortcut(nav, 5);
+            else if (nav->sel == 10)
+                nav_shortcut(nav, 4);
+            else if (nav->sel == 11)
+                nav->sel = 2;
             else if (key != DP_KEY_X)
                 nav_notice(nav, "Этот параметр только для чтения");
+        } else if (scr == DP_SCR_MODULES && nav->sel < m->nmods) {
+            nav->module_action = nav->sel + 1;
         } else if (scr == DP_SCR_GAMES && nav->sel < m->nroms &&
                    nav->system >= 0 && nav->system < m->nsys) {
             nav_launch(nav, m->systems[nav->system].id, m->rom_names[nav->sel], -1);
@@ -316,7 +399,11 @@ static int nav_key(struct dp_nav *nav, struct dp_model *m, const char *roms, enu
         }
         break;
     case DP_KEY_B:
-        if (nav->level == 1) {
+        if (nav->nback > 0) {
+            nav->nback--;
+            nav->tab = nav->back[nav->nback].tab;
+            nav->sel = nav->back[nav->nback].sel;
+        } else if (nav->level == 1) {
             nav->level = 0;
             nav->sel = nav->system;
         } else if (nav->tab != 0) {
@@ -354,6 +441,38 @@ static int write_ppm(const char *path, const struct dp_canvas *cv)
         }
     }
     return fclose(f) == 0 ? 0 : -1;
+}
+
+static int open_display_at_start(struct dp_display *display, const char *path, int attempts)
+{
+    const struct timespec delay = { .tv_nsec = 100000000L };
+    while (dp_display_open(display, path) != 0) {
+        if (--attempts == 0)
+            return -1;
+        nanosleep(&delay, NULL);
+    }
+    return 0;
+}
+
+static int show_boot_splash(const char *out, const char *fb_path)
+{
+    struct dp_canvas canvas;
+    if (dp_canvas_init(&canvas, DP_W, DP_H) != 0)
+        return 1;
+    dp_ui_boot_splash(&canvas);
+    int rc = out && write_ppm(out, &canvas) != 0;
+    if (!out || fb_path) {
+        struct dp_display display;
+        if (open_display_at_start(&display, fb_path, fb_path ? 1 : 9) != 0) {
+            rc = 1;
+        } else {
+            if (dp_display_present(&display, &canvas) != 0)
+                rc = 1;
+            dp_display_close(&display);
+        }
+    }
+    dp_canvas_free(&canvas);
+    return rc;
 }
 
 
@@ -533,8 +652,8 @@ static void continue_update(const char *data_dir, const struct dp_model *m, cons
     }
 }
 
-static int launch_game(const char *roms, const char *mods_socket, const char *emulators_path,
-                       const char *sys, const char *rom, int slot)
+static int launch_game(const struct dp_model *m, const char *roms, const char *mods_socket,
+                       const char *emulators_path, const char *sys, const char *rom, int slot)
 {
     struct dp_launch_cfg cfg;
     char rom_path[1024];
@@ -547,23 +666,35 @@ static int launch_game(const char *roms, const char *mods_socket, const char *em
         printf("blocked\t%s\t%s\n", sys, rom);
         return 4;
     }
-    if (parse_emulators(emulators_path, sys, &cfg) != 0) {
+    if (parse_emulators(emulators_path, sys, &cfg) != 0 &&
+        (strcmp(emulators_path, DEFAULT_EMULATORS) != 0 ||
+         (parse_emulators(BUILTIN_EMULATORS, sys, &cfg) != 0 &&
+          parse_emulators(IMPORTED_EMULATORS, sys, &cfg) != 0))) {
         fprintf(stderr, "launcher: no emulator for '%s' in %s\n", sys, emulators_path);
         return 5;
     }
-    int len = snprintf(rom_path, sizeof(rom_path), "%s/%s/%s", roms, sys, rom);
+    const char *folder = sys;
+    for (int i = 0; i < m->nsys; i++) {
+        if (strcmp(m->systems[i].id, sys) == 0) {
+            folder = m->systems[i].folder;
+            break;
+        }
+    }
+    int len = snprintf(rom_path, sizeof(rom_path), "%s/%s/%s", roms, folder, rom);
     if (len < 0 || (size_t)len >= sizeof(rom_path))
         return 1;
     expand_rom(cfg.cmd, slot, cmd, sizeof(cmd));
     child = run_command(cmd, rom_path);
     printf("launch\t%s\t%s\tslot=%d\t%d\n", sys, rom, slot, child);
+    if (child == 126 || child == 127)
+        return 5;
     return child == 0 ? 0 : 1;
 }
 
 static int launch_selected(struct dp_nav *nav, struct dp_model *m, const char *roms,
                            const char *mods_socket, const char *emulators, const char *data)
 {
-    int rc = launch_game(roms, mods_socket, emulators, nav->lsys, nav->lrom, nav->lslot);
+    int rc = launch_game(m, roms, mods_socket, emulators, nav->lsys, nav->lrom, nav->lslot);
     if (rc == 0) {
         continue_update(data, m, nav->lsys, nav->lrom, nav->lslot);
         dp_model_load_continue(m, data);
@@ -575,9 +706,10 @@ static int launch_selected(struct dp_nav *nav, struct dp_model *m, const char *r
 }
 
 static int count_event_devices(void);
-static void fill_sysinfo(struct dp_model *m, const char *fb_path);
+static void fill_sysinfo(struct dp_model *m, const char *fb_path, int details);
 
-static void read_device_status(struct dp_model *m, const char *roms, const char *fb_path)
+static void read_device_status(struct dp_model *m, const char *roms, const char *fb_path,
+                               int details)
 {
     time_t now = time(NULL);
     struct tm local;
@@ -591,9 +723,11 @@ static void read_device_status(struct dp_model *m, const char *roms, const char 
                                     * fs.f_frsize / 1048576);
     }
 
+    m->st.battery = -1;
+    m->st.charging = 0;
     DIR *supplies = opendir("/sys/class/power_supply");
     if (!supplies) {
-        fill_sysinfo(m, fb_path);
+        fill_sysinfo(m, fb_path, details);
         return;
     }
     struct dirent *entry;
@@ -622,7 +756,7 @@ static void read_device_status(struct dp_model *m, const char *roms, const char 
         break;
     }
     closedir(supplies);
-    fill_sysinfo(m, fb_path);
+    fill_sysinfo(m, fb_path, details);
 }
 
 static int count_event_devices(void)
@@ -678,12 +812,8 @@ static void copy_field(char *dst, size_t size, const char *src)
     dst[n] = '\0';
 }
 
-static void fill_sysinfo(struct dp_model *m, const char *fb_path)
+static void fill_sysinfo(struct dp_model *m, const char *fb_path, int details)
 {
-    struct utsname u;
-    if (uname(&u) == 0)
-        copy_field(m->si.kernel, sizeof(m->si.kernel), u.release);
-
     double uptime = 0.0;
     FILE *f = fopen("/proc/uptime", "r");
     if (f) {
@@ -720,6 +850,16 @@ static void fill_sysinfo(struct dp_model *m, const char *fb_path)
             temp = (int)t;
     }
     m->si.temp_mc = temp;
+    m->si.cpu_khz = read_number_file("/sys/devices/system/cpu/cpufreq/policy0/scaling_cur_freq");
+    m->si.cpu_max_khz = read_number_file("/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq");
+    m->si.gpu_hz = read_number_file("/sys/class/devfreq/ff400000.gpu/cur_freq");
+    m->have_sysinfo = 1;
+    if (!details)
+        return;
+
+    struct utsname u;
+    if (uname(&u) == 0)
+        copy_field(m->si.kernel, sizeof(m->si.kernel), u.release);
 
     char size[48];
     read_first_line("/sys/class/graphics/fb0/virtual_size", size, sizeof(size));
@@ -742,7 +882,6 @@ static void fill_sysinfo(struct dp_model *m, const char *fb_path)
         snprintf(m->si.input, sizeof(m->si.input), "%s", dp_input_name(&in));
         dp_input_close(&in);
     }
-    m->have_sysinfo = 1;
 }
 
 static void model_load_config(struct dp_model *m, const char *config_path)
@@ -768,7 +907,7 @@ static int selftest(const char *roms, const char *data, const char *emulators_pa
     dp_model_load_continue(m, data);
     dp_modc_status(mods_socket, m);
     model_load_config(m, config_path);
-    fill_sysinfo(m, fb_path);
+    fill_sysinfo(m, fb_path, 1);
 
     char temp[16] = "-";
     if (m->si.temp_mc >= 0)
@@ -893,6 +1032,54 @@ static void paint_nav(struct dp_canvas *cv, struct dp_model *m, struct dp_nav *n
     }
 }
 
+static void refresh_modules(struct dp_model *m, const char *socket)
+{
+    m->modules_online = dp_modc_status(socket, m) == 0;
+}
+
+static int apply_nav_actions(struct dp_nav *nav, struct dp_model *m, const char *config,
+                             const char *sysfs, const char *data, const char *socket)
+{
+    if (!nav->module_action)
+        return apply_selected_setting(nav, m, config, sysfs, data);
+
+    const char *id = m->mods[nav->module_action - 1].id;
+    nav->module_action = 0;
+    if (strcmp(id, "thermal") == 0) {
+        nav_shortcut(nav, 2);
+        nav->sel = 5;
+        return 1;
+    }
+    if (strcmp(id, "saves") != 0) {
+        nav_notice(nav, "У модуля нет действий в меню");
+        return 1;
+    }
+    if (nav->backup_pid > 0) {
+        nav_notice(nav, "Копирование сейвов уже идёт");
+        return 1;
+    }
+    if (dp_modc_action(socket, id, "backup") != 0) {
+        nav_notice(nav, "Модуль не принял запрос");
+        refresh_modules(m, socket);
+        return 1;
+    }
+
+    const char *helper = "/usr/share/deepos/modules/saves/root/saves-backup.sh";
+    char request_dir[512];
+    snprintf(request_dir, sizeof(request_dir), "%s/module-data/saves", data);
+    if (access(helper, R_OK) != 0) {
+        nav_notice(nav, "Запрос передан модулю");
+        return 1;
+    }
+    nav->backup_pid = fork();
+    if (nav->backup_pid == 0) {
+        execl("/bin/sh", "sh", helper, request_dir, (char *)NULL);
+        _exit(127);
+    }
+    nav_notice(nav, nav->backup_pid > 0 ? "Копирование сейвов…" : "Копирование не запустилось");
+    return 1;
+}
+
 /* Numbers the user will later take from the console: full repaint cost, the
  * fb present cost, and the latency between the kernel event timestamp and the
  * frame that shows it. */
@@ -1002,16 +1189,17 @@ int main(int argc, char **argv)
     const char *fb_path = NULL;
     const char *module_action = NULL;
     const char *run_game = NULL;
-    const char *emulators_path = "/data/emulators.toml";
+    const char *emulators_path = DEFAULT_EMULATORS;
     int save_slot = -1;
     char config_buf[512];
     const char *config_path = NULL;
     snprintf(config_buf, sizeof(config_buf), "/data/config/settings.toml");
-    const char *sysfs_prefix = "";
+    const char *sysfs_prefix = NULL;
     const char *set_kv = NULL;
     int print_config = 0;
     int do_apply = 0;
     int bench_frames = 0;
+    int boot_splash = 0;
     const char *bench_out = NULL;
 
     for (int i = 1; i < argc; i++) {
@@ -1021,6 +1209,7 @@ int main(int argc, char **argv)
         else if (strcmp(a, "--data") == 0) data = NEED_ARG();
         else if (strcmp(a, "--screen") == 0) screen = NEED_ARG();
         else if (strcmp(a, "--out") == 0) out = NEED_ARG();
+        else if (strcmp(a, "--boot-splash") == 0) boot_splash = 1;
         else if (strcmp(a, "--system") == 0) system_index = atoi(NEED_ARG());
         else if (strcmp(a, "--battery") == 0) battery = atoi(NEED_ARG());
         else if (strcmp(a, "--charging") == 0) charging = 1;
@@ -1071,6 +1260,9 @@ int main(int argc, char **argv)
         }
         #undef NEED_ARG
     }
+
+    if (boot_splash)
+        return show_boot_splash(out, fb_path);
 
     if (!config_path) {
         snprintf(config_buf, sizeof(config_buf), "%s/config/settings.toml", data);
@@ -1123,8 +1315,27 @@ int main(int argc, char **argv)
     if (dp_model_scan(m, roms) < 0)
         fprintf(stderr, "launcher: cannot read ROMs at %s (empty library)\n", roms);
     dp_model_load_continue(m, data);
-    dp_modc_status(mods_socket, m);
+    refresh_modules(m, mods_socket);
     model_load_config(m, config_path);
+
+    /* Input diagnostics, in a child so the UI never waits: the report lists
+     * every /dev/input node with its capabilities and then every raw event for
+     * the first 40 s of this boot. The user only has to press the buttons. */
+    if (argc == 1 && access("/flash/INPUT.PROBE", F_OK) == 0) {
+        mkdir("/flash/report", 0755);
+        pid_t logger = fork();
+        if (logger == 0) {
+            struct dp_input probe;
+            if (dp_input_open(&probe) == 0) {
+                dp_input_scan("/flash/report/input.txt");
+                dp_input_probe(&probe, 40, "/flash/report/input.txt");
+                dp_input_close(&probe);
+            } else {
+                dp_input_scan("/flash/report/input.txt");
+            }
+            _exit(0);
+        }
+    }
 
     if (run_game) {
         char spec[512];
@@ -1141,7 +1352,7 @@ int main(int argc, char **argv)
         *colon = '\0';
         copy_field(sys, sizeof(sys), spec);
         copy_field(rom, sizeof(rom), colon + 1);
-        rc_game = launch_game(roms, mods_socket, emulators_path, sys, rom, save_slot);
+        rc_game = launch_game(m, roms, mods_socket, emulators_path, sys, rom, save_slot);
         if (rc_game == 0)
             continue_update(data, m, sys, rom, save_slot);
         dp_model_free(m);
@@ -1177,7 +1388,7 @@ int main(int argc, char **argv)
     m->rom_used_mb = rom_used;
     m->rom_total_mb = rom_total;
     if (argc == 1)
-        read_device_status(m, roms, fb_path ? fb_path : "/dev/fb0");
+        read_device_status(m, roms, "/dev/fb0", 1);
 
     struct dp_canvas cv;
     if (dp_canvas_init(&cv, DP_W, DP_H) != 0) {
@@ -1209,7 +1420,7 @@ int main(int argc, char **argv)
             }
             quit = nav_key(&nav, m, roms, k);
             if (!quit)
-                apply_selected_setting(&nav, m, config_path, sysfs_prefix, data);
+                apply_nav_actions(&nav, m, config_path, sysfs_prefix, data, mods_socket);
         }
     }
 
@@ -1247,7 +1458,7 @@ int main(int argc, char **argv)
     }
 
     struct dp_display disp;
-    int have_disp = dp_display_open(&disp, fb_path) == 0;
+    int have_disp = open_display_at_start(&disp, fb_path, argc == 1 ? 9 : 1) == 0;
     if ((fb_path || !out) && !have_disp) {
         fprintf(stderr, "launcher: no display (%s)\n", fb_path ? fb_path : "/dev/fb0");
         if (fb_path)
@@ -1269,24 +1480,63 @@ int main(int argc, char **argv)
 
     if (!out && !fb_path) {
         struct dp_input in;
+        pid_t sound = 0;
         if (dp_input_open(&in) == 0) {
+            unsigned long long sample_at = 0;
             while (!quit && in.ready) {
                 enum dp_key k = dp_input_poll(&in, 250);
-                if (k == DP_KEY_NONE)
-                    continue;
+                if (sound > 0 && waitpid(sound, NULL, WNOHANG) == sound)
+                    sound = 0;
                 int old_tab = nav.tab, old_level = nav.level, old_sel = nav.sel;
-                quit = nav_key(&nav, m, roms, k);
-                if (quit)
-                    break;
-                int changed = apply_selected_setting(&nav, m, config_path, sysfs_prefix, data);
+                int changed = 0;
+                if (k != DP_KEY_NONE) {
+                    quit = nav_key(&nav, m, roms, k);
+                    if (quit)
+                        break;
+                    changed = apply_nav_actions(&nav, m, config_path, sysfs_prefix, data, mods_socket);
+                    if (tab_screen(&nav) == DP_SCR_INFO) {
+                        if (!m->input_test)
+                            snprintf(m->si.last_key, sizeof(m->si.last_key), "%s", dp_key_name(k));
+                        changed = 1;
+                    }
+                }
+                if (nav.backup_pid > 0) {
+                    int status = 0;
+                    if (waitpid(nav.backup_pid, &status, WNOHANG) == nav.backup_pid) {
+                        nav.backup_pid = 0;
+                        nav_notice(&nav, WIFEXITED(status) && WEXITSTATUS(status) == 0 ?
+                                   "Копия сейвов создана" : "Ошибка копирования сейвов");
+                    }
+                }
+                unsigned long long now = now_us(CLOCK_MONOTONIC);
+                if (tab_screen(&nav) == DP_SCR_INFO && (nav.tab != old_tab || now >= sample_at)) {
+                    read_device_status(m, roms, "/dev/fb0", 0);
+                    sample_at = now + 1000000;
+                    changed = 1;
+                }
+                if (tab_screen(&nav) == DP_SCR_MODULES && nav.tab != old_tab) {
+                    refresh_modules(m, mods_socket);
+                    nav_clamp(&nav, m);
+                }
                 int game_status = -1;
                 if (nav.launch) {
+                    dp_sound_stop(sound);
+                    sound = 0;
+                    /* Drop queued gameplay and quit-combo events before returning to the menu. */
+                    dp_input_close(&in);
+                    if (have_disp) {
+                        dp_display_close(&disp);
+                        have_disp = 0;
+                    }
                     game_status = launch_selected(&nav, m, roms, mods_socket, emulators_path, data);
+                    have_disp = dp_display_open(&disp, NULL) == 0;
+                    dp_input_open(&in);
                     changed = 1;
                 }
                 if (!changed && !nav.notice[0]
                     && nav.tab == old_tab && nav.level == old_level && nav.sel == old_sel)
                     continue;
+                int have_notice = nav.notice[0] != '\0';
                 paint_nav(&cv, m, &nav);
                 if (game_status > 0) {
                     const char *message = game_status == 5 ? "Нет эмулятора для этой системы" :
@@ -1296,6 +1546,15 @@ int main(int argc, char **argv)
                 }
                 if (have_disp)
                     dp_display_present(&disp, &cv);
+                if (have_disp && !disp.fake && argc == 1 && game_status < 0 && !m->input_test) {
+                    if ((k == DP_KEY_L1 || k == DP_KEY_L2 || k == DP_KEY_R1 || k == DP_KEY_R2) &&
+                        nav.tab != old_tab)
+                        sound = dp_sound_play(sound, DP_TONE_TAB);
+                    else if (k == DP_KEY_B && (nav.tab != old_tab || nav.level != old_level))
+                        sound = dp_sound_play(sound, DP_TONE_BACK);
+                    else if ((k == DP_KEY_A || k == DP_KEY_START) && !have_notice)
+                        sound = dp_sound_play(sound, DP_TONE_CONFIRM);
+                }
             }
             if (in.lost)
                 fprintf(stderr, "launcher: input device lost\n");
@@ -1304,6 +1563,7 @@ int main(int argc, char **argv)
             printf("screen=%s systems=%d games=%u continue=%d\n",
                    dp_screen_id((enum dp_screen)scr), m->nsys, m->total_games, m->ncont);
         }
+        dp_sound_stop(sound);
     }
     if (have_disp)
         dp_display_close(&disp);

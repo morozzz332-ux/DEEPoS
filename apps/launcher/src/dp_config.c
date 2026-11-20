@@ -4,6 +4,9 @@
 #include "dp_config.h"
 
 #include <fcntl.h>
+#include <glob.h>
+#include <sys/ioctl.h>
+#include <sound/asound.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -140,74 +143,160 @@ int dp_config_save(const struct dp_config *cfg, const char *path)
     return 0;
 }
 
-static int write_value(const char *dir, const char *file, int value)
+static int write_number(const char *path, long value)
 {
-    char path[512];
-    if (snprintf(path, sizeof(path), "%s%s", dir, file) >= (int)sizeof(path)) {
+    if (access(path, W_OK) != 0)
         return 0;
-    }
     FILE *f = fopen(path, "w");
-    if (!f) {
+    if (!f)
         return 0;
-    }
-    int ok = fprintf(f, "%d\n", value) > 0;
-    fclose(f);
-    return ok ? 1 : 0;
+    int ok = fprintf(f, "%ld\n", value) > 0;
+    return fclose(f) == 0 && ok;
 }
 
-static int write_first_backlight(const char *prefix, int percent)
+static long read_number(const char *path)
+{
+    long value = -1;
+    FILE *f = fopen(path, "r");
+    if (f) {
+        if (fscanf(f, "%ld", &value) != 1)
+            value = -1;
+        fclose(f);
+    }
+    return value;
+}
+
+static int apply_backlight(const char *dir, int percent, long fallback)
 {
     char path[512];
-    const char *names[] = {"/backlight/deepos-bl/brightness", "/backlight/backlight/brightness",
-                           "/backlight/pwm-backlight/brightness"};
-    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
-        if (snprintf(path, sizeof(path), "%s%s", prefix, names[i]) >= (int)sizeof(path)) {
-            continue;
-        }
-        FILE *f = fopen(path, "w");
-        if (!f) {
-            continue;
-        }
-        /* Sysfs backlight takes raw steps; 0..100 percent maps to 1..45 here
-           because the panel is driven by pwm-backlight with 46 levels. */
-        int raw = (percent * 45) / 100;
-        if (raw < 1) {
-            raw = 1;
-        }
-        int ok = fprintf(f, "%d\n", raw) > 0;
-        fclose(f);
-        if (ok) {
-            return 1;
+    if (snprintf(path, sizeof(path), "%s/max_brightness", dir) >= (int)sizeof(path))
+        return 0;
+    long maximum = read_number(path);
+    if (maximum <= 0)
+        maximum = fallback;
+    if (maximum <= 0 || maximum > 65535)
+        return 0;
+    long raw = percent * maximum / 100;
+    snprintf(path, sizeof(path), "%s/brightness", dir);
+    return write_number(path, raw > 0 ? raw : 1);
+}
+
+int dp_config_apply_brightness(const char *prefix, int percent)
+{
+    char path[512];
+    snprintf(path, sizeof(path), "%s/class/backlight/*", prefix ? prefix : "/sys");
+    glob_t devices = {0};
+    int applied = 0;
+    if (glob(path, 0, NULL, &devices) == 0) {
+        for (size_t i = 0; i < devices.gl_pathc && !applied; i++)
+            applied = apply_backlight(devices.gl_pathv[i], percent, 0);
+    }
+    globfree(&devices);
+    if (prefix && !applied) {
+        const char *names[] = {"deepos-bl", "backlight", "pwm-backlight"};
+        for (size_t i = 0; i < sizeof(names) / sizeof(names[0]) && !applied; i++) {
+            snprintf(path, sizeof(path), "%s/backlight/%s", prefix, names[i]);
+            applied = apply_backlight(path, percent, 45);
         }
     }
+    return applied;
+}
+
+int dp_config_apply_volume(const char *prefix, int percent)
+{
+    char path[512];
+    snprintf(path, sizeof(path), "%s/class/sound/card0/controlC0/volume_percent",
+             prefix ? prefix : "/sys");
+    if (write_number(path, percent))
+        return 1;
+    snprintf(path, sizeof(path), "%s/devices/platform/ff400000.i2s/sound/card0/volume_percent",
+             prefix ? prefix : "/sys");
+    if (write_number(path, percent))
+        return 1;
+    if (prefix)
+        return 0;
+
+    for (int card = 0; card < 8; card++) {
+        snprintf(path, sizeof(path), "/dev/snd/controlC%d", card);
+        int fd = open(path, O_RDWR | O_CLOEXEC);
+        if (fd < 0)
+            continue;
+        struct snd_ctl_elem_info info = {0};
+        info.id.iface = SNDRV_CTL_ELEM_IFACE_MIXER;
+        snprintf((char *)info.id.name, sizeof(info.id.name), "Master Playback Volume");
+        int ok = 0;
+        if (ioctl(fd, (int)SNDRV_CTL_IOCTL_ELEM_INFO, &info) == 0 &&
+            info.type == SNDRV_CTL_ELEM_TYPE_INTEGER && info.count > 0 &&
+            info.count <= 128 && (info.access & SNDRV_CTL_ELEM_ACCESS_WRITE)) {
+            struct snd_ctl_elem_value value = { .id = info.id };
+            long min = info.value.integer.min, max = info.value.integer.max;
+            for (unsigned int i = 0; i < info.count; i++)
+                value.value.integer.value[i] = min + (max - min) * percent / 100;
+            ok = ioctl(fd, (int)SNDRV_CTL_IOCTL_ELEM_WRITE, &value) == 0;
+        }
+        close(fd);
+        if (ok)
+            return 1;
+    }
     return 0;
+}
+
+int dp_config_apply_cpu(const char *prefix, const char *profile)
+{
+    long limit = strcmp(profile, "eco") == 0 ? 816000 :
+                 strcmp(profile, "balanced") == 0 ? 1008000 :
+                 strcmp(profile, "max") == 0 ? 1416000 : 0;
+    if (!limit)
+        return 0;
+    char policy[448], path[512];
+    if (snprintf(policy, sizeof(policy), "%s/devices/system/cpu/cpufreq/policy0",
+                 prefix ? prefix : "/sys") >= (int)sizeof(policy))
+        return 0;
+    snprintf(path, sizeof(path), "%s/scaling_available_frequencies", policy);
+    FILE *f = fopen(path, "r");
+    if (!f)
+        return 0;
+    long chosen = 0, freq;
+    while (fscanf(f, "%ld", &freq) == 1) {
+        if (freq <= limit && freq > chosen)
+            chosen = freq;
+    }
+    fclose(f);
+    snprintf(path, sizeof(path), "%s/scaling_min_freq", policy);
+    long minimum = read_number(path);
+    if (minimum <= 0 || chosen < minimum)
+        return 0;
+    snprintf(path, sizeof(path), "%s/scaling_max_freq", policy);
+    return write_number(path, chosen) && read_number(path) == chosen;
 }
 
 int dp_config_apply(const struct dp_config *cfg, const char *sysfs_prefix,
                     const char *profile_path)
 {
-    const char *prefix = sysfs_prefix ? sysfs_prefix : "";
     int applied = 0;
 
-    if (cfg->brightness > 0 && write_first_backlight(prefix, cfg->brightness)) {
+    if (cfg->brightness > 0 && dp_config_apply_brightness(sysfs_prefix, cfg->brightness)) {
         applied++;
     }
-    if (cfg->volume > 0) {
-        if (write_value(prefix, "/class/sound/card0/controlC0/volume_percent", cfg->volume) ||
-            write_value(prefix, "/devices/platform/ff400000.i2s/sound/card0/volume_percent",
-                        cfg->volume)) {
+    if (cfg->volume > 0 && dp_config_apply_volume(sysfs_prefix, cfg->volume))
+        applied++;
+    if (cfg->profile[0]) {
+        if (dp_config_write_profile(profile_path, cfg->profile))
             applied++;
-        }
-    }
-    if (cfg->profile[0] && profile_path && profile_path[0]) {
-        FILE *f = fopen(profile_path, "w");
-        if (f) {
-            fprintf(f, "%s\n", cfg->profile);
-            fclose(f);
-            applied++;
-        }
+        dp_config_apply_cpu(sysfs_prefix, cfg->profile);
     }
     return applied;
+}
+
+int dp_config_write_profile(const char *path, const char *profile)
+{
+    if (!path || !*path)
+        return 0;
+    FILE *f = fopen(path, "w");
+    if (!f)
+        return 0;
+    int written = fprintf(f, "%s\n", profile) > 0;
+    return fclose(f) == 0 && written;
 }
 
 int dp_config_format(const struct dp_config *cfg, char *out, int outsz)

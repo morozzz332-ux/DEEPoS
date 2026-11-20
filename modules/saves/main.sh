@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 # DEEPoS saves module: shows the last backup and asks the root helper for a new one.
 #
 # Same sandbox rule as the thermal module: the module only writes a request file,
@@ -36,8 +36,10 @@ while IFS= read -r line; do
         action.invoke)
             action=$(printf '%s' "$line" | sed -n 's/.*"action"[[:space:]]*:[[:space:]]*"\([a-z]*\)".*/\1/p' | head -n1)
             if [ "$action" = "backup" ] && [ -n "$DATA" ]; then
-                mkdir -p "$DATA" 2>/dev/null
-                printf 'backup\n' > "$REQUEST"
+                if ! mkdir -p "$DATA" || ! printf 'backup\n' > "$REQUEST"; then
+                    printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$id,\"error\":{\"message\":\"cannot persist request\"}}"
+                    continue
+                fi
             fi
             printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"ok\":true,\"action\":\"$action\"}}"
             emit_updates

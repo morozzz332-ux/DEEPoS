@@ -4,7 +4,7 @@
 
 #include "dp_canvas.h"
 
-#define DP_VERSION "0.38-v20"
+#define DP_VERSION "0.39-v20-test"
 
 #define DP_W 640
 #define DP_H 480
@@ -21,15 +21,15 @@
 #define DP_BODY_Y0 (DP_SAFE_TOP + DP_STATUS_H + DP_HEADER_H)
 #define DP_BODY_Y1 (DP_H - DP_SAFE_BOTTOM - DP_HINT_H)
 
-#define DP_COL_BG       dp565(0x0C, 0x10, 0x0E)
-#define DP_COL_PANEL    dp565(0x13, 0x1A, 0x16)
-#define DP_COL_PANEL2   dp565(0x1C, 0x27, 0x21)
-#define DP_COL_LINE     dp565(0x2A, 0x38, 0x30)
-#define DP_COL_FG       dp565(0xEE, 0xF2, 0xEC)
-#define DP_COL_FG2      dp565(0xB7, 0xC4, 0xBA)
-#define DP_COL_FG3      dp565(0x8B, 0x9B, 0x90)
-#define DP_COL_ACC      dp565(0x79, 0xD8, 0x9A)
-#define DP_COL_SEL      dp565(0x1F, 0x32, 0x27)
+#define DP_COL_BG       dp565(0x08, 0x14, 0x0A)
+#define DP_COL_PANEL    dp565(0x10, 0x21, 0x10)
+#define DP_COL_PANEL2   dp565(0x1A, 0x30, 0x18)
+#define DP_COL_LINE     dp565(0x38, 0x58, 0x2D)
+#define DP_COL_FG       dp565(0xD0, 0xF8, 0xA8)
+#define DP_COL_FG2      dp565(0xA3, 0xDA, 0x7D)
+#define DP_COL_FG3      dp565(0x82, 0xB3, 0x68)
+#define DP_COL_ACC      dp565(0xB8, 0xF4, 0x72)
+#define DP_COL_SEL      dp565(0x28, 0x43, 0x1E)
 #define DP_COL_WARN     dp565(0xE6, 0xB2, 0x5C)
 #define DP_COL_BAD      dp565(0xE0, 0x70, 0x6A)
 

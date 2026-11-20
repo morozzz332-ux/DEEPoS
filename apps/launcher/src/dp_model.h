@@ -19,6 +19,8 @@
 struct dp_system {
     char id[DP_SYS_ID];       /* directory name, lower-case */
     char name[DP_SYS_NAME];   /* human readable */
+    char folder[DP_SYS_ID + 5]; /* original path relative to library root */
+    char extensions[256];
     unsigned games;
 };
 
@@ -55,6 +57,8 @@ struct dp_sysinfo {
     char input[DP_INPUT_NAME];
     int input_events;
     char fb[DP_SYSINFO_FIELD];       /* "640x480 RGB565" */
+    long cpu_khz, cpu_max_khz, gpu_hz;
+    char last_key[16];
 };
 
 struct dp_model {
@@ -78,10 +82,12 @@ struct dp_model {
     int cfg_volume;
     char cfg_profile[16];
     int nmods;
+    int modules_online;
 
     struct dp_status st;
     struct dp_sysinfo si;
     int have_sysinfo;
+    int input_test;
 
     /* storage, in megabytes, filled by the caller */
     unsigned rom_used_mb;

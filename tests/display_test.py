@@ -62,12 +62,14 @@ def test_first_frame(tmpdir):
         return
     for mode, args, rc, confirmed in (
         ("hardware", [], 0, True),
+        ("late", [], 0, True),
         ("missing", [], 0, False),
         ("crash", [], -signal.SIGKILL, False),
         ("fail", [], 1, False),
         ("fake", [], 0, False),
         ("hardware", ["--out", str(tmpdir / "boot-test.ppm")], 0, False),
         ("hardware", ["--selftest"], 0, False),
+        ("hardware", ["--boot-splash"], 0, False),
     ):
         p = subprocess.run([str(launcher), *args], capture_output=True, text=True,
                            timeout=10, env={**os.environ, "DEEPOS_TEST_FRAMEBUFFER": mode})
@@ -78,6 +80,19 @@ def test_first_frame(tmpdir):
               p.returncode == rc and refreshed == logged == confirmed and
               (confirmed or "boot confirmation requested" not in p.stdout),
               (p.returncode, p.stdout, p.stderr))
+
+    splash_ppm = tmpdir / "splash.ppm"
+    splash_fb = tmpdir / "splash.fb"
+    result = subprocess.run([str(BIN), "--boot-splash", "--out", str(splash_ppm),
+                             "--fb", str(splash_fb)], capture_output=True, timeout=5)
+    if result.returncode == 0:
+        frame = read_ppm(splash_ppm)
+        check("boot splash is a nonempty 640x480 frame", frame[:2] == (W, H) and
+              len(set(zip(frame[2][::3], frame[2][1::3], frame[2][2::3]))) > 2)
+        check("boot splash is presented without input",
+              splash_fb.read_bytes() == ppm_to_565(frame))
+    else:
+        check("boot splash renders", False, result.stderr)
 
     data = tmpdir / "physical-data"
     data.mkdir()

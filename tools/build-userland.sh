@@ -19,13 +19,15 @@ REPO=${REPO:-$(cd "$(dirname "$0")/.." && pwd)}
 # Ubuntu enables _FORTIFY_SOURCE inside its glibc headers; with -Werror that
 # turns bounded snprintf calls into -Wformat-truncation errors. Our buffers are
 # bounded by explicit precision widths, so fortify buys us nothing here.
-CFLAGS=${CFLAGS:--O2 -std=c11 -Wall -Wextra -Werror -pedantic \
-    -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L -D_GNU_SOURCE -U_FORTIFY_SOURCE -Wno-format-truncation -static}
+default_flags='-std=c11 -Wall -Wextra -Werror -pedantic'
+default_flags="$default_flags -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L -D_GNU_SOURCE -U_FORTIFY_SOURCE -Wno-format-truncation -static"
 
 for app in $APPS; do
     echo "building $app"
     make -s -C "$REPO/apps/$app" clean >/dev/null 2>&1 || true
-    make -s -C "$REPO/apps/$app" CC="${CROSS}gcc" CFLAGS="$CFLAGS"
+    optimization=-O2
+    [ "$app" != launcher ] || optimization=-Os
+    make -s -C "$REPO/apps/$app" CC="${CROSS}gcc" CFLAGS="${CFLAGS:-$optimization $default_flags}"
     if [ -n "$OUT" ]; then
         mkdir -p "$OUT"
         cp "$REPO/apps/$app/$app" "$OUT/$app"

@@ -5,8 +5,11 @@ plus a 128x128 icon and a 32x32 favicon-style mark. Pure Pillow + numpy.
 """
 from __future__ import annotations
 
+import argparse
 import os
 from pathlib import Path
+import subprocess
+import tempfile
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
@@ -144,6 +147,16 @@ def save_outputs(img: Image.Image) -> None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--launcher", type=Path, help="export the built launcher's native splash as BMP")
+    args = parser.parse_args()
+    if args.launcher:
+        with tempfile.TemporaryDirectory() as tmp:
+            frame = Path(tmp) / "boot.ppm"
+            subprocess.run([str(args.launcher.resolve()), "--boot-splash", "--out", str(frame)], check=True)
+            with Image.open(frame) as image:
+                image.convert("RGB").save(OUT / "deepos-boot.bmp", "BMP")
+        return
     img = build_splash()
     save_outputs(img)
     for name in ("deepos-logo.png", "deepos-boot.bmp", "deepos-icon-128.png"):

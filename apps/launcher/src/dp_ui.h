@@ -23,6 +23,9 @@ int dp_screen_from_id(const char *id);
 void dp_ui_paint(struct dp_canvas *cv, const struct dp_model *m, enum dp_screen scr,
                  int system_index, int selected);
 
+/* Draws the branded frame before the device starts the interactive launcher. */
+void dp_ui_boot_splash(struct dp_canvas *cv);
+
 /* Transient message above the hint bar (failed launch, read-only card, ...). */
 void dp_ui_toast(struct dp_canvas *cv, const char *message);
 

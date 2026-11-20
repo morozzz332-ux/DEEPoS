@@ -1,11 +1,11 @@
-/* DEEPoS launcher - 13 px body bitmap font table (generated tables + API). */
+/* DEEPoS launcher - 8x16 body bitmap font table. */
 #ifndef DP_FONT_H
 #define DP_FONT_H
 
 #include <stdint.h>
 
 #define DP_GLYPH_ADV 8
-#define DP_GLYPH_ROWS 17
+#define DP_GLYPH_ROWS 16
 
 struct dp_glyph {
     uint32_t codepoint;

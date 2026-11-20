@@ -10,7 +10,7 @@
 #define DP_TABS 6
 
 static const char *const dp_tabs[DP_TABS] = {
-    "ПРОДОЛЖИТЬ", "ИГРЫ", "НАСТРОЙКИ", "МОДУЛИ", "ФАЙЛЫ", "СВЕДЕНИЯ",
+    "Продолжить", "Игры", "Настройки", "Модули", "Файлы", "Сведения",
 };
 
 /* Screens "systems" and "games" share the same tab. */
@@ -114,6 +114,8 @@ static void dp_hints(struct dp_canvas *cv, const struct dp_hint *items, int n,
                      const char *back_label)
 {
     int y = DP_H - DP_SAFE_BOTTOM - DP_HINT_H + 5;
+    dp_rect(cv, 0, DP_BODY_Y1, DP_W, DP_HINT_H, DP_COL_PANEL);
+    dp_hline(cv, 0, DP_BODY_Y1, DP_W, DP_COL_LINE);
     int limit = DP_W - 12;
     if (back_label)
         limit -= dp_text_small_w(back_label, 1) + 40;
@@ -144,12 +146,14 @@ static void dp_statusbar(struct dp_canvas *cv, const struct dp_model *m, enum dp
     int cur = dp_tab_index(active);
     int x = DP_PAD;
     for (int i = 0; i < DP_TABS; i++) {
-        int tw = dp_text_small_w(dp_tabs[i], 1);
-        uint16_t col = (i == cur) ? DP_COL_FG : DP_COL_FG3;
-        dp_text_small(cv, x, DP_SAFE_TOP + 9, dp_tabs[i], col, 1);
-        if (i == cur)
-            dp_rect(cv, x, DP_SAFE_TOP + DP_STATUS_H - 4, tw, 2, DP_COL_ACC);
-        x += tw + 10;
+        int tw = dp_text_w(dp_tabs[i], 1);
+        uint16_t col = DP_COL_FG2;
+        if (i == cur) {
+            dp_rect(cv, x - 4, DP_SAFE_TOP + 4, tw + 8, 24, DP_COL_ACC);
+            col = DP_COL_BG;
+        }
+        dp_text(cv, x, DP_SAFE_TOP + 7, dp_tabs[i], col, 1);
+        x += tw + 14;
     }
 
     const char *clock = m->st.clock;
@@ -457,7 +461,7 @@ static void dp_screen_settings(struct dp_canvas *cv, const struct dp_model *m, i
     cards[0].title = "Регион и язык";
     snprintf(cards[0].sub, sizeof(cards[0].sub), "Русский");
     cards[1].title = "Управление";
-    snprintf(cards[1].sub, sizeof(cards[1].sub), "Крестовина · L1/R1");
+    snprintf(cards[1].sub, sizeof(cards[1].sub), "Проверка кнопок");
     cards[2].title = "Дисплей";
     cards[2].editable = 1;
     if (m->cfg_brightness > 0)
@@ -488,11 +492,11 @@ static void dp_screen_settings(struct dp_canvas *cv, const struct dp_model *m, i
     cards[10].title = "Файлы и сейвы";
     snprintf(cards[10].sub, sizeof(cards[10].sub), "DATA · ROMS");
     cards[11].title = "Быстро";
-    snprintf(cards[11].sub, sizeof(cards[11].sub), "яркость · звук · профиль");
+    snprintf(cards[11].sub, sizeof(cards[11].sub), "К настройке яркости");
 
     const int cols = 3, gap = 10;
     const int cw = (DP_W - 2 * DP_PAD - (cols - 1) * gap) / cols;
-    const int ch = 84;
+    const int ch = 82;
     const int y0 = DP_BODY_Y0 + 8;
 
     for (int i = 0; i < 12; i++) {
@@ -514,9 +518,10 @@ static void dp_screen_settings(struct dp_canvas *cv, const struct dp_model *m, i
     }
 
     int can_edit = selected == 2 || selected == 3 || selected == 5;
+    int can_open = selected == 1 || selected >= 7;
     const struct dp_hint items[] = {
         { "↑↓←→", "Выбор" },
-        { "A", can_edit ? "Изменить" : "Только просмотр" },
+        { "A", can_edit ? "Изменить" : can_open ? "Открыть" : "Просмотр" },
         { "L1/R1", "Вкладки" },
     };
     dp_hints(cv, items, 3, "Главная");
@@ -540,7 +545,8 @@ static void dp_screen_modules(struct dp_canvas *cv, const struct dp_model *m, in
     dp_section(cv, "МОДУЛИ", meta);
 
     if (!m->nmods) {
-        dp_empty(cv, "Нет доступных модулей", "Список читается из DATA/modules");
+        dp_empty(cv, m->modules_online ? "Нет установленных модулей" : "Модули недоступны",
+                 m->modules_online ? "Папка /data/modules" : "Проверьте DATA и службу modd");
         dp_hints(cv, NULL, 0, "Главная");
         return;
     }
@@ -552,15 +558,23 @@ static void dp_screen_modules(struct dp_canvas *cv, const struct dp_model *m, in
     int y = y0;
     for (int i = first; i < m->nmods && i < first + rows; i++) {
         const char *state = mod_state_label(m->mods[i].state);
+        const char *id = m->mods[i].id;
+        const char *name = strcmp(id, "thermal") == 0 ? "Температура и профили" :
+                           strcmp(id, "saves") == 0 ? "Резервные копии сейвов" : id;
         uint16_t color = strcmp(m->mods[i].state, "ready") == 0 ? DP_COL_ACC : DP_COL_FG2;
         int right = DP_W - 20 - dp_text_small_w(state, 1);
         dp_row_frame(cv, 8, y, DP_W - 16, rh - 1, i == selected);
-        dp_text_fit(cv, 20, y + 15, right - 40, m->mods[i].id, DP_COL_FG, 0);
+        dp_text_fit(cv, 20, y + 15, right - 40, name, DP_COL_FG, 0);
         dp_text_small(cv, right, y + 18, state, color, 1);
         dp_hline(cv, 20, y + rh - 1, DP_W - 40, DP_COL_LINE);
         y += rh;
     }
-    dp_hints(cv, NULL, 0, "Главная");
+    const char *id = m->mods[selected].id;
+    const struct dp_hint hints[] = {
+        { "L1/R1", "Вкладки" },
+        { "A", strcmp(id, "saves") == 0 ? "Создать копию" : "Профиль CPU" },
+    };
+    dp_hints(cv, hints, strcmp(id, "thermal") == 0 || strcmp(id, "saves") == 0 ? 2 : 1, "Назад");
 }
 
 static void dp_screen_files(struct dp_canvas *cv, const struct dp_model *m, int selected)
@@ -615,9 +629,10 @@ static void dp_fmt_temp(int mc, char *out, size_t size)
 
 static void dp_screen_info(struct dp_canvas *cv, const struct dp_model *m)
 {
-    dp_section(cv, "СВЕДЕНИЯ О СИСТЕМЕ", NULL);
+    dp_section(cv, m->input_test ? "ПРОВЕРКА КОНТРОЛЛЕРА" : "СВЕДЕНИЯ О СИСТЕМЕ",
+               m->have_sysinfo ? "Обновление 1 с" : NULL);
 
-    char battery[32], mem[64], temp[24], uptime[24], games[64];
+    char battery[32], mem[64], temp[24], uptime[24], cpu[64], gpu[32];
     if (m->st.battery >= 0)
         snprintf(battery, sizeof(battery), "%d%%%s", m->st.battery,
                  m->st.charging ? " · зарядка" : "");
@@ -630,33 +645,48 @@ static void dp_screen_info(struct dp_canvas *cv, const struct dp_model *m)
         snprintf(mem, sizeof(mem), "—");
     dp_fmt_temp(m->si.temp_mc, temp, sizeof(temp));
     dp_fmt_uptime(m->si.uptime_s, uptime, sizeof(uptime));
-    dp_library_summary(games, sizeof(games), m);
+    snprintf(cpu, sizeof(cpu), "—");
+    snprintf(gpu, sizeof(gpu), "—");
+    if (m->si.cpu_khz > 0 && m->si.cpu_max_khz > 0)
+        snprintf(cpu, sizeof(cpu), "%ld МГц · предел %ld МГц",
+                 m->si.cpu_khz / 1000, m->si.cpu_max_khz / 1000);
+    else if (m->si.cpu_khz > 0)
+        snprintf(cpu, sizeof(cpu), "%ld МГц", m->si.cpu_khz / 1000);
+    if (m->si.gpu_hz > 0)
+        snprintf(gpu, sizeof(gpu), "%ld МГц", m->si.gpu_hz / 1000000);
 
     const char *rows[][2] = {
-        { "Версия", DP_VERSION },
-        { "Плата", "R36S-V20" },
-        { "Ядро", m->have_sysinfo && m->si.kernel[0] ? m->si.kernel : "—" },
-        { "Время работы", m->have_sysinfo ? uptime : "—" },
-        { "Память", mem },
+        { "Частота CPU", cpu },
+        { "Частота GPU", gpu },
         { "Температура", temp },
-        { "Экран", m->have_sysinfo && m->si.fb[0] ? m->si.fb : "640x480" },
-        { "Ввод", m->have_sysinfo && m->si.input[0] ? m->si.input : "—" },
-        { "Библиотека", games },
+        { "Память", mem },
         { "Батарея", battery },
         { "Профиль CPU", m->cfg_profile[0] ? m->cfg_profile : "не выбран" },
+        { "Время работы", m->have_sysinfo ? uptime : "—" },
+        { "Экран", m->have_sysinfo && m->si.fb[0] ? m->si.fb : "640x480" },
+        { "Ввод", m->have_sysinfo && m->si.input[0] ? m->si.input : "—" },
+        { "Последняя кнопка", m->si.last_key[0] ? m->si.last_key : "—" },
+        { "Ядро", m->have_sysinfo && m->si.kernel[0] ? m->si.kernel : "—" },
+        { "Версия", DP_VERSION " · R36S-V20" },
     };
 
     const int y0 = DP_BODY_Y0 + 2;
-    const int rh = 26;
+    const int rh = 29;
     const int n = (int)(sizeof(rows) / sizeof(rows[0]));
     int y = y0;
     for (int i = 0; i < n; i++) {
-        dp_text_small(cv, 20, y + 7, rows[i][0], DP_COL_FG3, 1);
-        dp_text_fit(cv, 172, y + 5, DP_W - 192, rows[i][1], DP_COL_FG, 0);
+        dp_text(cv, 20, y + 6, rows[i][0], DP_COL_FG2, 1);
+        dp_text_fit(cv, 202, y + 6, DP_W - 222, rows[i][1], DP_COL_FG, 0);
         dp_hline(cv, 20, y + rh - 1, DP_W - 40, DP_COL_LINE);
         y += rh;
     }
-    dp_hints(cv, NULL, 0, "Главная");
+    if (m->input_test) {
+        const struct dp_hint hints[] = { { "B", "Два нажатия для возврата" } };
+        dp_hints(cv, hints, 1, NULL);
+        return;
+    }
+    const struct dp_hint hints[] = { { "L1/R1", "Вкладки" } };
+    dp_hints(cv, hints, 1, "Назад");
 }
 
 /* ------------------------------------------------------------- overlays */
@@ -715,4 +745,22 @@ void dp_ui_paint(struct dp_canvas *cv, const struct dp_model *m, enum dp_screen 
     case DP_SCR_INFO: dp_screen_info(cv, m); break;
     default: break;
     }
+}
+
+void dp_ui_boot_splash(struct dp_canvas *cv)
+{
+    static const char wordmark[] = "DEEPoS";
+    static const char status[] = "Загрузка системы";
+    dp_fill(cv, DP_COL_BG);
+    dp_frame(cv, 16, 16, DP_W - 32, DP_H - 32, DP_COL_LINE);
+    dp_hline(cv, 16, 16, 28, DP_COL_ACC);
+    dp_vline(cv, 16, 16, 24, DP_COL_ACC);
+    dp_hline(cv, DP_W - 44, DP_H - 17, 28, DP_COL_ACC);
+    dp_vline(cv, DP_W - 17, DP_H - 40, 24, DP_COL_ACC);
+
+    int x = (DP_W - dp_text_w(wordmark, 5)) / 2;
+    dp_text(cv, x, 174, wordmark, DP_COL_ACC, 5);
+    dp_hline(cv, x, 263, DP_W - 2 * x, DP_COL_LINE);
+    x = (DP_W - dp_text_w(status, 1)) / 2;
+    dp_text(cv, x, 280, status, DP_COL_FG2, 1);
 }

@@ -1,22 +1,57 @@
-# DEEPoS emulator commands.
-#
-# Every line maps a system id (the folder name under /storage/roms) to the
-# command that starts a game for it. %ROM% is replaced with the full path of
-# the selected ROM; the launcher waits for the process and returns to the list.
-#
-# The 0.1 prototype does not ship emulators yet: the default below documents the
-# expected shape and works as soon as RetroArch plus a core are installed, e.g.
-#   mkdir -p /data/emus && cp retroarch /data/emus/ &&
-#   cp genesis_plus_gx_libretro.so /data/emus/cores/
-# Without a mapping the launcher prints a clear error and exits (code 5).
-md = "/data/emus/retroarch -L /data/emus/cores/genesis_plus_gx_libretro.so %ROM%"
-snes = "/data/emus/retroarch -L /data/emus/cores/snes9x_libretro.so %ROM%"
-psx = "/data/emus/retroarch -L /data/emus/cores/swanstation_libretro.so %ROM%"
-gb = "/data/emus/retroarch -L /data/emus/cores/gambatte_libretro.so %ROM%"
-gba = "/data/emus/retroarch -L /data/emus/cores/mgba_libretro.so %ROM%"
-nes = "/data/emus/retroarch -L /data/emus/cores/mesen_libretro.so %ROM%"
-n64 = "/data/emus/retroarch -L /data/emus/cores/mupen64plus_next_libretro.so %ROM%"
-
-# Ports are shell scripts started by the system shell; the DEEPoS demo below
-# uses the same path to prove that launching from the library works.
+# Defaults for the optional Arch-R ARM64 runtime. User mappings can override these.
+nes = "/usr/local/bin/retroarch-game.sh fceumm %ROM%"
+famicom = "/usr/local/bin/retroarch-game.sh fceumm %ROM%"
+fds = "/usr/local/bin/retroarch-game.sh fceumm %ROM%"
+snes = "/usr/local/bin/retroarch-game.sh snes9x %ROM%"
+sfc = "/usr/local/bin/retroarch-game.sh snes9x %ROM%"
+gb = "/usr/local/bin/retroarch-game.sh gambatte %ROM%"
+gbc = "/usr/local/bin/retroarch-game.sh gambatte %ROM%"
+gba = "/usr/local/bin/retroarch-game.sh mgba %ROM%"
+md = "/usr/local/bin/retroarch-game.sh genesis_plus_gx %ROM%"
+megadrive = "/usr/local/bin/retroarch-game.sh genesis_plus_gx %ROM%"
+genesis = "/usr/local/bin/retroarch-game.sh genesis_plus_gx %ROM%"
+sms = "/usr/local/bin/retroarch-game.sh genesis_plus_gx %ROM%"
+mastersystem = "/usr/local/bin/retroarch-game.sh genesis_plus_gx %ROM%"
+gg = "/usr/local/bin/retroarch-game.sh genesis_plus_gx %ROM%"
+gamegear = "/usr/local/bin/retroarch-game.sh genesis_plus_gx %ROM%"
+segacd = "/usr/local/bin/retroarch-game.sh genesis_plus_gx %ROM%"
+sega32x = "/usr/local/bin/retroarch-game.sh picodrive %ROM%"
+pce = "/usr/local/bin/retroarch-game.sh beetle_pce_fast %ROM%"
+pcengine = "/usr/local/bin/retroarch-game.sh beetle_pce_fast %ROM%"
+pcenginecd = "/usr/local/bin/retroarch-game.sh beetle_pce_fast %ROM%"
+tg16 = "/usr/local/bin/retroarch-game.sh beetle_pce_fast %ROM%"
+psx = "/usr/local/bin/retroarch-game.sh pcsx_rearmed %ROM%"
+ps1 = "/usr/local/bin/retroarch-game.sh pcsx_rearmed %ROM%"
+n64 = "/usr/local/bin/retroarch-game.sh mupen64plus_next %ROM%"
+nds = "/usr/local/bin/retroarch-game.sh melonds %ROM%"
+psp = "/usr/local/bin/retroarch-game.sh ppsspp %ROM%"
+dc = "/usr/local/bin/retroarch-game.sh flycast %ROM%"
+dreamcast = "/usr/local/bin/retroarch-game.sh flycast %ROM%"
+naomi = "/usr/local/bin/retroarch-game.sh flycast %ROM%"
+atomiswave = "/usr/local/bin/retroarch-game.sh flycast %ROM%"
+saturn = "/usr/local/bin/retroarch-game.sh yabasanshiro %ROM%"
+arcade = "/usr/local/bin/retroarch-game.sh fbneo %ROM%"
+neogeo = "/usr/local/bin/retroarch-game.sh fbneo %ROM%"
+cps1 = "/usr/local/bin/retroarch-game.sh fbneo %ROM%"
+cps2 = "/usr/local/bin/retroarch-game.sh fbneo %ROM%"
+cps3 = "/usr/local/bin/retroarch-game.sh fbneo %ROM%"
+mame = "/usr/local/bin/retroarch-game.sh mame2003_plus %ROM%"
+ngp = "/usr/local/bin/retroarch-game.sh beetle_ngp %ROM%"
+ngpc = "/usr/local/bin/retroarch-game.sh beetle_ngp %ROM%"
+lynx = "/usr/local/bin/retroarch-game.sh handy %ROM%"
+vb = "/usr/local/bin/retroarch-game.sh beetle_vb %ROM%"
+wsw = "/usr/local/bin/retroarch-game.sh beetle_wswan %ROM%"
+ws = "/usr/local/bin/retroarch-game.sh beetle_wswan %ROM%"
+wonderswan = "/usr/local/bin/retroarch-game.sh beetle_wswan %ROM%"
+wonderswancolor = "/usr/local/bin/retroarch-game.sh beetle_wswan %ROM%"
+a2600 = "/usr/local/bin/retroarch-game.sh stella %ROM%"
+atari2600 = "/usr/local/bin/retroarch-game.sh stella %ROM%"
+atari7800 = "/usr/local/bin/retroarch-game.sh prosystem %ROM%"
+c64 = "/usr/local/bin/retroarch-game.sh vice_x64 %ROM%"
+zx = "/usr/local/bin/retroarch-game.sh fuse %ROM%"
+zxspectrum = "/usr/local/bin/retroarch-game.sh fuse %ROM%"
+dos = "/usr/local/bin/retroarch-game.sh dosbox_pure %ROM%"
+scummvm = "/usr/local/bin/retroarch-game.sh scummvm %ROM%"
+x68000 = "/usr/local/bin/retroarch-game.sh px68k %ROM%"
+pico8 = "/usr/local/bin/retroarch-game.sh fake08 %ROM%"
 ports = "/bin/sh %ROM%"

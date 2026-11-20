@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 # DEEPoS thermal module: shows temperatures and switches CPU/GPU profiles.
 #
 # Transport: NDJSON JSON-RPC on stdin/stdout (see docs/FIRMWARE-SPEC.md §7).
@@ -13,7 +13,6 @@ REQUEST="$DATA/request"
 STATUS="$DATA/status"
 
 zone() { # zone <type> -> millidegrees
-    local f
     for f in "$SYSFS"/sys/class/thermal/thermal_zone*/type; do
         [ -r "$f" ] || continue
         if [ "$(cat "$f")" = "$1" ]; then
@@ -47,9 +46,8 @@ handle_action() { # handle_action <action>
     case "$1" in
         eco|balanced|max)
             [ -n "$DATA" ] || return 0
-            mkdir -p "$DATA" 2>/dev/null
-            printf '%s\n' "$1" > "$REQUEST"
-            return 0
+            mkdir -p "$DATA" && printf '%s\n' "$1" > "$REQUEST"
+            return $?
             ;;
     esac
     return 0
@@ -68,8 +66,11 @@ while IFS= read -r line; do
             ;;
         action.invoke)
             action=$(printf '%s' "$line" | sed -n 's/.*"action"[[:space:]]*:[[:space:]]*"\([a-z]*\)".*/\1/p' | head -n1)
-            handle_action "$action"
-            emit "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"ok\":true,\"action\":\"$action\"}}"
+            if handle_action "$action"; then
+                emit "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"ok\":true,\"action\":\"$action\"}}"
+            else
+                emit "{\"jsonrpc\":\"2.0\",\"id\":$id,\"error\":{\"message\":\"cannot persist request\"}}"
+            fi
             emit_updates
             ;;
         shutdown)

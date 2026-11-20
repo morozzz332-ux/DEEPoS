@@ -4,6 +4,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <asm/ioctl.h>
 #include <linux/input.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -145,6 +146,13 @@ static int check_pad(const char *name, enum dp_key south, enum dp_key east, int 
     failed |= check_key(&input, BTN_TR, 1, DP_KEY_R1);
     failed |= check_key(&input, BTN_TL2, 1, DP_KEY_L2);
     failed |= check_key(&input, BTN_TR2, 1, DP_KEY_R2);
+    failed |= check_key(&input, BTN_NORTH, 1, DP_KEY_X);
+    failed |= check_key(&input, BTN_WEST, 1, DP_KEY_Y);
+    failed |= check_key(&input, BTN_MODE, 1, DP_KEY_FN);
+    failed |= check_key(&input, BTN_THUMBL, 1, DP_KEY_L3);
+    failed |= check_key(&input, BTN_THUMBR, 1, DP_KEY_R3);
+    failed |= check_key(&input, KEY_VOLUMEUP, 1, DP_KEY_VOL_UP);
+    failed |= check_key(&input, KEY_VOLUMEDOWN, 1, DP_KEY_VOL_DOWN);
     failed |= check_key(&input, BTN_DPAD_DOWN, 2, DP_KEY_DOWN);
     failed |= check_key(&input, BTN_SOUTH, 2, DP_KEY_NONE);
     dp_input_close(&input);

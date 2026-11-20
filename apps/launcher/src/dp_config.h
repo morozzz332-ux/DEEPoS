@@ -32,6 +32,11 @@ int dp_config_set(struct dp_config *cfg, const char *kv);
 int dp_config_apply(const struct dp_config *cfg, const char *sysfs_prefix,
                     const char *profile_path);
 
+int dp_config_apply_brightness(const char *prefix, int percent);
+int dp_config_apply_volume(const char *prefix, int percent);
+int dp_config_apply_cpu(const char *prefix, const char *profile);
+int dp_config_write_profile(const char *path, const char *profile);
+
 /* "brightness=40 volume=55 profile=eco" - one line, stable key order. */
 int dp_config_format(const struct dp_config *cfg, char *out, int outsz);
 

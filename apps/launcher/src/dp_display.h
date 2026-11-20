@@ -24,6 +24,8 @@ struct dp_display {
     int h;
     int bpp;
     int stride;
+    unsigned red, green, blue, alpha;
+    unsigned red_bits, green_bits, blue_bits, alpha_bits;
     int fake; /* 1 = file-backed test surface */
 };
 

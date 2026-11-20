@@ -1,10 +1,10 @@
-/* DEEPoS launcher - 11 px small bitmap font table (generated tables + API). */
+/* DEEPoS launcher - 8x14 small bitmap font table. */
 #ifndef DP_FONT_SMALL_H
 #define DP_FONT_SMALL_H
 
 #include <stdint.h>
 
-#define DP_SMALL_ADV 7
+#define DP_SMALL_ADV 8
 #define DP_SMALL_ROWS 14
 
 struct dp_glyph_small {

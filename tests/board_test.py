@@ -342,7 +342,7 @@ def test_usb_gadget() -> None:
     if gadget.exists():
         text = gadget.read_text(encoding="utf-8")
         check("gadget mounts configfs", "mount -t configfs" in text)
-        check("gadget binds a UDC", "> UDC" in text or "echo \"$udc\" > UDC" in text)
+        check("gadget binds a UDC", "> UDC" in text or ">UDC" in text)
         check("gadget has acm function", "functions/acm.gs0" in text)
         check("gadget has ncm function", "functions/ncm.usb0" in text)
         check("gadget assigns link-local ip", "169.254.170.2/16" in text)

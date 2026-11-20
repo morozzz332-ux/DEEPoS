@@ -25,7 +25,12 @@ enum dp_key {
     DP_KEY_R2,
     DP_KEY_SELECT,
     DP_KEY_START,
-    DP_KEY_QUIT
+    DP_KEY_QUIT,
+    DP_KEY_FN,
+    DP_KEY_L3,
+    DP_KEY_R3,
+    DP_KEY_VOL_UP,
+    DP_KEY_VOL_DOWN
 };
 
 struct dp_input {
@@ -42,6 +47,14 @@ struct dp_input {
 /* Open the input device with the best gamepad score (capabilities, not just
  * the name). Returns 0 on success. */
 int dp_input_open(struct dp_input *in);
+
+/* Diagnostic: dump the device capabilities and every raw event received during
+ * `seconds` to `path`. Used from a one-shot boot probe (/flash/INPUT.PROBE). */
+int dp_input_probe(struct dp_input *in, int seconds, const char *path);
+
+/* Diagnostic: list every /dev/input/event* node with its name and the key
+ * capabilities we care about, plus the loaded joypad modules. Creates `path`. */
+int dp_input_scan(const char *path);
 void dp_input_close(struct dp_input *in);
 
 /* Block up to timeout_ms; returns DP_KEY_NONE on timeout.

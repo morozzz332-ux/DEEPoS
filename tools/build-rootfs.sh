@@ -72,6 +72,11 @@ chmod 0755 "$STAGE/etc/init.d/rcS" "$STAGE/usr/local/bin/"*.sh \
 echo "shipping modules"
 mkdir -p "$STAGE/usr/share/deepos/modules"
 cp -a "$REPO/modules/thermal" "$REPO/modules/saves" "$STAGE/usr/share/deepos/modules/"
+chmod 0755 "$STAGE/usr/share/deepos/modules/"*/main.sh \
+           "$STAGE/usr/share/deepos/modules/"*/root/*.sh
+cp "$REPO/board/r36s-v20/data/emulators.toml" "$STAGE/usr/share/deepos/"
+install -D -m 0644 "$REPO/tools/fonts/terminus/OFL.TXT" \
+    "$STAGE/usr/share/licenses/deepos/terminus-OFL.txt"
 
 # --- pack -----------------------------------------------------------------
 echo "packing squashfs"

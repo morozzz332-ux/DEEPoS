@@ -98,6 +98,17 @@ def main() -> int:
               "emulator did not get the rom path")
         check("launch\tmd\tg0.md\tslot=-1\t0" in res.stdout, f"stdout: {res.stdout!r}")
 
+        nested = roms / "roms" / "GBA"
+        nested.mkdir(parents=True)
+        game = nested / "game with spaces.gba"
+        game.write_text("rom")
+        with emu.open("a") as config:
+            config.write(f'gba = "sh {stub} %ROM%"\n')
+        res = run_launcher(["--roms", str(roms), "--emulators", str(emu),
+                            "--run-game", f"gba:{game.name}"])
+        check(res.returncode == 0 and marker.read_text().splitlines() == [str(game)],
+              f"nested Arch-R library forwards the original path: {res.stderr}")
+
         # 2. unknown system -> code 5
         res = run_launcher(["--roms", str(roms), "--emulators", str(emu),
                             "--run-game", "snes:g0.sfc"])

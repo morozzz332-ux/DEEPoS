@@ -12,8 +12,9 @@ static int frame_presented;
 
 int __wrap_dp_display_open(struct dp_display *display, const char *path)
 {
+    static int opens;
     const char *mode = getenv("DEEPOS_TEST_FRAMEBUFFER");
-    if (strcmp(mode, "missing") == 0)
+    if (strcmp(mode, "missing") == 0 || (strcmp(mode, "late") == 0 && opens++ == 0))
         return -1;
     display->fake = path != NULL || strcmp(mode, "fake") == 0;
     return 0;
