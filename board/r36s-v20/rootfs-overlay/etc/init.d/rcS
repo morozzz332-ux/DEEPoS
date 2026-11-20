@@ -89,6 +89,7 @@ mount -t proc     proc     /proc                 2>/dev/null || true
 mount -t sysfs    sysfs    /sys                  2>/dev/null || true
 mount -t devtmpfs devtmpfs /dev                  2>/dev/null || true
 mkdir -p /dev/pts /dev/shm
+[ -e /dev/fd ] || ln -s /proc/self/fd /dev/fd
 # Draw before probing storage or starting services. The launcher owns the next frame.
 if [ -x /usr/bin/launcher ]; then
     /usr/bin/launcher --boot-splash >/dev/null 2>&1 || true
@@ -165,6 +166,7 @@ if [ "$data_mounted" = yes ]; then
     done
     refresh_module_entry thermal 5ce8d705136069f03cebbb17739e50022d23e8a1ff2a6bcf6171a415f9318cfd
     refresh_module_entry saves 59800fb67dd10a1f304d8b77bad021e4ce23e1e3406a5b6deba324491a76fbe0
+    refresh_module_entry emulators 2f2aaf93b8309a1d3f369db494ed6792ce5ec6896cf5d8d490e6c0e9e136eb4c
     old_registry=$(sha256sum /data/emulators.toml 2>/dev/null)
     if [ "${old_registry%% *}" = c6b5672c7ea2979579882ae2b02883860d8bfcc04e8f9e10607949f233e46ff5 ]; then
         cp /usr/share/deepos/emulators.toml /data/.emulators.new &&
@@ -174,6 +176,11 @@ fi
 if [ "$roms_mounted" = yes ] && [ ! -d /storage/ports ]; then
     mkdir -p /storage/ports 2>/dev/null || true
     cp -a /usr/share/deepos/roms/. /storage/ 2>/dev/null || true
+fi
+if [ "$roms_mounted" = yes ] && [ -d /opt/deepos/portmaster/PortMaster ]; then
+    mkdir -p /storage/ports
+    [ -e /storage/ports/PortMaster.sh ] ||
+        cp /usr/share/deepos/portmaster-entry.sh /storage/ports/PortMaster.sh
 fi
 if [ "$roms_mounted" = yes ] && [ ! -f /storage/.deepos-folders-v1 ] &&
    [ -r /usr/share/deepos/rom-folders.txt ]; then

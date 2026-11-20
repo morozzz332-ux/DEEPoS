@@ -67,6 +67,13 @@ mkdir -p "$STAGE/proc" "$STAGE/sys" "$STAGE/dev" "$STAGE/run" "$STAGE/tmp" \
 chmod 1777 "$STAGE/tmp"
 chmod 0755 "$STAGE/etc/init.d/rcS" "$STAGE/usr/local/bin/"*.sh \
            "$STAGE/usr/share/deepos/roms/ports/demo.sh"
+if [ -n "${PORTMASTER_PACKAGE:-}" ]; then
+    sh "$REPO/tools/install-portmaster.sh" "$STAGE" "$PORTMASTER_PACKAGE"
+fi
+if [ -n "${EXTRA_CORES_PACKAGE:-}" ]; then
+    python3 -m tarfile --filter data -e "$EXTRA_CORES_PACKAGE" "$STAGE/usr/share/deepos"
+    test -s "$STAGE/usr/share/deepos/extra-emulators/cores.tsv"
+fi
 [ -e "$STAGE/init" ] || ln -sf /bin/busybox "$STAGE/init"
 [ -e "$STAGE/sbin/init" ] || ln -sf ../bin/busybox "$STAGE/sbin/init"
 [ -e "$STAGE/linuxrc" ] || ln -sf /bin/busybox "$STAGE/linuxrc"

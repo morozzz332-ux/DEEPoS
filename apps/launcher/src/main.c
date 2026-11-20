@@ -17,6 +17,7 @@
 #include "dp_input.h"
 #include "dp_config.h"
 #include "dp_clock.h"
+#include "dp_cores.h"
 #include "dp_modc.h"
 #include "dp_model.h"
 #include "dp_sound.h"
@@ -84,6 +85,12 @@ struct dp_nav {
     int clock_panel; /* 1 = date/time, 2 = region */
     int clock_choice;
     int clock_apply;
+    struct dp_cores core_options;
+    char core_system[DP_SYS_ID];
+    int core_request;
+    int core_open;
+    int core_index;
+    int core_apply;
     int usb_action; /* 1 network, 2 files */
     pid_t backup_pid;
     char notice[128];  /* one-shot message drawn above the hint bar */
@@ -338,6 +345,17 @@ static int nav_key(struct dp_nav *nav, struct dp_model *m, const char *roms, enu
         }
         return 0;
     }
+    if (nav->core_open && key != DP_KEY_QUIT) {
+        if (key == DP_KEY_B)
+            nav->core_open = 0;
+        else if (key == DP_KEY_A)
+            nav->core_apply = 1;
+        else if (key == DP_KEY_UP || key == DP_KEY_DOWN) {
+            int count = nav->core_options.count + 1;
+            nav->core_index = (nav->core_index + count + (key == DP_KEY_DOWN ? 1 : -1)) % count;
+        }
+        return 0;
+    }
 
     if (m->input_test && key != DP_KEY_QUIT) {
         if (key == DP_KEY_B && strcmp(m->si.last_key, "b") == 0) {
@@ -412,6 +430,12 @@ static int nav_key(struct dp_nav *nav, struct dp_model *m, const char *roms, enu
     case DP_KEY_A:
     case DP_KEY_START:
     case DP_KEY_X:
+        if (key == DP_KEY_X && (scr == DP_SCR_SYSTEMS || scr == DP_SCR_GAMES) && m->nsys > 0) {
+            int system = scr == DP_SCR_SYSTEMS ? nav->sel : nav->system;
+            snprintf(nav->core_system, sizeof(nav->core_system), "%s", m->systems[system].id);
+            nav->core_request = 1;
+            break;
+        }
         if (scr == DP_SCR_MODULES) {
             if (key == DP_KEY_START || (key == DP_KEY_X && !m->nmods)) {
                 nav->module_help = 1;
@@ -444,6 +468,9 @@ static int nav_key(struct dp_nav *nav, struct dp_model *m, const char *roms, enu
                     nav->clock_choice = DP_CLOCK_DAY;
                     nav->clock_panel = 1;
                 }
+            } else if (nav->sel == DP_SETTINGS_EMULATORS) {
+                nav_shortcut(nav, 1);
+                nav_notice(nav, "Выберите систему и нажмите X для выбора ядра");
             } else if (nav->sel == 2 || nav->sel == 3 || nav->sel == 5 || nav->sel == 0 ||
                 nav->sel == 6 || nav->sel == 8 || nav->sel == 11)
                 nav->settings_edit = nav->sel + 1;
@@ -730,9 +757,21 @@ static void continue_update(const char *data_dir, const struct dp_model *m, cons
     }
 }
 
+static int game_emulator(const char *emulators_path, const char *system, struct dp_launch_cfg *cfg)
+{
+    if (parse_emulators(emulators_path, system, cfg) == 0)
+        return 0;
+    if (strcmp(emulators_path, DEFAULT_EMULATORS) != 0)
+        return -1;
+    if (parse_emulators(BUILTIN_EMULATORS, system, cfg) == 0 ||
+        parse_emulators(IMPORTED_EMULATORS, system, cfg) == 0)
+        return 0;
+    return parse_emulators(DP_CORE_ASSETS "/systems.toml", system, cfg);
+}
+
 static int launch_game(const struct dp_model *m, const char *roms, const char *mods_socket,
                        const char *emulators_path, const char *sys, const char *rom, int slot,
-                       enum dp_rom_source *source)
+                       enum dp_rom_source *source, const char *data)
 {
     struct dp_launch_cfg cfg;
     char rom_path[1024];
@@ -740,14 +779,24 @@ static int launch_game(const struct dp_model *m, const char *roms, const char *m
     int allow = 1;
     int child;
 
-    if (parse_emulators(emulators_path, sys, &cfg) != 0 &&
-        (strcmp(emulators_path, DEFAULT_EMULATORS) != 0 ||
-         (parse_emulators(BUILTIN_EMULATORS, sys, &cfg) != 0 &&
-          parse_emulators(IMPORTED_EMULATORS, sys, &cfg) != 0))) {
+    if (game_emulator(emulators_path, sys, &cfg) != 0) {
         fprintf(stderr, "launcher: no emulator for '%s' in %s\n", sys, emulators_path);
         return 5;
     }
+    char core[DP_CORE_NAME];
+    if (dp_core_default_command(cfg.cmd) && dp_core_read(data, sys, core, sizeof(core))) {
+        struct dp_cores list;
+        dp_core_list(&list, data, sys);
+        for (int i = 0; i < list.count; i++)
+            if (!strcmp(list.names[i], core)) {
+                snprintf(cfg.cmd, sizeof(cfg.cmd), "/usr/local/bin/retroarch-game.sh %s %%ROM%%", core);
+                break;
+            }
+    }
     int usb = access("/run/deepos-usb.export", F_OK) == 0;
+    if (!strcmp(sys, "ports") && !strcmp(cfg.cmd, "/bin/sh %ROM%") &&
+        access("/opt/deepos/portmaster/runtime/bin/bash", X_OK) == 0)
+        snprintf(cfg.cmd, sizeof(cfg.cmd), "/bin/sh /usr/share/deepos/run-port.sh %%ROM%%");
     enum dp_rom_source card = *source;
     if (usb && card == DP_ROM_AUTO)
         card = DP_ROM_TF2;
@@ -776,8 +825,19 @@ static int launch_selected(struct dp_nav *nav, struct dp_model *m, const char *r
                            const char *mods_socket, const char *emulators, const char *data)
 {
     int rc = launch_game(m, roms, mods_socket, emulators, nav->lsys, nav->lrom, nav->lslot,
-                         &nav->lsource);
-    if (rc == 0) {
+                         &nav->lsource, data);
+    if (!strcmp(nav->lsys, "ports") && !strcmp(nav->lrom, "PortMaster.sh")) {
+        dp_model_scan(m, roms);
+        if (tab_screen(nav) == DP_SCR_GAMES) {
+            for (int i = 0; i < m->nsys; i++)
+                if (!strcmp(m->systems[i].id, "ports")) {
+                    nav->system = i;
+                    dp_model_load_games(m, roms, i);
+                    nav_clamp(nav, m);
+                    break;
+                }
+        }
+    } else if (rc == 0) {
         continue_update(data, m, nav->lsys, nav->lrom, nav->lslot, nav->lsource);
         dp_model_load_continue(m, data);
         if (tab_screen(nav) == DP_SCR_CONTINUE)
@@ -1129,6 +1189,8 @@ static void paint_nav(struct dp_canvas *cv, struct dp_model *m, struct dp_nav *n
                              "Новые модули появятся выключенными.");
     if (nav->clock_panel)
         dp_ui_clock(cv, nav->clock_panel == 2, nav->clock_choice, &nav->clock_draft);
+    if (nav->core_open)
+        dp_ui_cores(cv, nav->core_system, &nav->core_options, nav->core_index);
     if (nav->notice[0]) {
         dp_ui_toast(cv, nav->notice);
         nav->notice[0] = '\0';
@@ -1154,8 +1216,35 @@ static int refresh_usb(struct dp_model *m)
 
 static int apply_nav_actions(struct dp_nav *nav, struct dp_model *m, const char *config,
                              const char *sysfs, const char *data, const char *socket,
-                             const char *roms)
+                             const char *roms, const char *emulators)
 {
+    if (nav->core_request) {
+        nav->core_request = 0;
+        struct dp_launch_cfg cfg;
+        if (game_emulator(emulators, nav->core_system, &cfg) != 0 ||
+            !dp_core_default_command(cfg.cmd) ||
+            dp_core_list(&nav->core_options, data, nav->core_system) == 0) {
+            nav_notice(nav, "Для этой системы нет списка доступных ядер");
+            return 1;
+        }
+        nav->core_index = 0;
+        char current[DP_CORE_NAME];
+        if (dp_core_read(data, nav->core_system, current, sizeof(current)))
+            for (int i = 0; i < nav->core_options.count; i++)
+                if (!strcmp(current, nav->core_options.names[i]))
+                    nav->core_index = i + 1;
+        nav->core_open = 1;
+        return 1;
+    }
+    if (nav->core_apply) {
+        nav->core_apply = 0;
+        const char *name = nav->core_index > 0 ? nav->core_options.names[nav->core_index - 1] : NULL;
+        if (dp_core_save(data, nav->core_system, name) != 0)
+            nav_notice(nav, "Не удалось сохранить выбранное ядро");
+        else
+            nav->core_open = 0;
+        return 1;
+    }
     if (nav->module_import) {
         nav->module_import = 0;
         int result = run_command("/bin/sh /usr/share/deepos/import-modules.sh", "");
@@ -1613,7 +1702,7 @@ int main(int argc, char **argv)
         copy_field(sys, sizeof(sys), spec);
         copy_field(rom, sizeof(rom), colon + 1);
         enum dp_rom_source source = DP_ROM_AUTO;
-        rc_game = launch_game(m, roms, mods_socket, emulators_path, sys, rom, save_slot, &source);
+        rc_game = launch_game(m, roms, mods_socket, emulators_path, sys, rom, save_slot, &source, data);
         if (rc_game == 0)
             continue_update(data, m, sys, rom, save_slot, source);
         dp_model_free(m);
@@ -1689,7 +1778,7 @@ int main(int argc, char **argv)
             }
             quit = nav_key(&nav, m, roms, k);
             if (!quit)
-                apply_nav_actions(&nav, m, config_path, sysfs_prefix, data, mods_socket, roms);
+                apply_nav_actions(&nav, m, config_path, sysfs_prefix, data, mods_socket, roms, emulators_path);
         }
     }
 
@@ -1762,13 +1851,15 @@ int main(int argc, char **argv)
                 int old_module_details = nav.module_details;
                 int old_module_help = nav.module_help;
                 int old_clock_panel = nav.clock_panel;
+                int old_core_open = nav.core_open;
                 int changed = 0;
                 if (k != DP_KEY_NONE) {
                     quit = nav_key(&nav, m, roms, k);
                     if (quit)
                         break;
-                    changed = apply_nav_actions(&nav, m, config_path, sysfs_prefix, data, mods_socket, roms);
-                    changed |= old_clock_panel || nav.clock_panel;
+                    changed = apply_nav_actions(&nav, m, config_path, sysfs_prefix, data, mods_socket,
+                                                roms, emulators_path);
+                    changed |= old_clock_panel || nav.clock_panel || old_core_open || nav.core_open;
                     if (tab_screen(&nav) == DP_SCR_INFO) {
                         if (!m->input_test)
                             snprintf(m->si.last_key, sizeof(m->si.last_key), "%s", dp_key_name(k));

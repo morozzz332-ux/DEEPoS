@@ -130,6 +130,24 @@ def main():
         check("B discards the date draft",
               clock.read_text() == f"Europe/Moscow {int(january.timestamp())}\n")
 
+        cores = data / "emus" / "cores"
+        cores.mkdir(parents=True)
+        (cores / "genesis_plus_gx_libretro.so").touch()
+        (cores / "picodrive_libretro.so").touch()
+        (cores.parent / "cores.tsv").write_text("md\tgenesis_plus_gx absent picodrive\n")
+        emulators = tmp / "emulators.toml"
+        emulators.write_text('md = "/usr/local/bin/retroarch-game.sh genesis_plus_gx %ROM%"\n')
+        select = ("--screen", "systems", "--emulators", str(emulators))
+        pick = data / "config" / "core-md"
+        p = run(roms, data, "X,DOWN,DOWN,A", *select)
+        check("core picker lists installed cores and saves the selected one",
+              p.returncode == 0 and pick.exists() and pick.read_text() == "picodrive\n")
+        run(roms, data, "X,UP,B", *select)
+        check("cancel leaves the selected core unchanged",
+              pick.exists() and pick.read_text() == "picodrive\n")
+        run(roms, data, "X,UP,UP,A", *select)
+        check("Auto restores the default core", not pick.exists())
+
     if failures:
         print(f"\nFAIL  settings: {len(failures)} problem(s)")
         return 1

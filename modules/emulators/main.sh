@@ -8,6 +8,11 @@ inspect() {
     for core in "$runtime"/cores/*_libretro.so; do
         [ ! -f "$core" ] || count=$((count + 1))
     done
+    for core in /usr/share/deepos/extra-emulators/cores/*_libretro.so; do
+        if [ -f "$core" ] && [ ! -f "$runtime/cores/${core##*/}" ]; then
+            count=$((count + 1))
+        fi
+    done
     printf 'RetroArch: %s\\nЯдер RetroArch: %s' "$installed" "$count"
 }
 

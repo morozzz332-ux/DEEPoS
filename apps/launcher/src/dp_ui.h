@@ -4,6 +4,7 @@
 
 #include "dp_canvas.h"
 #include "dp_clock.h"
+#include "dp_cores.h"
 #include "dp_model.h"
 
 enum dp_screen {
@@ -32,6 +33,7 @@ void dp_ui_toast(struct dp_canvas *cv, const char *message);
 void dp_ui_module_details(struct dp_canvas *cv, const struct dp_module_info *module,
                           const char *message);
 void dp_ui_clock(struct dp_canvas *cv, int region, int selected, const struct tm *draft);
+void dp_ui_cores(struct dp_canvas *cv, const char *system, const struct dp_cores *list, int selected);
 
 /* Centred panel for the guided hardware measurement (BENCH.ON on BOOT). */
 void dp_ui_overlay(struct dp_canvas *cv, const char *title, const char *line1,

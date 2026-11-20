@@ -387,9 +387,10 @@ static void dp_screen_systems(struct dp_canvas *cv, const struct dp_model *m, in
     const struct dp_hint items[] = {
         { "↑↓←→", "Выбор" },
         { "A", "Открыть" },
+        { "X", "Ядро" },
         { "L1/R1", "Вкладки" },
     };
-    dp_hints(cv, items, 3, "Главная");
+    dp_hints(cv, items, 4, "Главная");
 }
 
 static void dp_screen_games(struct dp_canvas *cv, const struct dp_model *m, int sys_index,
@@ -445,8 +446,9 @@ static void dp_screen_games(struct dp_canvas *cv, const struct dp_model *m, int 
         { "↑/↓", "Выбор" },
         { "←/→", "Система" },
         { "A", "Играть" },
+        { "X", "Ядро" },
     };
-    dp_hints(cv, items, 3, "Назад");
+    dp_hints(cv, items, 4, "Назад");
 }
 
 struct dp_setting_card {
@@ -519,6 +521,9 @@ static void dp_screen_settings(struct dp_canvas *cv, const struct dp_model *m, i
     cards[DP_SETTINGS_REGION].editable = 1;
     snprintf(cards[DP_SETTINGS_REGION].sub, sizeof(cards[DP_SETTINGS_REGION].sub), "%s",
              dp_clock_zone_label(m->clock_zone));
+    cards[DP_SETTINGS_EMULATORS].title = "Эмуляторы";
+    snprintf(cards[DP_SETTINGS_EMULATORS].sub, sizeof(cards[DP_SETTINGS_EMULATORS].sub),
+             "Ядра по системам");
 
     const int cols = 3, gap = 10;
     const int cw = (DP_W - 2 * DP_PAD - (cols - 1) * gap) / cols;
@@ -586,6 +591,26 @@ void dp_ui_clock(struct dp_canvas *cv, int region, int selected, const struct tm
     dp_text_small(cv, x + 20, y + h - 29,
                   region ? "↑↓ Список     A Сохранить     B Отмена" :
                            "←→ Поле   ↑↓ Значение   A Сохранить   B Отмена", DP_COL_ACC, 1);
+}
+
+void dp_ui_cores(struct dp_canvas *cv, const char *system, const struct dp_cores *list, int selected)
+{
+    const int x = 40, y = 82, w = DP_W - 2 * x, h = 356;
+    char title[80], name[DP_SYS_NAME];
+    dp_system_name(system, name, sizeof(name));
+    snprintf(title, sizeof(title), "ЯДРО / %s", name);
+    dp_rect(cv, x, y, w, h, DP_COL_PANEL2);
+    dp_frame(cv, x, y, w, h, DP_COL_ACC);
+    dp_text_fit(cv, x + 20, y + 16, w - 40, title, DP_COL_FG, 0);
+    dp_hline(cv, x + 20, y + 47, w - 40, DP_COL_LINE);
+    int first = dp_first_visible(selected, 8);
+    for (int i = first; i <= list->count && i < first + 8; i++) {
+        int row = y + 54 + (i - first) * 30;
+        dp_row_frame(cv, x + 16, row, w - 32, 28, i == selected);
+        dp_text_fit(cv, x + 28, row + 6, w - 56, i ? list->names[i - 1] : "Авто",
+                    DP_COL_FG, 1);
+    }
+    dp_text_small(cv, x + 20, y + h - 29, "↑↓ Список     A Сохранить     B Отмена", DP_COL_ACC, 1);
 }
 
 static const char *mod_state_label(const char *state)
