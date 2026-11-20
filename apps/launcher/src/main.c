@@ -57,6 +57,7 @@ static void usage(void)
 #define DEFAULT_EMULATORS "/data/emulators.toml"
 #define BUILTIN_EMULATORS "/usr/share/deepos/emulators.toml"
 #define IMPORTED_EMULATORS "/data/emus/systems.toml"
+#define THEME_GUARD "/run/deepos-theme.in-use"
 
 struct dp_nav {
     int tab;        /* 0 continue, 1 games, 2 settings, 3 modules, 4 files, 5 info */
@@ -70,6 +71,17 @@ struct dp_nav {
     enum dp_rom_source lsource;
     int settings_edit; /* card index + 1, applied after the key */
     int volume_delta;
+    int volume_osd;
+    int controls; /* 1 = settings, 2 = live controller test */
+    int controls_row;
+    int controls_edit;
+    struct dp_input controller;
+    struct dp_theme_entry themes[DP_THEME_MAX];
+    int theme_count, theme_row, theme_open, theme_preview;
+    int theme_action; /* 1 = confirm preview, 2 = restore terminal */
+    int theme_guard;
+    unsigned long long theme_until;
+    struct dp_theme theme_before;
     struct { int tab, sel; } back[2];
     int nback;
     int module_action;
@@ -112,6 +124,16 @@ static int tab_screen(const struct dp_nav *nav)
     default:
         return DP_SCR_INFO;
     }
+}
+
+static int volume_next(int volume, int delta)
+{
+    int next = (volume > 0 ? volume : 50) + delta;
+    if (next < 1)
+        return 1;
+    if (next > DP_CONFIG_VOLUME_MAX)
+        return DP_CONFIG_VOLUME_MAX;
+    return next;
 }
 
 static int tab_from_screen(int scr)
@@ -187,13 +209,8 @@ static int settings_edit_card(struct dp_nav *nav, struct dp_model *m, int card, 
         for (int i = 0; i < nsteps; i++)
             if (cur >= steps[i])
                 next = steps[(i + 1) % nsteps];
-        if (nav->volume_delta) {
-            next = (cur > 0 ? cur : 50) + nav->volume_delta;
-            if (next > 100)
-                next = 100;
-            if (next < 1)
-                next = 1;
-        }
+        if (nav->volume_delta)
+            next = volume_next(cur, nav->volume_delta);
         cfg.volume = next;
     } else if (card == 5) { /* power */
         int idx = 0;
@@ -228,8 +245,8 @@ static int settings_edit_card(struct dp_nav *nav, struct dp_model *m, int card, 
     if (!applied)
         snprintf(nav->notice, sizeof(nav->notice), "Сохранено. Устройство не применило значение");
     /* The volume rocker has no card of its own: show the level right away. */
-    if (applied && card == 3 && nav->volume_delta)
-        snprintf(nav->notice, sizeof(nav->notice), "Громкость %d %%", cfg.volume);
+    if (applied && card == 3)
+        nav->volume_osd = 1;
     m->cfg_brightness = cfg.brightness;
     m->cfg_volume = cfg.volume;
     memcpy(m->prefs, cfg.prefs, sizeof(m->prefs));
@@ -287,7 +304,8 @@ static void nav_launch(struct dp_nav *nav, const char *system, const char *rom, 
 static int nav_grid_cols(int scr)
 {
     if (scr == DP_SCR_SYSTEMS)
-        return 2;
+        return dp_theme_current.layout == DP_LAYOUT_GRID ? 2 :
+               dp_theme_current.layout == DP_LAYOUT_SHELF ? 3 : 1;
     if (scr == DP_SCR_SETTINGS)
         return 3;
     return 1;
@@ -320,6 +338,73 @@ static void nav_switch_system(struct dp_nav *nav, struct dp_model *m, const char
 
 static int nav_key(struct dp_nav *nav, struct dp_model *m, const char *roms, enum dp_key key)
 {
+    if (key == DP_KEY_VOL_UP || key == DP_KEY_VOL_DOWN) {
+        nav->settings_edit = 4;
+        nav->volume_delta = key == DP_KEY_VOL_UP ? 5 : -5;
+        return 0;
+    }
+    if (nav->controls && key == DP_KEY_MENU_BACK) {
+        nav->controls = 0;
+        return 0;
+    }
+    if (nav->controls == 2 && key != DP_KEY_QUIT) {
+        if (key > DP_KEY_NONE && key <= DP_KEY_VOL_DOWN)
+            nav->controller.seen |= 1u << key;
+        return 0;
+    }
+    if (m->swap_menu_ab && (key == DP_KEY_A || key == DP_KEY_B))
+        key = key == DP_KEY_A ? DP_KEY_B : DP_KEY_A;
+    if (nav->theme_open && key != DP_KEY_QUIT) {
+        if (key == DP_KEY_MENU_BACK) {
+            nav->theme_action = 2;
+        } else if (key == DP_KEY_B) {
+            if (nav->theme_preview) {
+                dp_theme_current = nav->theme_before;
+                nav->theme_preview = 0;
+            } else {
+                nav->theme_open = 0;
+            }
+        } else if (key == DP_KEY_A) {
+            if (nav->theme_preview) {
+                nav->theme_action = 1;
+            } else {
+                struct dp_theme preview;
+                if (dp_theme_load(roms, nav->themes[nav->theme_row].id, &preview)) {
+                    nav->theme_before = dp_theme_current;
+                    dp_theme_current = preview;
+                    nav->theme_preview = 1;
+                    nav->theme_until = 0;
+                } else {
+                    nav_notice(nav, "Тема недоступна или повреждена");
+                }
+            }
+        } else if (!nav->theme_preview) {
+            if (key == DP_KEY_UP && nav->theme_row > 0)
+                nav->theme_row--;
+            if (key == DP_KEY_DOWN && nav->theme_row + 1 < nav->theme_count)
+                nav->theme_row++;
+        }
+        return 0;
+    }
+    if (nav->controls == 1 && key != DP_KEY_QUIT) {
+        if (key == DP_KEY_B)
+            nav->controls = 0;
+        else if (key == DP_KEY_UP && nav->controls_row > 0)
+            nav->controls_row--;
+        else if (key == DP_KEY_DOWN && nav->controls_row < 2)
+            nav->controls_row++;
+        else if (key == DP_KEY_Y)
+            nav->controls_edit = 3;
+        else if (key == DP_KEY_A) {
+            if (nav->controls_row == 0) {
+                nav->controls = 2;
+                nav->controller.seen = 0;
+            } else {
+                nav->controls_edit = nav->controls_row;
+            }
+        }
+        return 0;
+    }
     int rows = row_count(m, nav);
     int scr = tab_screen(nav);
     int cols = nav_grid_cols(scr);
@@ -360,15 +445,6 @@ static int nav_key(struct dp_nav *nav, struct dp_model *m, const char *roms, enu
         return 0;
     }
 
-    if (m->input_test && key != DP_KEY_QUIT) {
-        if (key == DP_KEY_B && strcmp(m->si.last_key, "b") == 0) {
-            m->input_test = 0;
-        } else {
-            snprintf(m->si.last_key, sizeof(m->si.last_key), "%s", dp_key_name(key));
-            return 0;
-        }
-    }
-
     switch (key) {
     case DP_KEY_QUIT:
         return 1;
@@ -379,11 +455,6 @@ static int nav_key(struct dp_nav *nav, struct dp_model *m, const char *roms, enu
     case DP_KEY_R1:
     case DP_KEY_R2:
         nav_tab(nav, nav->tab + 1);
-        break;
-    case DP_KEY_VOL_UP:
-    case DP_KEY_VOL_DOWN:
-        nav->settings_edit = 4;
-        nav->volume_delta = key == DP_KEY_VOL_UP ? 5 : -5;
         break;
     case DP_KEY_FN:
     case DP_KEY_SELECT:
@@ -402,6 +473,9 @@ static int nav_key(struct dp_nav *nav, struct dp_model *m, const char *roms, enu
         int dir = key == DP_KEY_RIGHT ? 1 : -1;
         if (scr == DP_SCR_GAMES) {
             nav_switch_system(nav, m, roms, dir);
+        } else if (scr == DP_SCR_SYSTEMS && dp_theme_current.layout == DP_LAYOUT_SHELF) {
+            nav->sel += dir;
+            nav_clamp(nav, m);
         } else if (cols > 1) {
             int next = nav->sel + dir;
             if (next >= 0 && next < rows && next / cols == nav->sel / cols)
@@ -458,7 +532,14 @@ static int nav_key(struct dp_nav *nav, struct dp_model *m, const char *roms, enu
             nav->level = 1;
             nav->sel = 0;
         } else if (scr == DP_SCR_SETTINGS) {
-            if (nav->sel == DP_SETTINGS_CLOCK || nav->sel == DP_SETTINGS_REGION) {
+            if (nav->sel == DP_SETTINGS_THEME) {
+                nav->theme_count = dp_theme_list(roms, nav->themes);
+                nav->theme_row = 0;
+                nav->theme_open = 1;
+                for (int i = 0; i < nav->theme_count; i++)
+                    if (strcmp(nav->themes[i].id, m->theme) == 0)
+                        nav->theme_row = i;
+            } else if (nav->sel == DP_SETTINGS_CLOCK || nav->sel == DP_SETTINGS_REGION) {
                 if (nav->sel == DP_SETTINGS_REGION) {
                     nav->clock_choice = m->clock_zone;
                     nav->clock_panel = 2;
@@ -482,9 +563,8 @@ static int nav_key(struct dp_nav *nav, struct dp_model *m, const char *roms, enu
             else if (nav->sel == 7)
                 nav_shortcut(nav, 3);
             else if (nav->sel == 1) {
-                nav_shortcut(nav, 5);
-                m->input_test = 1;
-                m->si.last_key[0] = '\0';
+                nav->controls = 1;
+                nav->controls_row = 0;
             } else if (nav->sel == 9)
                 nav_shortcut(nav, 5);
         } else if (scr == DP_SCR_FILES && nav->sel == 1) {
@@ -525,7 +605,10 @@ static int nav_key(struct dp_nav *nav, struct dp_model *m, const char *roms, enu
 
 static void nav_print(const struct dp_nav *nav)
 {
-    printf("screen=%s level=%d sel=%d system=%d\n", dp_screen_id((enum dp_screen)tab_screen(nav)),
+    const char *screen = nav->controls == 2 ? "controller-test" : nav->controls == 1 ? "controls" :
+                         nav->theme_open ? "themes" :
+                         dp_screen_id((enum dp_screen)tab_screen(nav));
+    printf("screen=%s level=%d sel=%d system=%d\n", screen,
            nav->level, nav->sel, nav->system);
 }
 
@@ -671,11 +754,7 @@ static void volume_step(int delta) {
     dp_config_init(&cfg);
     if (dp_config_load(&cfg, g_vol_config) != 0)
         return;
-    int next = cfg.volume + delta;
-    if (next < 1)
-        next = 1;
-    if (next > DP_CONFIG_VOLUME_MAX)
-        next = DP_CONFIG_VOLUME_MAX;
+    int next = volume_next(cfg.volume, delta);
     if (next == cfg.volume)
         return;
     cfg.volume = next;
@@ -684,20 +763,20 @@ static void volume_step(int delta) {
 }
 
 /* Waits for `pid`, feeding volume-key presses to the mixer meanwhile. */
-static int wait_with_volume(pid_t pid, int *status) {
+static int wait_with_volume(pid_t pid, int *status, int watch_volume) {
     struct dp_input in;
-    int armed = 0;
-    int st = 0;
-    memset(&in, 0, sizeof(in));
-    in.fd = -1;
-    in.key_fd = -1;
-    if (g_vol_config && dp_input_open(&in) == 0)
-        armed = 1;
+    int opened = watch_volume && g_vol_config && dp_input_open(&in) == 0;
+    if (opened)
+        in.volume_only = 1;
+    int result = 0;
     for (;;) {
-        pid_t done = waitpid(pid, &st, armed ? WNOHANG : 0);
-        if (!armed)
-            break;
-        if (done == pid || (done < 0 && errno != EINTR))
+        int armed = opened && in.ready;
+        pid_t done = waitpid(pid, status, armed ? WNOHANG : 0);
+        if (done < 0 && errno == EINTR)
+            continue;
+        if (done < 0)
+            result = -1;
+        if (done != 0)
             break;
         enum dp_key k = dp_input_poll(&in, 200);
         if (k == DP_KEY_VOL_UP)
@@ -705,14 +784,12 @@ static int wait_with_volume(pid_t pid, int *status) {
         else if (k == DP_KEY_VOL_DOWN)
             volume_step(-5);
     }
-    if (armed)
+    if (opened)
         dp_input_close(&in);
-    if (status)
-        *status = st;
-    return 0;
+    return result;
 }
 
-static int run_command(const char *cmd, const char *arg) {
+static int run_command(const char *cmd, const char *arg, int watch_volume) {
     pid_t pid = fork();
     int status = 0;
     if (pid < 0)
@@ -721,7 +798,7 @@ static int run_command(const char *cmd, const char *arg) {
         execl("/bin/sh", "sh", "-c", cmd, "launcher", arg, (char *)NULL);
         _exit(127);
     }
-    if (wait_with_volume(pid, &status) != 0)
+    if (wait_with_volume(pid, &status, watch_volume) != 0)
         return -1;
     if (WIFEXITED(status))
         return WEXITSTATUS(status);
@@ -869,7 +946,7 @@ static int launch_game(const struct dp_model *m, const char *roms, const char *m
     }
     *source = card;
     expand_rom(cfg.cmd, slot, cmd, sizeof(cmd));
-    child = run_command(cmd, rom_path);
+    child = run_command(cmd, rom_path, 1);
     printf("launch\t%s\t%s\tslot=%d\t%d\n", sys, rom, slot, child);
     if (child == 126 || child == 127)
         return 5;
@@ -1099,6 +1176,9 @@ static void model_load_config(struct dp_model *m, const char *config_path)
     dp_config_load(&cfg, config_path);
     m->cfg_brightness = cfg.brightness;
     m->cfg_volume = cfg.volume;
+    m->menu_sticks = cfg.menu_sticks;
+    m->swap_menu_ab = cfg.swap_menu_ab;
+    snprintf(m->theme, sizeof(m->theme), "%s", cfg.theme);
     memcpy(m->prefs, cfg.prefs, sizeof(m->prefs));
     snprintf(m->cfg_profile, sizeof(m->cfg_profile), "%s", cfg.profile);
 }
@@ -1163,7 +1243,7 @@ static void boot_first_frame(void)
     fflush(stdout);
     if (access("/run/deepos-boot-report", F_OK) == 0) {
         run_command("(/usr/local/bin/selfcheck.sh /flash/report/checks.txt --first-frame "
-                    "&& rm -f /run/deepos-boot-report) </dev/null >/dev/null 2>&1 &", NULL);
+                    "&& rm -f /run/deepos-boot-report) </dev/null >/dev/null 2>&1 &", NULL, 0);
     }
     if (access(ticket, R_OK) != 0)
         return;
@@ -1246,6 +1326,15 @@ static void paint_nav(struct dp_canvas *cv, struct dp_model *m, struct dp_nav *n
         dp_ui_clock(cv, nav->clock_panel == 2, nav->clock_choice, &nav->clock_draft);
     if (nav->core_open)
         dp_ui_cores(cv, nav->core_system, &nav->core_options, nav->core_index);
+    if (nav->controls)
+        dp_ui_controls(cv, m, nav->controls_row, nav->controls == 2 ? &nav->controller : NULL);
+    if (nav->theme_open) {
+        if (nav->theme_preview)
+            dp_ui_paint(cv, m, DP_SCR_SYSTEMS, 0, 0);
+        dp_ui_themes(cv, m, nav->themes, nav->theme_count, nav->theme_row, nav->theme_preview);
+    }
+    if (nav->volume_osd)
+        dp_ui_volume(cv, m->cfg_volume);
     if (nav->notice[0]) {
         dp_ui_toast(cv, nav->notice);
         nav->notice[0] = '\0';
@@ -1273,6 +1362,64 @@ static int apply_nav_actions(struct dp_nav *nav, struct dp_model *m, const char 
                              const char *sysfs, const char *data, const char *socket,
                              const char *roms, const char *emulators)
 {
+    if (nav->theme_action) {
+        const char *id = nav->theme_action == 2 ? "terminal" : nav->themes[nav->theme_row].id;
+        struct dp_theme selected;
+        if (!dp_theme_load(roms, id, &selected)) {
+            dp_theme_current = nav->theme_before;
+            nav_notice(nav, "Тема изменилась или недоступна");
+        } else {
+            struct dp_config cfg;
+            dp_config_init(&cfg);
+            dp_config_load(&cfg, config);
+            snprintf(cfg.theme, sizeof(cfg.theme), "%s", id);
+            if (dp_config_save(&cfg, config) == 0) {
+                if (nav->device_clock) {
+                    if (!strcmp(id, "terminal")) {
+                        unlink(THEME_GUARD);
+                        nav->theme_guard = 0;
+                    } else {
+                        int fd = open(THEME_GUARD, O_WRONLY | O_CREAT | O_CLOEXEC, 0600);
+                        if (fd >= 0) {
+                            close(fd);
+                            nav->theme_guard = 1;
+                        }
+                    }
+                }
+                dp_theme_current = selected;
+                snprintf(m->theme, sizeof(m->theme), "%s", id);
+                nav->theme_open = 0;
+            } else {
+                if (nav->theme_preview)
+                    dp_theme_current = nav->theme_before;
+                nav_notice(nav, "Не удалось сохранить тему");
+            }
+        }
+        nav->theme_preview = 0;
+        nav->theme_action = 0;
+        return 1;
+    }
+    if (nav->controls_edit) {
+        struct dp_config cfg;
+        dp_config_init(&cfg);
+        dp_config_load(&cfg, config);
+        if (nav->controls_edit == 1)
+            cfg.menu_sticks = (cfg.menu_sticks + 1) % DP_STICKS_COUNT;
+        else if (nav->controls_edit == 2)
+            cfg.swap_menu_ab = !cfg.swap_menu_ab;
+        else {
+            cfg.menu_sticks = DP_STICKS_BOTH;
+            cfg.swap_menu_ab = 0;
+        }
+        nav->controls_edit = 0;
+        if (dp_config_save(&cfg, config) != 0)
+            nav_notice(nav, "Не удалось сохранить управление");
+        else {
+            m->menu_sticks = cfg.menu_sticks;
+            m->swap_menu_ab = cfg.swap_menu_ab;
+        }
+        return 1;
+    }
     if (nav->core_request) {
         nav->core_request = 0;
         struct dp_launch_cfg cfg;
@@ -1302,7 +1449,7 @@ static int apply_nav_actions(struct dp_nav *nav, struct dp_model *m, const char 
     }
     if (nav->module_import) {
         nav->module_import = 0;
-        int result = run_command("/bin/sh /usr/share/deepos/import-modules.sh", "");
+        int result = run_command("/bin/sh /usr/share/deepos/import-modules.sh", "", 0);
         nav_notice(nav, result == 0 ? "Модули скопированы. Перезагрузите консоль." :
                         result == 2 ? "В ROMS/modules нет новых модулей" :
                         "Импорт не завершён. Проверьте доступ к DATA и ROMS.");
@@ -1328,7 +1475,7 @@ static int apply_nav_actions(struct dp_nav *nav, struct dp_model *m, const char 
                 return 1;
             }
             if (nav->device_clock && access("/dev/rtc0", F_OK) == 0)
-                run_command("/sbin/hwclock -w -u", "");
+                run_command("/sbin/hwclock -w -u", "", 0);
         }
         if (dp_clock_save(data, &next) != 0) {
             if (nav->clock_panel == 2)
@@ -1348,7 +1495,7 @@ static int apply_nav_actions(struct dp_nav *nav, struct dp_model *m, const char 
         nav->usb_action = 0;
         if (strcmp(mode, m->usb_mode) == 0)
             mode = "off";
-        int status = run_command("/usr/local/bin/usb-mode.sh \"$1\"", mode);
+        int status = run_command("/usr/local/bin/usb-mode.sh \"$1\"", mode, 0);
         if (status == 4)
             nav_notice(nav, "Сначала извлеките диск на ПК");
         else if (status == 3)
@@ -1539,6 +1686,7 @@ static int bench_run(struct dp_canvas *cv, struct dp_model *m, struct dp_nav *na
 
 int main(int argc, char **argv)
 {
+    dp_theme_load(NULL, "terminal", &dp_theme_current);
     const char *roms = "/storage";
     const char *roms2 = NULL;
     const char *data = "/data";
@@ -1814,6 +1962,19 @@ int main(int argc, char **argv)
     nav.device_clock = argc == 1;
     nav.clock_settings = clock_settings;
     nav.tab = tab_from_screen(scr);
+    if (nav.device_clock && strcmp(m->theme, "terminal") && dp_input_recovery_held())
+        snprintf(m->theme, sizeof(m->theme), "terminal");
+    if (strcmp(m->theme, "terminal") && nav.device_clock) {
+        int fd = open(THEME_GUARD, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+        if (fd >= 0) {
+            close(fd);
+            nav.theme_guard = 1;
+        }
+        if (fd < 0)
+            snprintf(m->theme, sizeof(m->theme), "terminal");
+    }
+    if (!dp_theme_load(roms, m->theme, &dp_theme_current))
+        snprintf(m->theme, sizeof(m->theme), "terminal");
     if (scr == DP_SCR_GAMES) {
         nav.level = 1;
         nav.system = system_index >= 0 && system_index < m->nsys ? system_index : 0;
@@ -1897,10 +2058,14 @@ int main(int argc, char **argv)
         struct dp_input in;
         pid_t sound = 0;
         if (dp_input_open(&in) == 0) {
+            static const unsigned stick_masks[] = { 3, 1, 2, 0 };
             unsigned long long sample_at = 0;
             unsigned long long usb_at = 0;
             unsigned long long clock_at = 0;
+            unsigned long long volume_until = 0;
             while (!quit && in.ready) {
+                in.inspect = nav.controls == 2;
+                in.stick_mask = stick_masks[m->menu_sticks];
                 enum dp_key k = dp_input_poll(&in, 250);
                 if (sound > 0 && waitpid(sound, NULL, WNOHANG) == sound)
                     sound = 0;
@@ -1909,6 +2074,8 @@ int main(int argc, char **argv)
                 int old_module_help = nav.module_help;
                 int old_clock_panel = nav.clock_panel;
                 int old_core_open = nav.core_open;
+                int old_controls = nav.controls;
+                int old_theme_open = nav.theme_open;
                 int changed = 0;
                 if (k != DP_KEY_NONE) {
                     quit = nav_key(&nav, m, roms, k);
@@ -1917,9 +2084,15 @@ int main(int argc, char **argv)
                     changed = apply_nav_actions(&nav, m, config_path, sysfs_prefix, data, mods_socket,
                                                 roms, emulators_path);
                     changed |= old_clock_panel || nav.clock_panel || old_core_open || nav.core_open;
+                    changed |= old_controls || nav.controls;
+                    changed |= old_theme_open || nav.theme_open;
+                    if (nav.controls == 2) {
+                        if (old_controls != 2)
+                            in.seen = 0;
+                        nav.controller = in;
+                    }
                     if (tab_screen(&nav) == DP_SCR_INFO) {
-                        if (!m->input_test)
-                            snprintf(m->si.last_key, sizeof(m->si.last_key), "%s", dp_key_name(k));
+                        snprintf(m->si.last_key, sizeof(m->si.last_key), "%s", dp_key_name(k));
                         changed = 1;
                     }
                 }
@@ -1932,6 +2105,20 @@ int main(int argc, char **argv)
                     }
                 }
                 unsigned long long now = now_us(CLOCK_MONOTONIC);
+                if (nav.theme_preview && !nav.theme_until)
+                    nav.theme_until = now + 10000000;
+                if (nav.theme_preview && now >= nav.theme_until) {
+                    dp_theme_current = nav.theme_before;
+                    nav.theme_preview = 0;
+                    changed = 1;
+                }
+                if (nav.volume_osd == 1) {
+                    volume_until = now + 1400000;
+                    nav.volume_osd = 2;
+                } else if (nav.volume_osd && now >= volume_until) {
+                    nav.volume_osd = 0;
+                    changed = 1;
+                }
                 if (nav.device_clock && now >= clock_at) {
                     changed |= show_clock(m, time(NULL));
                     clock_at = now + 1000000;
@@ -1960,6 +2147,7 @@ int main(int argc, char **argv)
                         have_disp = 0;
                     }
                     game_status = launch_selected(&nav, m, roms, mods_socket, emulators_path, data);
+                    model_load_config(m, config_path);
                     have_disp = dp_display_open(&disp, NULL) == 0;
                     dp_input_open(&in);
                     changed = 1;
@@ -1980,7 +2168,7 @@ int main(int argc, char **argv)
                 }
                 if (have_disp)
                     dp_display_present(&disp, &cv);
-                if (have_disp && !disp.fake && argc == 1 && game_status < 0 && !m->input_test &&
+                if (have_disp && !disp.fake && argc == 1 && game_status < 0 && nav.controls != 2 &&
                     m->prefs[DP_PREF_TONES] != 2) {
                     if ((k == DP_KEY_L1 || k == DP_KEY_L2 || k == DP_KEY_R1 || k == DP_KEY_R2) &&
                         nav.tab != old_tab)
@@ -2002,6 +2190,8 @@ int main(int argc, char **argv)
     }
     if (have_disp)
         dp_display_close(&disp);
+    if (nav.theme_guard && rc == 0)
+        unlink(THEME_GUARD);
 
     dp_canvas_free(&cv);
     dp_model_free(m);

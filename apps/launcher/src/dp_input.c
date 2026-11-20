@@ -52,6 +52,13 @@
 
 #define EVIOCGNAME(len) _IOC(_IOC_READ, 'E', 0x06, len)
 #define EVIOCGBIT(ev, len) ((int)_IOC(_IOC_READ, 'E', 0x20 + (ev), len))
+#define EVIOCGKEY(len) ((int)_IOC(_IOC_READ, 'E', 0x18, len))
+#define EV_ABS 3
+#define EVIOCGABS(axis) ((int)_IOR('E', 0x40 + (axis), struct dp_absinfo))
+
+struct dp_absinfo {
+    int value, minimum, maximum, fuzz, flat, resolution;
+};
 
 struct dp_input_event {
     long sec;
@@ -76,6 +83,7 @@ static const struct {
     {"fn", DP_KEY_FN},      {"l3", DP_KEY_L3},
     {"r3", DP_KEY_R3},      {"vol+", DP_KEY_VOL_UP},
     {"vol-", DP_KEY_VOL_DOWN},
+    {"select+start", DP_KEY_MENU_BACK},
 };
 
 const char *dp_key_name(enum dp_key key)
@@ -212,12 +220,101 @@ static int has_volume_keys(int fd)
     return bit_test(bits, KEY_VOLUMEUP) && bit_test(bits, KEY_VOLUMEDOWN);
 }
 
+static int axis_percent(const struct dp_axis *axis, int value)
+{
+    long long span = (long long)axis->max - axis->min;
+    if (value <= axis->min)
+        return -100;
+    if (value >= axis->max)
+        return 100;
+    return (int)((((long long)value - axis->min) * 200 + span / 2) / span - 100);
+}
+
+static int open_axes(struct dp_input *in, int fd)
+{
+    unsigned char bits[8] = { 0 };
+    if (ioctl(fd, EVIOCGBIT(EV_ABS, sizeof(bits)), bits) < 0)
+        return 0;
+    /* Standard gamepad axes, the vendor Z/RZ pair, or ADC indices 0..3. */
+    int codes[DP_STICK_AXES] = { 0, 1, 3, 4 };
+    if (!bit_test(bits, 3) || !bit_test(bits, 4)) {
+        codes[2] = 2;
+        codes[3] = bit_test(bits, 5) ? 5 : 3;
+    }
+    int count = 0;
+    for (int i = 0; i < DP_STICK_AXES; i++) {
+        struct dp_absinfo info;
+        int code = codes[i];
+        in->axes[i] = (struct dp_axis){ .code = -1 };
+        if (!bit_test(bits, (unsigned)code) || ioctl(fd, EVIOCGABS(code), &info) < 0 ||
+            info.maximum <= info.minimum)
+            continue;
+        struct dp_axis *axis = &in->axes[i];
+        *axis = (struct dp_axis){ .code = code, .min = info.minimum, .max = info.maximum };
+        axis->value = axis_percent(axis, info.value);
+        count++;
+    }
+    return count;
+}
+
+static enum dp_key input_axis(struct dp_input *in, const struct dp_input_event *ev)
+{
+    for (int i = 0; i < DP_STICK_AXES; i++) {
+        struct dp_axis *axis = &in->axes[i];
+        if (axis->code != ev->code || axis->max <= axis->min)
+            continue;
+        int previous = axis->value;
+        axis->value = axis_percent(axis, ev->value);
+        if (in->inspect)
+            return previous != axis->value ? DP_KEY_INPUT_STATE : DP_KEY_NONE;
+        int direction = axis->value >= 45 ? 1 : axis->value <= -45 ? -1 : 0;
+        if (!direction && abs(axis->value) > 25)
+            return DP_KEY_NONE;
+        int changed = axis->direction != direction;
+        axis->direction = direction;
+        if (!changed || !direction || !(in->stick_mask & (1u << (i / 2))))
+            return DP_KEY_NONE;
+        if (in->axes[i ^ 1].direction)
+            return DP_KEY_NONE;
+        if (i % 2)
+            return direction > 0 ? DP_KEY_DOWN : DP_KEY_UP;
+        return direction > 0 ? DP_KEY_RIGHT : DP_KEY_LEFT;
+    }
+    return DP_KEY_NONE;
+}
+
+static enum dp_key input_button(struct dp_input *in, const struct dp_input_event *ev)
+{
+    enum dp_key key = map_code(ev->code, in->swap_ab);
+    if (key == DP_KEY_NONE)
+        return key;
+    unsigned bit = 1u << key;
+    if (ev->value == 0) {
+        in->held &= ~bit;
+        return in->inspect ? DP_KEY_INPUT_STATE : DP_KEY_NONE;
+    }
+    if (ev->value == 2)
+        return is_direction(key) && !in->inspect ? key : DP_KEY_NONE;
+    if (ev->value != 1)
+        return DP_KEY_NONE;
+    in->held |= bit;
+    in->seen |= bit;
+    if (key == DP_KEY_SELECT || key == DP_KEY_START) {
+        const unsigned chord = (1u << DP_KEY_SELECT) | (1u << DP_KEY_START);
+        if ((in->held & chord) == chord)
+            return DP_KEY_MENU_BACK;
+    }
+    return key;
+}
+
 int dp_input_open(struct dp_input *in)
 {
     memset(in, 0, sizeof(*in));
     in->fd = -1;
     in->key_fd = -1;
-    int best = -1, best_score = 0;
+    in->axis_fd = -1;
+    in->stick_mask = 3;
+    int best = -1, best_index = -1, best_score = 0;
     for (int i = 0; i < 32; i++) {
         char path[64];
         snprintf(path, sizeof(path), "/dev/input/event%d", i);
@@ -237,6 +334,7 @@ int dp_input_open(struct dp_input *in)
             if (best >= 0)
                 close(best);
             best = fd;
+            best_index = i;
             best_score = score;
             snprintf(in->name, sizeof(in->name), "%s", name);
             in->swap_ab = strcasecmp(name, "r36s_Gamepad") == 0;
@@ -244,36 +342,36 @@ int dp_input_open(struct dp_input *in)
             close(fd);
         }
     }
+    if (best < 0)
+        return -1;
+    int combined_axes = open_axes(in, best);
     for (int i = 0; i < 32; i++) {
+        if (i == best_index)
+            continue;
         char path[64];
         snprintf(path, sizeof(path), "/dev/input/event%d", i);
         int fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
         if (fd < 0)
             continue;
-        if (!has_volume_keys(fd)) {
-            close(fd);
-            continue;
-        }
-        if (in->key_fd >= 0 && strcasecmp(in->key_name, "adc-keys") == 0) {
-            close(fd);
-            continue;
-        }
         char name[DP_INPUT_NAME] = { 0 };
         ioctl(fd, (int)EVIOCGNAME(sizeof(name) - 1), name);
-        if (in->key_fd >= 0 && strcasecmp(name, "adc-keys") != 0) {
-            close(fd);
+        if (!combined_axes && in->axis_fd < 0 && strcasestr(name, "joystick") && open_axes(in, fd)) {
+            in->axis_fd = fd;
             continue;
         }
-        if (in->key_fd >= 0)
-            close(in->key_fd);
-        in->key_fd = fd;
-        snprintf(in->key_name, sizeof(in->key_name), "%s", name);
+        if (has_volume_keys(fd) && (in->key_fd < 0 ||
+            (strcasecmp(name, "adc-keys") == 0 && strcasecmp(in->key_name, "adc-keys") != 0))) {
+            if (in->key_fd >= 0)
+                close(in->key_fd);
+            in->key_fd = fd;
+            snprintf(in->key_name, sizeof(in->key_name), "%s", name);
+            continue;
+        }
+        close(fd);
     }
     const char *force = getenv("DEEPOS_SWAP_AB");
     if (best >= 0 && force && force[0] == '1')
         in->swap_ab = 1;
-    if (best < 0)
-        return -1;
     in->fd = best;
     in->ready = 1;
     return 0;
@@ -285,86 +383,73 @@ void dp_input_close(struct dp_input *in)
         close(in->fd);
     if (in->key_fd >= 0)
         close(in->key_fd);
+    if (in->axis_fd >= 0)
+        close(in->axis_fd);
     in->fd = -1;
     in->key_fd = -1;
+    in->axis_fd = -1;
     in->ready = 0;
+}
+
+int dp_input_recovery_held(void)
+{
+    struct dp_input in;
+    if (dp_input_open(&in) < 0)
+        return 0;
+    unsigned char keys[KEY_BYTES] = { 0 };
+    int held = in.fd >= 0 && ioctl(in.fd, EVIOCGKEY(sizeof(keys)), keys) >= 0 &&
+               bit_test(keys, KEY_START) && (bit_test(keys, KEY_SELECT) || bit_test(keys, BTN_SELECT));
+    dp_input_close(&in);
+    return held;
 }
 
 enum dp_key dp_input_poll(struct dp_input *in, int timeout_ms)
 {
     if (!in->ready)
         return DP_KEY_NONE;
-    struct pollfd fds[2];
-    int nfds = 0;
-    fds[nfds].fd = in->fd;
-    fds[nfds].events = POLLIN;
-    fds[nfds].revents = 0;
-    nfds++;
-    if (in->key_fd >= 0) {
-        fds[nfds].fd = in->key_fd;
-        fds[nfds].events = POLLIN;
-        fds[nfds].revents = 0;
-        nfds++;
-    }
-    int rc = poll(fds, (nfds_t)nfds, timeout_ms);
-    if (rc < 0)
-        return DP_KEY_NONE; /* EINTR: caller just retries */
-    if (rc == 0)
+    struct pollfd fds[] = {
+        { .fd = in->key_fd, .events = POLLIN },
+        { .fd = in->volume_only && in->key_fd >= 0 ? -1 : in->fd, .events = POLLIN },
+        { .fd = in->volume_only ? -1 : in->axis_fd, .events = POLLIN },
+    };
+    if (poll(fds, sizeof(fds) / sizeof(fds[0]), timeout_ms) <= 0)
         return DP_KEY_NONE;
-    /* The volume rocker is a separate node; read it before the pad so a
-     * simultaneous press is not delayed by the gamepad queue. */
-    for (int i = 1; i < nfds; i++) {
+    for (unsigned i = 0; i < sizeof(fds) / sizeof(fds[0]); i++) {
         if (fds[i].revents & (POLLERR | POLLHUP | POLLNVAL)) {
-            close(in->key_fd);
-            in->key_fd = -1;
+            if (i == 1) {
+                in->ready = 0;
+                in->lost = 1;
+                return DP_KEY_NONE;
+            }
+            close(fds[i].fd);
+            if (i == 0)
+                in->key_fd = -1;
+            else {
+                in->axis_fd = -1;
+                memset(in->axes, 0, sizeof(in->axes));
+                if (in->inspect)
+                    return DP_KEY_INPUT_STATE;
+            }
             continue;
         }
         if (!(fds[i].revents & POLLIN))
             continue;
-        for (;;) {
-            struct dp_input_event ev;
-            ssize_t n = read(in->key_fd, &ev, sizeof(ev));
-            if (n != (ssize_t)sizeof(ev) || ev.type != EV_KEY)
-                break;
-            if (ev.value != 1)
-                continue;
-            enum dp_key k = map_code(ev.code, in->swap_ab);
-            if (k == DP_KEY_VOL_UP || k == DP_KEY_VOL_DOWN)
-                return k;
-        }
-    }
-    if (fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) {
-        in->ready = 0;
-        in->lost = 1;
-        return DP_KEY_NONE;
-    }
-    if (!(fds[0].revents & POLLIN))
-        return DP_KEY_NONE;
-    for (;;) {
         struct dp_input_event ev;
-        ssize_t n = read(in->fd, &ev, sizeof(ev));
-        if (n < 0)
-            return DP_KEY_NONE; /* EAGAIN after a spurious wakeup */
-        if (n == 0) {
-            in->ready = 0;
-            in->lost = 1;
-            return DP_KEY_NONE;
+        while (read(fds[i].fd, &ev, sizeof(ev)) == (ssize_t)sizeof(ev)) {
+            enum dp_key key = DP_KEY_NONE;
+            if (ev.type == EV_ABS && i != 0 && !in->volume_only)
+                key = input_axis(in, &ev);
+            if (ev.type == EV_KEY && i != 2 &&
+                ((i != 0 && !in->volume_only) || ev.code == KEY_VOLUMEUP || ev.code == KEY_VOLUMEDOWN))
+                key = input_button(in, &ev);
+            if (key == DP_KEY_NONE)
+                continue;
+            in->last_us = (unsigned long long)ev.sec * 1000000ULL +
+                          (unsigned long long)(ev.usec < 0 ? 0 : ev.usec);
+            return key;
         }
-        if (n != (ssize_t)sizeof(ev))
-            continue;
-        if (ev.type != EV_KEY)
-            continue;
-        if (ev.value != 1 && ev.value != 2)
-            continue;
-        enum dp_key k = map_code(ev.code, in->swap_ab);
-        if (k == DP_KEY_NONE)
-            continue;
-        if (ev.value == 2 && !is_direction(k))
-            continue; /* only the D-pad repeats */
-        in->last_us = (unsigned long long)ev.sec * 1000000ULL +
-                      (unsigned long long)(ev.usec < 0 ? 0 : ev.usec);
-        return k;
     }
+    return DP_KEY_NONE;
 }
 
 int dp_input_scan(const char *path)

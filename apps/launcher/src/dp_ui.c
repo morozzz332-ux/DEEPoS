@@ -8,6 +8,8 @@
 #include "dp_theme.h"
 
 #define DP_TABS 6
+#define COLOR(token) (dp_theme_current.colors[DP_COLOR_ ## token])
+static int swap_confirm_back;
 
 static const char *const dp_tabs[DP_TABS] = {
     "Продолжить", "Игры", "Настройки", "Модули", "Файлы", "Сведения",
@@ -104,9 +106,9 @@ struct dp_hint {
 static int dp_keycap(struct dp_canvas *cv, int x, int y, const char *label)
 {
     int w = dp_text_small_w(label, 1) + 12;
-    dp_rect(cv, x, y, w, 18, DP_COL_PANEL2);
-    dp_frame(cv, x, y, w, 18, DP_COL_LINE);
-    dp_text_small(cv, x + 6, y + 2, label, DP_COL_FG, 1);
+    dp_rect(cv, x, y, w, 18, COLOR(PANEL2));
+    dp_frame(cv, x, y, w, 18, COLOR(LINE));
+    dp_text_small(cv, x + 6, y + 2, label, COLOR(FG), 1);
     return w;
 }
 
@@ -114,43 +116,46 @@ static void dp_hints(struct dp_canvas *cv, const struct dp_hint *items, int n,
                      const char *back_label)
 {
     int y = DP_H - DP_SAFE_BOTTOM - DP_HINT_H + 5;
-    dp_rect(cv, 0, DP_BODY_Y1, DP_W, DP_HINT_H, DP_COL_PANEL);
-    dp_hline(cv, 0, DP_BODY_Y1, DP_W, DP_COL_LINE);
+    dp_rect(cv, 0, DP_BODY_Y1, DP_W, DP_HINT_H, COLOR(PANEL));
+    dp_hline(cv, 0, DP_BODY_Y1, DP_W, COLOR(LINE));
     int limit = DP_W - 12;
     if (back_label)
         limit -= dp_text_small_w(back_label, 1) + 40;
     int x = DP_PAD;
     for (int i = 0; i < n; i++) {
-        int kw = dp_text_small_w(items[i].key, 1) + 12;
+        const char *key = items[i].key;
+        if (swap_confirm_back && (strcmp(key, "A") == 0 || strcmp(key, "B") == 0))
+            key = key[0] == 'A' ? "B" : "A";
+        int kw = dp_text_small_w(key, 1) + 12;
         int lw = dp_text_small_w(items[i].label, 1);
         if (x + kw + 6 + lw > limit)
             break;
-        dp_keycap(cv, x, y, items[i].key);
-        dp_text_small(cv, x + kw + 6, y + 2, items[i].label, DP_COL_FG2, 1);
+        dp_keycap(cv, x, y, key);
+        dp_text_small(cv, x + kw + 6, y + 2, items[i].label, COLOR(FG2), 1);
         x += kw + 6 + lw + 16;
     }
     if (back_label) {
         int kw = dp_text_small_w("B", 1) + 12;
         int lw = dp_text_small_w(back_label, 1);
         int bx = DP_W - DP_PAD - kw - 6 - lw;
-        dp_keycap(cv, bx, y, "B");
-        dp_text_small(cv, bx + kw + 6, y + 2, back_label, DP_COL_FG2, 1);
+        dp_keycap(cv, bx, y, swap_confirm_back ? "A" : "B");
+        dp_text_small(cv, bx + kw + 6, y + 2, back_label, COLOR(FG2), 1);
     }
 }
 
 static void dp_statusbar(struct dp_canvas *cv, const struct dp_model *m, enum dp_screen active)
 {
-    dp_rect(cv, 0, DP_SAFE_TOP, DP_W, DP_STATUS_H, DP_COL_PANEL);
-    dp_hline(cv, 0, DP_SAFE_TOP + DP_STATUS_H - 1, DP_W, DP_COL_LINE);
+    dp_rect(cv, 0, DP_SAFE_TOP, DP_W, DP_STATUS_H, COLOR(PANEL));
+    dp_hline(cv, 0, DP_SAFE_TOP + DP_STATUS_H - 1, DP_W, COLOR(LINE));
 
     int cur = dp_tab_index(active);
     int x = DP_PAD;
     for (int i = 0; i < DP_TABS; i++) {
         int tw = dp_text_w(dp_tabs[i], 1);
-        uint16_t col = DP_COL_FG2;
+        uint16_t col = COLOR(FG2);
         if (i == cur) {
-            dp_rect(cv, x - 4, DP_SAFE_TOP + 4, tw + 8, 24, DP_COL_ACC);
-            col = DP_COL_BG;
+            dp_rect(cv, x - 4, DP_SAFE_TOP + 4, tw + 8, 24, COLOR(ACC));
+            col = COLOR(BG);
         }
         dp_text(cv, x, DP_SAFE_TOP + 7, dp_tabs[i], col, 1);
         x += tw + 14;
@@ -159,7 +164,7 @@ static void dp_statusbar(struct dp_canvas *cv, const struct dp_model *m, enum dp
     const char *clock = m->st.clock;
     if (clock[0]) {
         int cw = dp_text_small_w(clock, 1);
-        dp_text_small(cv, DP_W - DP_PAD - cw, DP_SAFE_TOP + 9, clock, DP_COL_FG2, 1);
+        dp_text_small(cv, DP_W - DP_PAD - cw, DP_SAFE_TOP + 9, clock, COLOR(FG2), 1);
     }
     if (m->st.battery < 0)
         return;
@@ -169,16 +174,16 @@ static void dp_statusbar(struct dp_canvas *cv, const struct dp_model *m, enum dp
     int pw = dp_text_small_w(buf, 1);
     int cw = clock[0] ? dp_text_small_w(clock, 1) + 10 : 0;
     int bx = DP_W - DP_PAD - cw - pw - 8 - 26;
-    dp_frame(cv, bx, DP_SAFE_TOP + 10, 24, 12, DP_COL_FG3);
-    dp_rect(cv, bx + 1, DP_SAFE_TOP + 11, 22, 10, DP_COL_BG);
+    dp_frame(cv, bx, DP_SAFE_TOP + 10, 24, 12, COLOR(FG3));
+    dp_rect(cv, bx + 1, DP_SAFE_TOP + 11, 22, 10, COLOR(BG));
     int pct = m->st.battery > 100 ? 100 : m->st.battery;
     dp_rect(cv, bx + 1, DP_SAFE_TOP + 11, 22 * pct / 100, 10,
-            pct <= 20 ? DP_COL_BAD : DP_COL_ACC);
+            pct <= 20 ? COLOR(BAD) : COLOR(ACC));
     if (m->st.charging) {
-        dp_rect(cv, bx + 9, DP_SAFE_TOP + 13, 2, 6, DP_COL_WARN);
-        dp_rect(cv, bx + 12, DP_SAFE_TOP + 13, 2, 4, DP_COL_WARN);
+        dp_rect(cv, bx + 9, DP_SAFE_TOP + 13, 2, 6, COLOR(WARN));
+        dp_rect(cv, bx + 12, DP_SAFE_TOP + 13, 2, 4, COLOR(WARN));
     }
-    dp_text_small(cv, bx - 8 - pw, DP_SAFE_TOP + 9, buf, DP_COL_FG2, 1);
+    dp_text_small(cv, bx - 8 - pw, DP_SAFE_TOP + 9, buf, COLOR(FG2), 1);
 }
 
 static void dp_section(struct dp_canvas *cv, const char *title, const char *meta)
@@ -187,19 +192,19 @@ static void dp_section(struct dp_canvas *cv, const char *title, const char *meta
     int right = DP_W - DP_PAD;
     if (meta) {
         int mw = dp_text_small_w(meta, 1);
-        dp_text_small(cv, right - mw, y + 11, meta, DP_COL_FG2, 1);
+        dp_text_small(cv, right - mw, y + 11, meta, COLOR(FG2), 1);
         right -= mw + 14;
     }
-    dp_text_fit(cv, DP_PAD, y + 7, right - DP_PAD, title, DP_COL_FG, 0);
-    dp_hline(cv, 0, y + DP_HEADER_H - 1, DP_W, DP_COL_LINE);
+    dp_text_fit(cv, DP_PAD, y + 7, right - DP_PAD, title, COLOR(FG), 0);
+    dp_hline(cv, 0, y + DP_HEADER_H - 1, DP_W, COLOR(LINE));
 }
 
 static void dp_row_frame(struct dp_canvas *cv, int x, int y, int w, int h, int selected)
 {
     if (!selected)
         return;
-    dp_rect(cv, x, y, w, h, DP_COL_SEL);
-    dp_rect(cv, x, y, 3, h, DP_COL_ACC);
+    dp_rect(cv, x, y, w, h, COLOR(SEL));
+    dp_rect(cv, x, y, 3, h, COLOR(ACC));
 }
 
 static int dp_first_visible(int selected, int rows)
@@ -217,16 +222,16 @@ static void dp_scrollbar(struct dp_canvas *cv, int x, int y, int h, int total,
         thumb = 14;
     int span = h - thumb;
     int pos = span * first / (total - visible);
-    dp_rect(cv, x, y, 2, h, DP_COL_LINE);
-    dp_rect(cv, x, y + pos, 2, thumb, DP_COL_FG3);
+    dp_rect(cv, x, y, 2, h, COLOR(LINE));
+    dp_rect(cv, x, y + pos, 2, thumb, COLOR(FG3));
 }
 
 static void dp_empty(struct dp_canvas *cv, const char *title, const char *message)
 {
     const int y = (DP_BODY_Y0 + DP_BODY_Y1) / 2 - 26;
-    dp_text(cv, (DP_W - dp_text_w(title, 1)) / 2, y, title, DP_COL_FG, 1);
+    dp_text(cv, (DP_W - dp_text_w(title, 1)) / 2, y, title, COLOR(FG), 1);
     if (message)
-        dp_text(cv, (DP_W - dp_text_w(message, 1)) / 2, y + 26, message, DP_COL_FG2, 1);
+        dp_text(cv, (DP_W - dp_text_w(message, 1)) / 2, y + 26, message, COLOR(FG2), 1);
 }
 
 static void dp_initials(const char *title, char out[9])
@@ -304,14 +309,14 @@ static void dp_screen_continue(struct dp_canvas *cv, const struct dp_model *m, i
 
         char ini[9];
         dp_initials(it->title, ini);
-        dp_rect(cv, 20, y + 5, 36, 28, DP_COL_PANEL2);
+        dp_rect(cv, 20, y + 5, 36, 28, COLOR(PANEL2));
         int iw = dp_text_w(ini, 1);
-        dp_text(cv, 20 + (36 - iw) / 2, y + 11, ini, DP_COL_ACC, 1);
-        dp_text_fit(cv, 66, y + 3, 400, it->title, DP_COL_FG, 0);
-        dp_text_fit(cv, 66, y + 22, 400, it->system, DP_COL_FG2, 1);
+        dp_text(cv, 20 + (36 - iw) / 2, y + 11, ini, COLOR(ACC), 1);
+        dp_text_fit(cv, 66, y + 3, 400, it->title, COLOR(FG), 0);
+        dp_text_fit(cv, 66, y + 22, 400, it->system, COLOR(FG2), 1);
 
         int mx = DP_W - 20 - dp_text_small_w(it->meta, 1);
-        dp_text_small(cv, mx, y + 5, it->meta, DP_COL_FG3, 1);
+        dp_text_small(cv, mx, y + 5, it->meta, COLOR(FG3), 1);
 
         if (it->has_save) {
             char badge[20];
@@ -321,8 +326,8 @@ static void dp_screen_continue(struct dp_canvas *cv, const struct dp_model *m, i
                 snprintf(badge, sizeof(badge), "АВТОСЕЙВ");
             int bw = dp_text_small_w(badge, 1) + 10;
             int bx = DP_W - 20 - bw;
-            dp_frame(cv, bx, y + 20, bw, 17, DP_COL_LINE);
-            dp_text_small(cv, bx + 5, y + 22, badge, DP_COL_FG2, 1);
+            dp_frame(cv, bx, y + 20, bw, 17, COLOR(LINE));
+            dp_text_small(cv, bx + 5, y + 22, badge, COLOR(FG2), 1);
         }
         y += rh;
     }
@@ -353,18 +358,38 @@ static void dp_screen_systems(struct dp_canvas *cv, const struct dp_model *m, in
     }
 
     const int y0 = DP_BODY_Y0 + 2;
+    if (dp_theme_current.layout == DP_LAYOUT_SHELF) {
+        const struct dp_system *system = &m->systems[selected];
+        const int first = selected / 3 * 3;
+        for (int i = first; i < m->nsys && i < first + 3; i++) {
+            int x = 16 + 204 * (i - first);
+            dp_row_frame(cv, x, y0 + 16, 196, 78, i == selected);
+            dp_text_fit(cv, x + 14, y0 + 44, 168, m->systems[i].name, COLOR(FG), 0);
+        }
+        dp_rect(cv, 16, y0 + 110, 608, 182, COLOR(PANEL));
+        dp_frame(cv, 16, y0 + 110, 608, 182, COLOR(LINE));
+        dp_hline(cv, 28, y0 + 156, 584, COLOR(ACC));
+        dp_text_fit(cv, 32, y0 + 128, 550, system->name, COLOR(FG), 0);
+        char games[48];
+        snprintf(games, sizeof(games), "%u %s", system->games, dp_games_word(system->games));
+        dp_text_small(cv, 32, y0 + 182, games, COLOR(FG2), 1);
+        const struct dp_hint hints[] = { { "←/→", "Выбор" }, { "A", "Открыть" }, { "X", "Ядро" } };
+        dp_hints(cv, hints, 3, "Главная");
+        return;
+    }
+
     const int rh = 26;
     const int visible_rows = (DP_BODY_Y1 - 6 - y0) / rh;
-    const int visible = visible_rows * 2;
-    const int first_row = selected / 2 < visible_rows
-        ? (selected / 2 > visible_rows - 1 ? selected / 2 - visible_rows + 1 : 0)
-        : selected / 2 - visible_rows + 1;
-    const int first = first_row * 2;
-    const int cw = (DP_W - 2 * DP_PAD - 8) / 2;
+    const int cols = dp_theme_current.layout == DP_LAYOUT_GRID ? 2 : 1;
+    const int visible = visible_rows * cols;
+    const int first_row = dp_first_visible(selected / cols, visible_rows);
+    const int first = first_row * cols;
+    const int cw = cols == 2 ? (DP_W - 2 * DP_PAD - 8) / 2 :
+                   dp_theme_current.layout == DP_LAYOUT_SPLIT ? 340 : DP_W - 2 * DP_PAD;
 
     for (int i = first; i < m->nsys && i < first + visible; i++) {
-        int col = i % 2;
-        int row = (i / 2) - first_row;
+        int col = i % cols;
+        int row = i / cols - first_row;
         int x = DP_PAD + col * (cw + 8);
         int y = y0 + row * rh;
         dp_row_frame(cv, x, y, cw, rh - 1, i == selected);
@@ -378,9 +403,22 @@ static void dp_screen_systems(struct dp_canvas *cv, const struct dp_model *m, in
         char cnt[16];
         snprintf(cnt, sizeof(cnt), "%u", m->systems[i].games);
         int count_x = x + cw - 10 - dp_text_small_w(cnt, 1);
-        dp_text_fit(cv, x + 10, y + 6, 46, idu, DP_COL_FG3, 1);
-        dp_text_fit(cv, x + 58, y + 4, count_x - x - 68, m->systems[i].name, DP_COL_FG, 0);
-        dp_text_small(cv, count_x, y + 6, cnt, DP_COL_FG2, 1);
+        dp_text_fit(cv, x + 10, y + 6, 46, idu, COLOR(FG3), 1);
+        dp_text_fit(cv, x + 58, y + 4, count_x - x - 68, m->systems[i].name, COLOR(FG), 0);
+        dp_text_small(cv, count_x, y + 6, cnt, COLOR(FG2), 1);
+    }
+    if (dp_theme_current.layout == DP_LAYOUT_SPLIT) {
+        const struct dp_system *system = &m->systems[selected];
+        const int x = 374;
+        dp_rect(cv, x, y0, 250, 193, COLOR(PANEL));
+        dp_frame(cv, x, y0, 250, 193, COLOR(LINE));
+        dp_text_small(cv, x + 16, y0 + 16, "СИСТЕМА", COLOR(ACC), 1);
+        dp_hline(cv, x + 16, y0 + 38, 218, COLOR(LINE));
+        dp_text_fit(cv, x + 16, y0 + 56, 218, system->name, COLOR(FG), 0);
+        char games[48];
+        snprintf(games, sizeof(games), "%u %s", system->games, dp_games_word(system->games));
+        dp_text_small(cv, x + 16, y0 + 91, games, COLOR(FG2), 1);
+        dp_text_small(cv, x + 16, y0 + 154, "X  Выбор ядра", COLOR(FG2), 1);
     }
     dp_scrollbar(cv, DP_W - 7, y0, visible_rows * rh - 2, m->nsys, visible, first);
 
@@ -431,13 +469,13 @@ static void dp_screen_games(struct dp_canvas *cv, const struct dp_model *m, int 
         snprintf(idx, sizeof(idx), "%d", i + 1);
         int iw = dp_text_small_w(idx, 1);
         dp_row_frame(cv, 8, y, DP_W - 16, rh - 1, i == selected);
-        dp_text_small(cv, 20, y + 10, idx, DP_COL_FG3, 1);
+        dp_text_small(cv, 20, y + 10, idx, COLOR(FG3), 1);
         dp_text_fit(cv, 20 + iw + 14, y + 7, DP_W - (m->tf2_ok ? 114 : 70) - iw,
-                    m->roms[i].name, DP_COL_FG, 0);
+                    m->roms[i].name, COLOR(FG), 0);
         if (m->tf2_ok)
             dp_text_small(cv, DP_W - 55, y + 10,
-                          m->roms[i].source == DP_ROM_TF2 ? "TF2" : "TF1", DP_COL_FG2, 1);
-        dp_hline(cv, 20, y + rh - 1, DP_W - 40, DP_COL_LINE);
+                          m->roms[i].source == DP_ROM_TF2 ? "TF2" : "TF1", COLOR(FG2), 1);
+        dp_hline(cv, 20, y + rh - 1, DP_W - 40, COLOR(LINE));
         y += rh;
     }
     dp_scrollbar(cv, DP_W - 7, y0, rows * rh - 2, m->nroms, rows, first);
@@ -474,7 +512,7 @@ static void dp_screen_settings(struct dp_canvas *cv, const struct dp_model *m, i
     cards[0].editable = 1;
     snprintf(cards[0].sub, sizeof(cards[0].sub), "%s", preference_label(m->prefs[DP_PREF_TONES] != 2 ? 1 : 2));
     cards[1].title = "Управление";
-    snprintf(cards[1].sub, sizeof(cards[1].sub), "Проверка кнопок");
+    snprintf(cards[1].sub, sizeof(cards[1].sub), "Кнопки и стики");
     cards[2].title = "Дисплей";
     cards[2].editable = 1;
     if (m->cfg_brightness > 0)
@@ -524,28 +562,31 @@ static void dp_screen_settings(struct dp_canvas *cv, const struct dp_model *m, i
     cards[DP_SETTINGS_EMULATORS].title = "Эмуляторы";
     snprintf(cards[DP_SETTINGS_EMULATORS].sub, sizeof(cards[DP_SETTINGS_EMULATORS].sub),
              "Ядра по системам");
+    cards[DP_SETTINGS_THEME].title = "Оформление";
+    snprintf(cards[DP_SETTINGS_THEME].sub, sizeof(cards[DP_SETTINGS_THEME].sub), "%s",
+             dp_theme_label(m->theme));
 
     const int cols = 3, gap = 10;
     const int cw = (DP_W - 2 * DP_PAD - (cols - 1) * gap) / cols;
     const int ch = 82;
     const int y0 = DP_BODY_Y0 + 8;
 
-    int first = (selected / cols >= 4) ? cols : 0;
+    int first = dp_first_visible(selected / cols, 4) * cols;
     for (int i = first; i < DP_SETTINGS_COUNT && i < first + 4 * cols; i++) {
         int col = i % cols, row = i / cols;
         int cx = DP_PAD + col * (cw + gap);
         int cy = y0 + (row - first / cols) * (ch + 8);
         int sel = i == selected;
-        dp_rect(cv, cx, cy, cw, ch, sel ? DP_COL_SEL : DP_COL_PANEL);
-        dp_frame(cv, cx, cy, cw, ch, sel ? DP_COL_ACC : DP_COL_LINE);
+        dp_rect(cv, cx, cy, cw, ch, sel ? COLOR(SEL) : COLOR(PANEL));
+        dp_frame(cv, cx, cy, cw, ch, sel ? COLOR(ACC) : COLOR(LINE));
         if (sel)
-            dp_rect(cv, cx + 1, cy + 1, 3, ch - 2, DP_COL_ACC);
-        dp_text_fit(cv, cx + 12, cy + 14, cw - 24, cards[i].title, DP_COL_FG, 0);
-        dp_text_fit(cv, cx + 12, cy + 42, cw - 24, cards[i].sub, DP_COL_FG2, 1);
+            dp_rect(cv, cx + 1, cy + 1, 3, ch - 2, COLOR(ACC));
+        dp_text_fit(cv, cx + 12, cy + 14, cw - 24, cards[i].title, COLOR(FG), 0);
+        dp_text_fit(cv, cx + 12, cy + 42, cw - 24, cards[i].sub, COLOR(FG2), 1);
         if (cards[i].editable && sel) {
-            const char *hint = "A — изменить";
+            const char *hint = swap_confirm_back ? "B — изменить" : "A — изменить";
             int hw = dp_text_small_w(hint, 1);
-            dp_text_small(cv, cx + cw - 12 - hw, cy + ch - 22, hint, DP_COL_ACC, 1);
+            dp_text_small(cv, cx + cw - 12 - hw, cy + ch - 22, hint, COLOR(ACC), 1);
         }
     }
 
@@ -562,17 +603,17 @@ void dp_ui_clock(struct dp_canvas *cv, int region, int selected, const struct tm
 {
     const int x = 40, w = DP_W - 2 * x;
     const int y = region ? 82 : 142, h = region ? 356 : 194;
-    dp_rect(cv, x, y, w, h, DP_COL_PANEL2);
-    dp_frame(cv, x, y, w, h, DP_COL_ACC);
+    dp_rect(cv, x, y, w, h, COLOR(PANEL2));
+    dp_frame(cv, x, y, w, h, COLOR(ACC));
     dp_text(cv, x + 20, y + 16, region ? "РЕГИОН И ЧАСОВОЙ ПОЯС" : "ДАТА И ВРЕМЯ",
-            DP_COL_FG, 1);
-    dp_hline(cv, x + 20, y + 47, w - 40, DP_COL_LINE);
+            COLOR(FG), 1);
+    dp_hline(cv, x + 20, y + 47, w - 40, COLOR(LINE));
     if (region) {
         int first = dp_first_visible(selected, 8);
         for (int i = first; i < dp_clock_zone_count() && i < first + 8; i++) {
             int row = y + 54 + (i - first) * 30;
             dp_row_frame(cv, x + 16, row, w - 32, 28, i == selected);
-            dp_text_fit(cv, x + 28, row + 6, w - 56, dp_clock_zone_label(i), DP_COL_FG, 1);
+            dp_text_fit(cv, x + 28, row + 6, w - 56, dp_clock_zone_label(i), COLOR(FG), 1);
         }
     } else {
         const char *labels[] = { "День", "Месяц", "Год", "Часы", "Минуты" };
@@ -584,13 +625,13 @@ void dp_ui_clock(struct dp_canvas *cv, int region, int selected, const struct tm
             char text[16];
             snprintf(text, sizeof(text), "%02d", values[i]);
             dp_row_frame(cv, left, y + 60, cell - 5, 66, i == selected);
-            dp_text_small(cv, left + 9, y + 68, labels[i], DP_COL_FG2, 1);
-            dp_text(cv, left + 9, y + 94, text, DP_COL_FG, 1);
+            dp_text_small(cv, left + 9, y + 68, labels[i], COLOR(FG2), 1);
+            dp_text(cv, left + 9, y + 94, text, COLOR(FG), 1);
         }
     }
     dp_text_small(cv, x + 20, y + h - 29,
                   region ? "↑↓ Список     A Сохранить     B Отмена" :
-                           "←→ Поле   ↑↓ Значение   A Сохранить   B Отмена", DP_COL_ACC, 1);
+                           "←→ Поле   ↑↓ Значение   A Сохранить   B Отмена", COLOR(ACC), 1);
 }
 
 void dp_ui_cores(struct dp_canvas *cv, const char *system, const struct dp_cores *list, int selected)
@@ -599,18 +640,18 @@ void dp_ui_cores(struct dp_canvas *cv, const char *system, const struct dp_cores
     char title[80], name[DP_SYS_NAME];
     dp_system_name(system, name, sizeof(name));
     snprintf(title, sizeof(title), "ЯДРО / %s", name);
-    dp_rect(cv, x, y, w, h, DP_COL_PANEL2);
-    dp_frame(cv, x, y, w, h, DP_COL_ACC);
-    dp_text_fit(cv, x + 20, y + 16, w - 40, title, DP_COL_FG, 0);
-    dp_hline(cv, x + 20, y + 47, w - 40, DP_COL_LINE);
+    dp_rect(cv, x, y, w, h, COLOR(PANEL2));
+    dp_frame(cv, x, y, w, h, COLOR(ACC));
+    dp_text_fit(cv, x + 20, y + 16, w - 40, title, COLOR(FG), 0);
+    dp_hline(cv, x + 20, y + 47, w - 40, COLOR(LINE));
     int first = dp_first_visible(selected, 8);
     for (int i = first; i <= list->count && i < first + 8; i++) {
         int row = y + 54 + (i - first) * 30;
         dp_row_frame(cv, x + 16, row, w - 32, 28, i == selected);
         dp_text_fit(cv, x + 28, row + 6, w - 56, i ? list->names[i - 1] : "Авто",
-                    DP_COL_FG, 1);
+                    COLOR(FG), 1);
     }
-    dp_text_small(cv, x + 20, y + h - 29, "↑↓ Список     A Сохранить     B Отмена", DP_COL_ACC, 1);
+    dp_text_small(cv, x + 20, y + h - 29, "↑↓ Список     A Сохранить     B Отмена", COLOR(ACC), 1);
 }
 
 static const char *mod_state_label(const char *state)
@@ -666,13 +707,13 @@ static void dp_screen_modules(struct dp_canvas *cv, const struct dp_model *m, in
         const int toggle_x = DP_W - 78;
         int right = toggle_x - 18 - dp_text_small_w(state, 1);
         dp_row_frame(cv, 8, y, DP_W - 16, rh - 1, i == selected);
-        dp_text_fit(cv, 20, y + 15, right - 34, module_name(module), DP_COL_FG, 0);
-        dp_text_small(cv, right, y + 18, state, DP_COL_FG2, 1);
-        uint16_t color = active ? DP_COL_ACC : DP_COL_FG2;
+        dp_text_fit(cv, 20, y + 15, right - 34, module_name(module), COLOR(FG), 0);
+        dp_text_small(cv, right, y + 18, state, COLOR(FG2), 1);
+        uint16_t color = active ? COLOR(ACC) : COLOR(FG2);
         dp_frame(cv, toggle_x, y + 10, 54, 31, color);
         dp_text_small(cv, toggle_x + (54 - dp_text_small_w(toggle, 1)) / 2, y + 18,
                       toggle, color, 1);
-        dp_hline(cv, 20, y + rh - 1, DP_W - 40, DP_COL_LINE);
+        dp_hline(cv, 20, y + rh - 1, DP_W - 40, COLOR(LINE));
         y += rh;
     }
     const struct dp_module_info *module = &m->mods[selected];
@@ -694,11 +735,11 @@ void dp_ui_module_details(struct dp_canvas *cv, const struct dp_module_info *mod
 {
     const int x = 48, y = 112, w = DP_W - 2 * x, h = 230;
     char line[DP_MOD_TEXT];
-    dp_rect(cv, x, y, w, h, DP_COL_PANEL2);
-    dp_frame(cv, x, y, w, h, DP_COL_ACC);
+    dp_rect(cv, x, y, w, h, COLOR(PANEL2));
+    dp_frame(cv, x, y, w, h, COLOR(ACC));
     dp_text_fit(cv, x + 20, y + 18, w - 40,
-                module ? module_name(module) : "Установка модуля", DP_COL_FG, 0);
-    dp_hline(cv, x + 20, y + 50, w - 40, DP_COL_LINE);
+                module ? module_name(module) : "Установка модуля", COLOR(FG), 0);
+    dp_hline(cv, x + 20, y + 50, w - 40, COLOR(LINE));
     for (int row = 0; *message && row < 5; row++) {
         size_t length = strcspn(message, "\n");
         memcpy(line, message, length);
@@ -709,7 +750,7 @@ void dp_ui_module_details(struct dp_canvas *cv, const struct dp_module_info *mod
                 break;
             *space = '\0';
         }
-        dp_text_fit(cv, x + 20, y + 64 + row * 24, w - 40, line, DP_COL_FG, 1);
+        dp_text_fit(cv, x + 20, y + 64 + row * 24, w - 40, line, COLOR(FG), 1);
         message += strlen(line);
         while (*message == ' ')
             message++;
@@ -717,7 +758,7 @@ void dp_ui_module_details(struct dp_canvas *cv, const struct dp_module_info *mod
             message++;
     }
     dp_text_small(cv, x + 20, y + h - 30, module ? "B / Y  Закрыть" :
-                  "A  Импорт     B / Y  Закрыть", DP_COL_ACC, 1);
+                  "A  Импорт     B / Y  Закрыть", COLOR(ACC), 1);
 }
 
 static void dp_screen_files(struct dp_canvas *cv, const struct dp_model *m, int selected)
@@ -752,9 +793,9 @@ static void dp_screen_files(struct dp_canvas *cv, const struct dp_model *m, int 
     int y = y0;
     for (int i = 0; i < n; i++) {
         dp_row_frame(cv, 8, y, DP_W - 16, rh - 1, i == selected);
-        dp_text(cv, 20, y + 16, rows[i][0], DP_COL_FG, 1);
-        dp_text_fit(cv, 168, y + 18, DP_W - 188, rows[i][1], DP_COL_FG2, 1);
-        dp_hline(cv, 20, y + rh - 1, DP_W - 40, DP_COL_LINE);
+        dp_text(cv, 20, y + 16, rows[i][0], COLOR(FG), 1);
+        dp_text_fit(cv, 168, y + 18, DP_W - 188, rows[i][1], COLOR(FG2), 1);
+        dp_hline(cv, 20, y + rh - 1, DP_W - 40, COLOR(LINE));
         y += rh;
     }
     const struct dp_hint hints[] = { { "A", "USB-файлы" } };
@@ -781,7 +822,7 @@ static void dp_fmt_temp(int mc, char *out, size_t size)
 
 static void dp_screen_info(struct dp_canvas *cv, const struct dp_model *m)
 {
-    dp_section(cv, m->input_test ? "ПРОВЕРКА КОНТРОЛЛЕРА" : "СВЕДЕНИЯ О СИСТЕМЕ",
+    dp_section(cv, "СВЕДЕНИЯ О СИСТЕМЕ",
                m->have_sysinfo ? "Обновление 1 с" : NULL);
 
     char battery[32], mem[64], temp[24], uptime[24], cpu[64], gpu[32];
@@ -827,15 +868,10 @@ static void dp_screen_info(struct dp_canvas *cv, const struct dp_model *m)
     const int n = (int)(sizeof(rows) / sizeof(rows[0]));
     int y = y0;
     for (int i = 0; i < n; i++) {
-        dp_text(cv, 20, y + 6, rows[i][0], DP_COL_FG2, 1);
-        dp_text_fit(cv, 202, y + 6, DP_W - 222, rows[i][1], DP_COL_FG, 0);
-        dp_hline(cv, 20, y + rh - 1, DP_W - 40, DP_COL_LINE);
+        dp_text(cv, 20, y + 6, rows[i][0], COLOR(FG2), 1);
+        dp_text_fit(cv, 202, y + 6, DP_W - 222, rows[i][1], COLOR(FG), 0);
+        dp_hline(cv, 20, y + rh - 1, DP_W - 40, COLOR(LINE));
         y += rh;
-    }
-    if (m->input_test) {
-        const struct dp_hint hints[] = { { "B", "Два нажатия для возврата" } };
-        dp_hints(cv, hints, 1, NULL);
-        return;
     }
     const struct dp_hint hints[] = { { "L1/R1", "Вкладки" } };
     dp_hints(cv, hints, 1, "Назад");
@@ -853,9 +889,117 @@ void dp_ui_toast(struct dp_canvas *cv, const char *message)
         w = DP_W - 40;
     int x = (DP_W - w) / 2;
     int y = DP_BODY_Y1 - 44;
-    dp_rect(cv, x, y, w, 32, DP_COL_PANEL2);
-    dp_frame(cv, x, y, w, 32, DP_COL_WARN);
-    dp_text_fit(cv, x + 16, y + 9, w - 32, message, DP_COL_FG, 1);
+    dp_rect(cv, x, y, w, 32, COLOR(PANEL2));
+    dp_frame(cv, x, y, w, 32, COLOR(WARN));
+    dp_text_fit(cv, x + 16, y + 9, w - 32, message, COLOR(FG), 1);
+}
+
+void dp_ui_volume(struct dp_canvas *cv, int percent)
+{
+    const int x = 188, y = DP_BODY_Y1 - 66, w = 264;
+    char level[32];
+    snprintf(level, sizeof(level), "Громкость %d%%", percent);
+    dp_rect(cv, x, y, w, 52, COLOR(PANEL2));
+    dp_frame(cv, x, y, w, 52, COLOR(ACC));
+    dp_text_small(cv, x + 16, y + 12, level, COLOR(FG), 1);
+    dp_rect(cv, x + 16, y + 34, w - 32, 6, COLOR(BG));
+    dp_rect(cv, x + 16, y + 34, (w - 32) * percent / 100, 6, COLOR(ACC));
+}
+
+void dp_ui_themes(struct dp_canvas *cv, const struct dp_model *m,
+                  const struct dp_theme_entry *entries, int count, int row, int preview)
+{
+    if (preview) {
+        const struct dp_hint hints[] = { { "A", "Сохранить тему" }, { "B", "Отмена" },
+                                         { "SELECT+START", "Терминал" } };
+        dp_hints(cv, hints, 3, NULL);
+        return;
+    }
+    dp_rect(cv, 0, DP_SAFE_TOP + DP_STATUS_H, DP_W,
+            DP_H - DP_SAFE_TOP - DP_STATUS_H - DP_SAFE_BOTTOM, COLOR(BG));
+    dp_section(cv, "ОФОРМЛЕНИЕ", dp_theme_label(m->theme));
+    const int visible = 9, first = dp_first_visible(row, visible);
+    for (int i = first; i < count && i < first + visible; i++) {
+        int y = DP_BODY_Y0 + 4 + (i - first) * 37;
+        dp_row_frame(cv, 16, y, DP_W - 32, 33, i == row);
+        const char *name = entries[i].label ? entries[i].label : entries[i].id + 5;
+        dp_text_fit(cv, 30, y + 8, 426, name, COLOR(FG), 0);
+        dp_text_small(cv, 469, y + 11,
+                      entries[i].label ? "Встроенная" : "С карты", COLOR(FG2), 1);
+    }
+    const struct dp_hint hints[] = { { "A", "Примерить" }, { "B", "Назад" },
+                                     { "SELECT+START", "Терминал" } };
+    dp_hints(cv, hints, 3, NULL);
+}
+
+static void dp_stick_view(struct dp_canvas *cv, int x, const char *label, const struct dp_axis *axis)
+{
+    const int y = 232, size = 136, middle = size / 2;
+    dp_text(cv, x, y - 25, label, COLOR(FG), 1);
+    dp_rect(cv, x, y, size, size, COLOR(PANEL));
+    dp_frame(cv, x, y, size, size, COLOR(LINE));
+    dp_hline(cv, x + 1, y + middle, size - 2, COLOR(LINE));
+    dp_vline(cv, x + middle, y + 1, size - 2, COLOR(LINE));
+    if (axis[0].max <= axis[0].min || axis[1].max <= axis[1].min) {
+        dp_text_small(cv, x + 8, y + size + 9, "Оси не обнаружены", COLOR(WARN), 1);
+        return;
+    }
+    int px = x + middle + axis[0].value * (middle - 6) / 100;
+    int py = y + middle + axis[1].value * (middle - 6) / 100;
+    dp_rect(cv, px - 3, py - 3, 7, 7, COLOR(ACC));
+    char values[32];
+    snprintf(values, sizeof(values), "X %+d   Y %+d", axis[0].value, axis[1].value);
+    dp_text_small(cv, x, y + size + 9, values, COLOR(FG2), 1);
+}
+
+void dp_ui_controls(struct dp_canvas *cv, const struct dp_model *m, int row,
+                    const struct dp_input *controller)
+{
+    dp_rect(cv, 0, DP_SAFE_TOP + DP_STATUS_H, DP_W,
+            DP_H - DP_SAFE_TOP - DP_STATUS_H - DP_SAFE_BOTTOM, COLOR(BG));
+    if (!controller) {
+        static const char *const sticks[] = { "Оба стика", "Левый", "Правый", "Выключены" };
+        const char *names[] = { "Проверка кнопок и стиков", "Стики в меню", "Кнопки меню" };
+        const char *values[] = { "Открыть", sticks[m->menu_sticks],
+                                 m->swap_menu_ab ? "B — выбор, A — назад" : "A — выбор, B — назад" };
+        dp_section(cv, "УПРАВЛЕНИЕ", NULL);
+        for (int i = 0; i < 3; i++) {
+            int y = DP_BODY_Y0 + 14 + i * 59;
+            dp_rect(cv, 16, y, DP_W - 32, 50, i == row ? COLOR(SEL) : COLOR(PANEL));
+            dp_frame(cv, 16, y, DP_W - 32, 50, i == row ? COLOR(ACC) : COLOR(LINE));
+            dp_text(cv, 30, y + 9, names[i], COLOR(FG), 1);
+            dp_text_small(cv, 30, y + 31, values[i], COLOR(FG2), 1);
+        }
+        dp_text_small(cv, 18, DP_BODY_Y0 + 214,
+                      "В играх раскладка настраивается в эмуляторе или порте.", COLOR(FG2), 1);
+        const struct dp_hint hints[] = { { "A", "Выбрать" },
+                                         { "Y", "Сброс" }, { "SELECT+START", "Назад" } };
+        dp_hints(cv, hints, 3, NULL);
+        return;
+    }
+
+    static const struct { enum dp_key key; const char *label; } buttons[] = {
+        { DP_KEY_UP, "ВВЕРХ" }, { DP_KEY_DOWN, "ВНИЗ" }, { DP_KEY_LEFT, "ВЛЕВО" },
+        { DP_KEY_RIGHT, "ВПРАВО" }, { DP_KEY_SELECT, "SELECT" }, { DP_KEY_START, "START" },
+        { DP_KEY_A, "A" }, { DP_KEY_B, "B" }, { DP_KEY_X, "X" }, { DP_KEY_Y, "Y" },
+        { DP_KEY_L1, "L1" }, { DP_KEY_R1, "R1" }, { DP_KEY_L2, "L2" }, { DP_KEY_R2, "R2" },
+        { DP_KEY_L3, "L3" }, { DP_KEY_R3, "R3" }, { DP_KEY_FN, "FN" },
+        { DP_KEY_VOL_UP, "VOL+" }, { DP_KEY_VOL_DOWN, "VOL-" },
+    };
+    dp_section(cv, "ПРОВЕРКА КОНТРОЛЛЕРА", NULL);
+    for (unsigned i = 0; i < sizeof(buttons) / sizeof(buttons[0]); i++) {
+        int x = 16 + (int)(i % 7) * 87, y = 78 + (int)(i / 7) * 35;
+        unsigned bit = 1u << buttons[i].key;
+        int held = (controller->held & bit) != 0;
+        int seen = (controller->seen & bit) != 0;
+        dp_rect(cv, x, y, 80, 28, held ? COLOR(ACC) : seen ? COLOR(SEL) : COLOR(PANEL));
+        dp_frame(cv, x, y, 80, 28, seen ? COLOR(ACC) : COLOR(LINE));
+        dp_text_small(cv, x + 7, y + 9, buttons[i].label, held ? COLOR(BG) : COLOR(FG), 1);
+    }
+    dp_stick_view(cv, 94, "Левый стик", controller->axes);
+    dp_stick_view(cv, 410, "Правый стик", controller->axes + 2);
+    const struct dp_hint hints[] = { { "SELECT+START", "В настройки" } };
+    dp_hints(cv, hints, 1, NULL);
 }
 
 void dp_ui_overlay(struct dp_canvas *cv, const char *title, const char *line1,
@@ -863,28 +1007,29 @@ void dp_ui_overlay(struct dp_canvas *cv, const char *title, const char *line1,
 {
     const int w = 460, h = 176;
     const int x = (DP_W - w) / 2, y = (DP_H - h) / 2;
-    dp_rect(cv, x, y, w, h, DP_COL_PANEL2);
-    dp_frame(cv, x, y, w, h, DP_COL_ACC);
-    dp_text_fit(cv, x + 20, y + 18, w - 40, title, DP_COL_FG, 0);
+    dp_rect(cv, x, y, w, h, COLOR(PANEL2));
+    dp_frame(cv, x, y, w, h, COLOR(ACC));
+    dp_text_fit(cv, x + 20, y + 18, w - 40, title, COLOR(FG), 0);
     if (line1)
-        dp_text_fit(cv, x + 20, y + 56, w - 40, line1, DP_COL_FG2, 1);
+        dp_text_fit(cv, x + 20, y + 56, w - 40, line1, COLOR(FG2), 1);
     if (line2)
-        dp_text_fit(cv, x + 20, y + 80, w - 40, line2, DP_COL_FG2, 1);
+        dp_text_fit(cv, x + 20, y + 80, w - 40, line2, COLOR(FG2), 1);
     if (total > 0) {
         int bw = w - 40, fill = bw * (done > total ? total : done) / total;
-        dp_rect(cv, x + 20, y + h - 42, bw, 10, DP_COL_PANEL);
-        dp_rect(cv, x + 20, y + h - 42, fill, 10, DP_COL_ACC);
+        dp_rect(cv, x + 20, y + h - 42, bw, 10, COLOR(PANEL));
+        dp_rect(cv, x + 20, y + h - 42, fill, 10, COLOR(ACC));
         char counter[24];
         snprintf(counter, sizeof(counter), "%d / %d", done, total);
         int cw = dp_text_small_w(counter, 1);
-        dp_text_small(cv, x + w - 20 - cw, y + h - 26, counter, DP_COL_FG3, 1);
+        dp_text_small(cv, x + w - 20 - cw, y + h - 26, counter, COLOR(FG3), 1);
     }
 }
 
 void dp_ui_paint(struct dp_canvas *cv, const struct dp_model *m, enum dp_screen scr,
                  int system_index, int selected)
 {
-    dp_fill(cv, DP_COL_BG);
+    swap_confirm_back = m->swap_menu_ab;
+    dp_fill(cv, COLOR(BG));
     dp_statusbar(cv, m, scr);
 
     switch (scr) {
@@ -903,16 +1048,16 @@ void dp_ui_boot_splash(struct dp_canvas *cv)
 {
     static const char wordmark[] = "DEEPoS";
     static const char status[] = "Загрузка системы";
-    dp_fill(cv, DP_COL_BG);
-    dp_frame(cv, 16, 16, DP_W - 32, DP_H - 32, DP_COL_LINE);
-    dp_hline(cv, 16, 16, 28, DP_COL_ACC);
-    dp_vline(cv, 16, 16, 24, DP_COL_ACC);
-    dp_hline(cv, DP_W - 44, DP_H - 17, 28, DP_COL_ACC);
-    dp_vline(cv, DP_W - 17, DP_H - 40, 24, DP_COL_ACC);
+    dp_fill(cv, COLOR(BG));
+    dp_frame(cv, 16, 16, DP_W - 32, DP_H - 32, COLOR(LINE));
+    dp_hline(cv, 16, 16, 28, COLOR(ACC));
+    dp_vline(cv, 16, 16, 24, COLOR(ACC));
+    dp_hline(cv, DP_W - 44, DP_H - 17, 28, COLOR(ACC));
+    dp_vline(cv, DP_W - 17, DP_H - 40, 24, COLOR(ACC));
 
     int x = (DP_W - dp_text_w(wordmark, 5)) / 2;
-    dp_text(cv, x, 174, wordmark, DP_COL_ACC, 5);
-    dp_hline(cv, x, 263, DP_W - 2 * x, DP_COL_LINE);
+    dp_text(cv, x, 174, wordmark, COLOR(ACC), 5);
+    dp_hline(cv, x, 263, DP_W - 2 * x, COLOR(LINE));
     x = (DP_W - dp_text_w(status, 1)) / 2;
-    dp_text(cv, x, 280, status, DP_COL_FG2, 1);
+    dp_text(cv, x, 280, status, COLOR(FG2), 1);
 }

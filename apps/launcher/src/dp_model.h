@@ -20,7 +20,8 @@
 #define DP_SETTINGS_CLOCK 12
 #define DP_SETTINGS_REGION 13
 #define DP_SETTINGS_EMULATORS 14
-#define DP_SETTINGS_COUNT 15
+#define DP_SETTINGS_THEME 15
+#define DP_SETTINGS_COUNT 16
 
 enum dp_rom_source { DP_ROM_AUTO, DP_ROM_TF1, DP_ROM_TF2 };
 
@@ -100,6 +101,9 @@ struct dp_model {
 
     int cfg_brightness;
     int cfg_volume;
+    enum dp_menu_sticks menu_sticks;
+    int swap_menu_ab;
+    char theme[DP_THEME_ID];
     int prefs[DP_PREF_COUNT];
     char usb_mode[12];
     char usb_link[24];
@@ -112,7 +116,6 @@ struct dp_model {
     struct dp_status st;
     struct dp_sysinfo si;
     int have_sysinfo;
-    int input_test;
 
     /* storage, in megabytes, filled by the caller */
     unsigned rom_used_mb;

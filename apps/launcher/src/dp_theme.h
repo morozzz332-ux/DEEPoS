@@ -35,4 +35,30 @@
 #define DP_COL_WARN     dp565(0xE6, 0xB2, 0x5C)
 #define DP_COL_BAD      dp565(0xE0, 0x70, 0x6A)
 
+enum dp_layout { DP_LAYOUT_GRID, DP_LAYOUT_SPLIT, DP_LAYOUT_SHELF, DP_LAYOUT_LIST };
+enum dp_color {
+    DP_COLOR_BG, DP_COLOR_PANEL, DP_COLOR_PANEL2, DP_COLOR_LINE, DP_COLOR_FG,
+    DP_COLOR_FG2, DP_COLOR_FG3, DP_COLOR_ACC, DP_COLOR_SEL, DP_COLOR_WARN,
+    DP_COLOR_BAD, DP_COLOR_COUNT
+};
+
+#define DP_THEME_ID 32
+#define DP_THEME_MAX 44
+
+struct dp_theme {
+    uint16_t colors[DP_COLOR_COUNT];
+    enum dp_layout layout;
+};
+
+struct dp_theme_entry {
+    char id[DP_THEME_ID];
+    const char *label; /* stock only; user entries display their id */
+};
+
+extern struct dp_theme dp_theme_current;
+int dp_theme_id_valid(const char *id);
+int dp_theme_load(const char *roms, const char *id, struct dp_theme *out);
+int dp_theme_list(const char *roms, struct dp_theme_entry entries[DP_THEME_MAX]);
+const char *dp_theme_label(const char *id);
+
 #endif /* DP_THEME_H */

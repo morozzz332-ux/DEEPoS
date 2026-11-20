@@ -5,6 +5,7 @@
 #include "dp_canvas.h"
 #include "dp_clock.h"
 #include "dp_cores.h"
+#include "dp_input.h"
 #include "dp_model.h"
 
 enum dp_screen {
@@ -30,6 +31,11 @@ void dp_ui_boot_splash(struct dp_canvas *cv);
 
 /* Transient message above the hint bar (failed launch, read-only card, ...). */
 void dp_ui_toast(struct dp_canvas *cv, const char *message);
+void dp_ui_volume(struct dp_canvas *cv, int percent);
+void dp_ui_controls(struct dp_canvas *cv, const struct dp_model *m, int row,
+                    const struct dp_input *controller);
+void dp_ui_themes(struct dp_canvas *cv, const struct dp_model *m,
+                  const struct dp_theme_entry *entries, int count, int row, int preview);
 void dp_ui_module_details(struct dp_canvas *cv, const struct dp_module_info *module,
                           const char *message);
 void dp_ui_clock(struct dp_canvas *cv, int region, int selected, const struct tm *draft);

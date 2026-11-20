@@ -57,6 +57,17 @@ int __wrap_ioctl(int fd, unsigned long request, ...)
         memcpy(buf, key_bits, len < sizeof(key_bits) ? len : sizeof(key_bits));
         return 0;
     }
+    case 0x23: /* EVIOCGBIT(EV_ABS) */
+        memset(buf, 0, _IOC_SIZE(request));
+        *(unsigned char *)buf = (1 << ABS_X) | (1 << ABS_Y) | (1 << ABS_RX) | (1 << ABS_RY);
+        return 0;
+    case 0x40 + ABS_X:
+    case 0x40 + ABS_Y:
+    case 0x40 + ABS_RX:
+    case 0x40 + ABS_RY:
+        *(struct input_absinfo *)buf = (struct input_absinfo){ .minimum = 0, .maximum = 1023,
+                                                              .value = 512, .flat = 10 };
+        return 0;
     default:
         break;
     }
@@ -98,6 +109,19 @@ static int check_key(struct dp_input *input, unsigned short code, unsigned value
         return 0;
     fprintf(stderr, "%s code 0x%x value %u: expected %s, got %s\n", device_name, code,
             value, dp_key_name(expected), dp_key_name(actual));
+    return 1;
+}
+
+static int check_axis(struct dp_input *input, unsigned short code, int value, enum dp_key expected)
+{
+    struct input_event event = {.type = EV_ABS, .code = code, .value = value};
+    if (write(event_pipe[1], &event, sizeof(event)) != (ssize_t)sizeof(event))
+        return 1;
+    enum dp_key actual = dp_input_poll(input, 0);
+    if (actual == expected)
+        return 0;
+    fprintf(stderr, "axis %u value %d: expected %s, got %s\n", code, value,
+            dp_key_name(expected), dp_key_name(actual));
     return 1;
 }
 
@@ -155,6 +179,19 @@ static int check_pad(const char *name, enum dp_key south, enum dp_key east, int 
     failed |= check_key(&input, KEY_VOLUMEDOWN, 1, DP_KEY_VOL_DOWN);
     failed |= check_key(&input, BTN_DPAD_DOWN, 2, DP_KEY_DOWN);
     failed |= check_key(&input, BTN_SOUTH, 2, DP_KEY_NONE);
+    failed |= check_axis(&input, ABS_X, 540, DP_KEY_NONE);
+    failed |= check_axis(&input, ABS_X, 1020, DP_KEY_RIGHT);
+    failed |= check_axis(&input, ABS_X, 1000, DP_KEY_NONE);
+    failed |= check_axis(&input, ABS_X, 510, DP_KEY_NONE);
+    failed |= check_axis(&input, ABS_X, 0, DP_KEY_LEFT);
+    failed |= check_axis(&input, ABS_RY, 20, DP_KEY_UP);
+    failed |= check_key(&input, BTN_SELECT, 0, DP_KEY_NONE);
+    failed |= check_key(&input, BTN_START, 1, DP_KEY_START);
+    failed |= check_key(&input, BTN_SELECT, 1, dp_key_from_name("select+start"));
+    failed |= check_key(&input, BTN_START, 0, DP_KEY_NONE);
+    failed |= check_key(&input, BTN_SELECT, 0, DP_KEY_NONE);
+    failed |= check_key(&input, BTN_SELECT, 1, DP_KEY_SELECT);
+    failed |= check_key(&input, BTN_START, 1, dp_key_from_name("select+start"));
     dp_input_close(&input);
     close(event_pipe[1]);
     return failed;

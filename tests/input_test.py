@@ -29,6 +29,7 @@ def make_library(base: pathlib.Path):
         for i in range(count):
             (d / f"g{i}.{ 'md' if sys_id == 'md' else 'sfc'}").write_bytes(b"")
     data.mkdir(parents=True)
+    (data / "config").mkdir()
     (data / "continue.tsv").write_text(
         "Sonic 3 & Knuckles\tMEGA DRIVE\t12 мин\t2\t1\n"
         "Crash Bandicoot 2\tPLAYSTATION\t1 ч 04\t-1\t0\n"
@@ -110,6 +111,16 @@ def main():
 
         _, out = state(roms, data, "RIGHT,R1")
         check("R1 cycles to settings", out.startswith("screen=settings"), out)
+
+        _, out = state(roms, data, "R1,R1,RIGHT,A")
+        check("control settings have a separate screen", out.startswith("screen=controls"), out)
+        _, out = state(roms, data, "R1,R1,RIGHT,A,A,B,UP,START,SELECT")
+        check("diagnostics consume individual button presses", out.startswith("screen=controller-test"), out)
+        _, out = state(roms, data, "R1,R1,RIGHT,A,A,select+start")
+        check("physical chord returns from diagnostics to settings", out.startswith("screen=settings"), out)
+        _, out = state(roms, data, "R1,R1,RIGHT,A,DOWN,A")
+        check("stick mode is saved", "menu_sticks = left" in (data / "config/settings.toml").read_text()
+              if (data / "config/settings.toml").exists() else False, out)
 
         _, out = state(roms, data, "L1")
         check("L1 wraps to the last tab", out.startswith("screen=info"), out)

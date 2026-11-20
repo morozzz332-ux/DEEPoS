@@ -30,7 +30,17 @@ enum dp_key {
     DP_KEY_L3,
     DP_KEY_R3,
     DP_KEY_VOL_UP,
-    DP_KEY_VOL_DOWN
+    DP_KEY_VOL_DOWN,
+    DP_KEY_MENU_BACK,
+    DP_KEY_INPUT_STATE
+};
+
+#define DP_STICK_AXES 4
+
+struct dp_axis {
+    int code, min, max;
+    int value; /* normalized to -100..100 */
+    int direction;
 };
 
 struct dp_input {
@@ -38,6 +48,13 @@ struct dp_input {
     /* Volume rocker sits on the adc-keys node, a different evdev device than
      * the gamepad. Keeping a second descriptor is cheaper than a daemon. */
     int key_fd;
+    int axis_fd;
+    unsigned held;
+    unsigned seen;
+    unsigned stick_mask; /* bit 0 = left, bit 1 = right */
+    int inspect;
+    int volume_only;
+    struct dp_axis axes[DP_STICK_AXES];
     int ready;      /* 1 while the device is open and has not disappeared */
     int swap_ab;    /* legacy vendor DTB labels the face buttons the other way */
     int lost;       /* 1 after the device disappeared (POLLERR/POLLHUP) */
@@ -60,6 +77,7 @@ int dp_input_probe(struct dp_input *in, int seconds, const char *path);
  * capabilities we care about, plus the loaded joypad modules. Creates `path`. */
 int dp_input_scan(const char *path);
 void dp_input_close(struct dp_input *in);
+int dp_input_recovery_held(void);
 
 /* Block up to timeout_ms; returns DP_KEY_NONE on timeout.
  *

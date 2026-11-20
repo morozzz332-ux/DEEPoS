@@ -52,11 +52,48 @@ def read_cfg(data):
         values[key.strip()] = value.strip()
     return values, path.read_text(encoding="utf-8")
 
+def test_themes(tmp, roms, data):
+    into_themes = "DOWN,DOWN,DOWN,DOWN,DOWN,A"
+    config = data / "config/settings.toml"
+    run(roms, data, into_themes + ",DOWN,A,B")
+    check("theme preview leaves persisted settings untouched", "theme" not in read_cfg(data)[0])
+    run(roms, data, into_themes + ",DOWN,A,A")
+    check("confirmation persists the new stock theme", read_cfg(data)[0].get("theme") == "zone")
+
+    themes = roms / "themes"
+    themes.mkdir()
+    (themes / "custom.theme").write_text(
+        "format=1\nlayout=split\nbackground=0c0e11\npanel=18202c\ntext=f8fafc\naccent=90d3ff\n")
+    def render(theme, name):
+        config.write_text(f"theme = {theme}\n")
+        target = tmp / f"{name}.ppm"
+        p = subprocess.run([str(LAUNCHER), "--roms", str(roms), "--data", str(data),
+                            "--screen", "systems", "--out", str(target)],
+                           capture_output=True, check=True)
+        return target.read_bytes(), p.stderr
+
+    terminal, _ = render("terminal", "terminal")
+    zone, _ = render("zone", "zone")
+    garage, _ = render("garage", "garage")
+    custom, _ = render("user.custom", "custom")
+    check("three stock variants use distinct screen rendering", len({terminal, zone, garage}) == 3)
+    check("valid user theme changes the rendered screen", custom not in {terminal, zone, garage})
+    (themes / "escape.theme").symlink_to(themes / "custom.theme")
+    (themes / "broken.theme").write_text("format=1\nlayout=../../x\n" + "x" * 5000)
+    for bad in ("user.missing", "user.escape", "user.broken"):
+        frame, _ = render(bad, bad)
+        check(f"{bad} falls back to the terminal", frame == terminal)
+    config.write_text("theme = zone\n")
+    run(roms, data, into_themes + ",select+start")
+    check("physical chord restores the terminal from Appearance", read_cfg(data)[0].get("theme", "terminal") == "terminal")
+
 
 def main():
     with tempfile.TemporaryDirectory() as name:
         tmp = pathlib.Path(name)
         roms, data = tree(tmp)
+        test_themes(tmp, roms, data)
+        (data / "config/settings.toml").write_text("brightness = 20\nvolume = 20\nprofile = eco\n")
 
         p = run(roms, data, "RIGHT,RIGHT,A")
         values, text = read_cfg(data)
@@ -68,6 +105,20 @@ def main():
         p = run(roms, data, "DOWN,A")
         values, _ = read_cfg(data)
         check("sound card cycles volume", values.get("volume") == "40")
+
+        mixer_sys = tmp / "mixer"
+        mixer = mixer_sys / "class/sound/card0/controlC0/volume_percent"
+        mixer.parent.mkdir(parents=True)
+        mixer.write_text("40\n")
+        frame = tmp / "volume.ppm"
+        p = run(roms, data, "VOL+,VOL-", "--sysfs", str(mixer_sys), "--out", str(frame))
+        check("side volume keys apply to the mixer and persist",
+              p.returncode == 0 and read_cfg(data)[0].get("volume") == "40" and
+              mixer.read_text().strip() == "40")
+        before = frame.read_bytes()
+        run(roms, data, "VOL+", "--sysfs", str(mixer_sys), "--out", str(frame))
+        check("the volume indicator changes with actual mixer level",
+              mixer.read_text().strip() == "45" and frame.read_bytes() != before)
 
         p = run(roms, data, "DOWN,RIGHT,RIGHT,A")
         values, _ = read_cfg(data)

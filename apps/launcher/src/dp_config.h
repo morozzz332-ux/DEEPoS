@@ -2,17 +2,23 @@
 #ifndef DP_CONFIG_H
 #define DP_CONFIG_H
 
+#include "dp_theme.h"
+
 #define DP_CONFIG_BRIGHTNESS_MAX 100
 #define DP_CONFIG_VOLUME_MAX 100
 #define DP_CONFIG_PROFILE_LEN 16
 
 enum dp_preference { DP_PREF_TONES, DP_PREF_SMOOTH, DP_PREF_FPS, DP_PREF_INTEGER, DP_PREF_COUNT };
+enum dp_menu_sticks { DP_STICKS_BOTH, DP_STICKS_LEFT, DP_STICKS_RIGHT, DP_STICKS_OFF, DP_STICKS_COUNT };
 
 struct dp_config {
     int brightness;                     /* 0..100, 0 = do not touch */
     int volume;                         /* 0..100, 0 = do not touch */
     char profile[DP_CONFIG_PROFILE_LEN];/* "", "eco", "balanced", "max" */
     int prefs[DP_PREF_COUNT];           /* 0 inherit, 1 on, 2 off */
+    enum dp_menu_sticks menu_sticks;
+    int swap_menu_ab;
+    char theme[DP_THEME_ID];
 };
 
 /* Fills defaults: brightness 0, volume 0, profile "" (leave device alone). */

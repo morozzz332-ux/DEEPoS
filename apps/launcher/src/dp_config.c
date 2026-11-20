@@ -17,6 +17,7 @@
 static const char *const pref_keys[DP_PREF_COUNT] = {
     "menu_sounds", "video_smooth", "fps_show", "integer_scale",
 };
+static const char *const stick_modes[] = { "both", "left", "right", "off" };
 
 void dp_config_init(struct dp_config *cfg)
 {
@@ -24,6 +25,9 @@ void dp_config_init(struct dp_config *cfg)
     cfg->volume = 0;
     cfg->profile[0] = '\0';
     memset(cfg->prefs, 0, sizeof(cfg->prefs));
+    cfg->menu_sticks = DP_STICKS_BOTH;
+    cfg->swap_menu_ab = 0;
+    snprintf(cfg->theme, sizeof(cfg->theme), "terminal");
 }
 
 static int valid_profile(const char *value)
@@ -64,7 +68,7 @@ int dp_config_set(struct dp_config *cfg, const char *kv)
         char *end = NULL;
         long n = strtol(val, &end, 10);
         int max = (key[0] == 'b') ? DP_CONFIG_BRIGHTNESS_MAX : DP_CONFIG_VOLUME_MAX;
-        if (!end || end == val || *end != '\0' || n < 1 || n > max) {
+        if (!end || end == val || *end != '\0' || n < 0 || n > max) {
             return -2;
         }
         if (key[0] == 'b') {
@@ -79,6 +83,27 @@ int dp_config_set(struct dp_config *cfg, const char *kv)
             return -2;
         }
         snprintf(cfg->profile, sizeof(cfg->profile), "%s", val);
+        return 1;
+    }
+    if (strcmp(key, "menu_sticks") == 0) {
+        for (int i = 0; i < DP_STICKS_COUNT; i++) {
+            if (strcmp(val, stick_modes[i]) == 0) {
+                cfg->menu_sticks = i;
+                return 1;
+            }
+        }
+        return -2;
+    }
+    if (strcmp(key, "swap_menu_ab") == 0) {
+        if (strcmp(val, "on") != 0 && strcmp(val, "off") != 0)
+            return -2;
+        cfg->swap_menu_ab = strcmp(val, "on") == 0;
+        return 1;
+    }
+    if (strcmp(key, "theme") == 0) {
+        if (!dp_theme_id_valid(val))
+            return -2;
+        snprintf(cfg->theme, sizeof(cfg->theme), "%s", val);
         return 1;
     }
     for (int i = 0; i < DP_PREF_COUNT; i++) {
@@ -150,6 +175,12 @@ int dp_config_save(const struct dp_config *cfg, const char *path)
     fprintf(f, "brightness = %d\n", cfg->brightness);
     fprintf(f, "volume = %d\n", cfg->volume);
     fprintf(f, "profile = %s\n", cfg->profile[0] ? cfg->profile : "balanced");
+    if (cfg->menu_sticks != DP_STICKS_BOTH)
+        fprintf(f, "menu_sticks = %s\n", stick_modes[cfg->menu_sticks]);
+    if (cfg->swap_menu_ab)
+        fputs("swap_menu_ab = on\n", f);
+    if (strcmp(cfg->theme, "terminal") != 0)
+        fprintf(f, "theme = %s\n", cfg->theme);
     for (int i = 0; i < DP_PREF_COUNT; i++) {
         if (cfg->prefs[i])
             fprintf(f, "%s = %s\n", pref_keys[i], cfg->prefs[i] == 1 ? "on" : "off");

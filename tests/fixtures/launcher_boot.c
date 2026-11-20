@@ -41,7 +41,7 @@ void __wrap_dp_display_close(struct dp_display *display)
 
 int __wrap_dp_input_open(struct dp_input *input)
 {
-    *input = (struct dp_input){ .fd = -1, .ready = 1 };
+    *input = (struct dp_input){ .fd = -1, .key_fd = -1, .axis_fd = -1, .ready = 1 };
     return getenv("DEEPOS_TEST_PHYSICAL_KEYS") || getenv("DEEPOS_TEST_TONES") ? 0 : -1;
 }
 
