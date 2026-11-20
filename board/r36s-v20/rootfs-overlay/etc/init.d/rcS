@@ -78,6 +78,9 @@ fi
 #    Missing partitions (broken card, no card) are not fatal: the launcher
 #    still starts and shows an empty library.
 mount_boot_card /proc/self/mountinfo /sys/dev/block
+if [ "$roms_mounted" = yes ] && is_mounted /run; then
+    printf '/dev/%sp5\n' "$card" > /run/deepos-roms-device
+fi
 
 # 4. Writable places the launcher expects even on a fresh card.
 if [ "$data_mounted" = yes ]; then
@@ -92,17 +95,6 @@ if [ -x /usr/bin/updatr ] && [ "$data_mounted" = yes ] &&
         --slot "$boot_slot" --boot-ticket /run/deepos-boot >/dev/null ||
         echo "DEEPoS: cannot record boot attempt" >&2
 fi
-
-# 6b. USB gadget: ACM serial console + NCM network on the OTG port.
-#     Gives a COM port (root shell) and 169.254.170.2 without UART or sshd.
-if [ -x /usr/local/bin/usb-gadget.sh ]; then
-    /usr/local/bin/usb-gadget.sh &
-fi
-
-# 6c. Development shell on the USB NCM link. The link is the console's own
-#     OTG port, not a network, and this build has no other way in while the
-#     panel prototype moves. Disable before a release build.
-/bin/busybox telnetd -p 23 -l /bin/sh >/dev/null 2>&1 &
 
 # 7. Quiet kernel console: the splash screen owns the panel.
 echo 0 > /proc/sys/kernel/printk 2>/dev/null || true

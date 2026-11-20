@@ -42,6 +42,7 @@ static void usage(void)
          "  --config PATH     settings file (default /data/config/settings.toml)\n"
          "  --set KEY=VAL     change one setting and save it (brightness/volume/profile)\n"
          "  --print-config    print the effective settings and exit\n"
+         "  --print-retroarch-config  emit selected RetroArch overrides\n"
          "  --apply           write settings to sysfs/profile file\n"
          "  --sysfs PREFIX    sysfs root for --apply (tests, default empty)\n"
          "  --selftest        print the device environment and exit\n"
@@ -67,6 +68,7 @@ struct dp_nav {
     struct { int tab, sel; } back[2];
     int nback;
     int module_action;
+    int usb_action; /* 1 network, 2 files */
     pid_t backup_pid;
     char notice[128];  /* one-shot message drawn above the hint bar */
 };
@@ -143,7 +145,11 @@ static int settings_edit_card(struct dp_nav *nav, struct dp_model *m, int card, 
     const int nsteps = (int)(sizeof(steps) / sizeof(steps[0]));
     static const char *profiles[] = { "eco", "balanced", "max" };
     const int nprofiles = 3;
-    int changed = 0;
+    static const int prefs[] = {
+        [0] = DP_PREF_TONES + 1, [6] = DP_PREF_SMOOTH + 1,
+        [8] = DP_PREF_FPS + 1, [11] = DP_PREF_INTEGER + 1,
+    };
+    int pref = prefs[card] - 1;
 
     if (card == 2) { /* display */
         int cur = cfg.brightness;
@@ -152,7 +158,6 @@ static int settings_edit_card(struct dp_nav *nav, struct dp_model *m, int card, 
             if (cur >= steps[i])
                 next = steps[(i + 1) % nsteps];
         cfg.brightness = next;
-        changed = 1;
     } else if (card == 3) { /* sound */
         int cur = cfg.volume;
         int next = steps[0];
@@ -167,17 +172,20 @@ static int settings_edit_card(struct dp_nav *nav, struct dp_model *m, int card, 
                 next = 1;
         }
         cfg.volume = next;
-        changed = 1;
     } else if (card == 5) { /* power */
         int idx = 0;
         for (int i = 0; i < nprofiles; i++)
             if (strcmp(cfg.profile, profiles[i]) == 0)
                 idx = i;
         snprintf(cfg.profile, sizeof(cfg.profile), "%s", profiles[(idx + 1) % nprofiles]);
-        changed = 1;
-    }
-    if (!changed)
+    } else if (pref >= 0) {
+        if (pref == DP_PREF_TONES)
+            cfg.prefs[pref] = cfg.prefs[pref] == 2 ? 1 : 2;
+        else
+            cfg.prefs[pref] = (cfg.prefs[pref] + 1) % 3;
+    } else {
         return 0;
+    }
 
     char profile_path[512];
     snprintf(profile_path, sizeof(profile_path), "%s/cpu-profile", data_dir);
@@ -185,12 +193,12 @@ static int settings_edit_card(struct dp_nav *nav, struct dp_model *m, int card, 
         snprintf(nav->notice, sizeof(nav->notice), "Настройки не сохранены: проверьте DATA");
         return 1;
     }
-    int applied;
+    int applied = 1;
     if (card == 2)
         applied = dp_config_apply_brightness(sysfs_prefix, cfg.brightness);
     else if (card == 3)
         applied = dp_config_apply_volume(sysfs_prefix, cfg.volume);
-    else {
+    else if (card == 5) {
         dp_config_write_profile(profile_path, cfg.profile);
         applied = dp_config_apply_cpu(sysfs_prefix, cfg.profile);
     }
@@ -198,6 +206,7 @@ static int settings_edit_card(struct dp_nav *nav, struct dp_model *m, int card, 
         snprintf(nav->notice, sizeof(nav->notice), "Сохранено. Устройство не применило значение");
     m->cfg_brightness = cfg.brightness;
     m->cfg_volume = cfg.volume;
+    memcpy(m->prefs, cfg.prefs, sizeof(m->prefs));
     snprintf(m->cfg_profile, sizeof(m->cfg_profile), "%s", cfg.profile);
     return 1;
 }
@@ -359,6 +368,10 @@ static int nav_key(struct dp_nav *nav, struct dp_model *m, const char *roms, enu
     case DP_KEY_A:
     case DP_KEY_START:
     case DP_KEY_X:
+        if (key == DP_KEY_X && scr == DP_SCR_MODULES) {
+            nav_notice(nav, "Модули: /data/modules, затем перезапуск");
+            break;
+        }
         if (key == DP_KEY_X && scr != DP_SCR_CONTINUE)
             break;
         if (scr == DP_SCR_SYSTEMS && m->nsys > 0) {
@@ -367,22 +380,21 @@ static int nav_key(struct dp_nav *nav, struct dp_model *m, const char *roms, enu
             nav->level = 1;
             nav->sel = 0;
         } else if (scr == DP_SCR_SETTINGS) {
-            if (nav->sel == 2 || nav->sel == 3 || nav->sel == 5)
+            if (nav->sel == 2 || nav->sel == 3 || nav->sel == 5 || nav->sel == 0 ||
+                nav->sel == 6 || nav->sel == 8 || nav->sel == 11)
                 nav->settings_edit = nav->sel + 1;
+            else if (nav->sel == 4 || nav->sel == 10)
+                nav->usb_action = nav->sel == 4 ? 1 : 2;
             else if (nav->sel == 7)
                 nav_shortcut(nav, 3);
             else if (nav->sel == 1) {
                 nav_shortcut(nav, 5);
                 m->input_test = 1;
                 m->si.last_key[0] = '\0';
-            } else if (nav->sel == 8 || nav->sel == 9)
+            } else if (nav->sel == 9)
                 nav_shortcut(nav, 5);
-            else if (nav->sel == 10)
-                nav_shortcut(nav, 4);
-            else if (nav->sel == 11)
-                nav->sel = 2;
-            else if (key != DP_KEY_X)
-                nav_notice(nav, "Этот параметр только для чтения");
+        } else if (scr == DP_SCR_FILES && nav->sel == 1) {
+            nav->usb_action = 2;
         } else if (scr == DP_SCR_MODULES && nav->sel < m->nmods) {
             nav->module_action = nav->sel + 1;
         } else if (scr == DP_SCR_GAMES && nav->sel < m->nroms &&
@@ -661,6 +673,10 @@ static int launch_game(const struct dp_model *m, const char *roms, const char *m
     int allow = 1;
     int child;
 
+    if (access("/run/deepos-usb.export", F_OK) == 0) {
+        fprintf(stderr, "launcher: ROMS is currently reserved for USB file transfer\n");
+        return 6;
+    }
     dp_modc_launch(mods_socket, sys, rom, &allow);
     if (!allow) {
         printf("blocked\t%s\t%s\n", sys, rom);
@@ -891,6 +907,7 @@ static void model_load_config(struct dp_model *m, const char *config_path)
     dp_config_load(&cfg, config_path);
     m->cfg_brightness = cfg.brightness;
     m->cfg_volume = cfg.volume;
+    memcpy(m->prefs, cfg.prefs, sizeof(m->prefs));
     snprintf(m->cfg_profile, sizeof(m->cfg_profile), "%s", cfg.profile);
 }
 
@@ -1037,9 +1054,48 @@ static void refresh_modules(struct dp_model *m, const char *socket)
     m->modules_online = dp_modc_status(socket, m) == 0;
 }
 
-static int apply_nav_actions(struct dp_nav *nav, struct dp_model *m, const char *config,
-                             const char *sysfs, const char *data, const char *socket)
+static int refresh_usb(struct dp_model *m)
 {
+    char mode[sizeof(m->usb_mode)], address[sizeof(m->usb_link)];
+    read_first_line("/run/deepos-usb.mode", mode, sizeof(mode));
+    read_first_line("/run/deepos-usb.address", address, sizeof(address));
+    if (strcmp(mode, m->usb_mode) == 0 && strcmp(address, m->usb_link) == 0)
+        return 0;
+    strcpy(m->usb_mode, mode);
+    strcpy(m->usb_link, address);
+    return 1;
+}
+
+static int apply_nav_actions(struct dp_nav *nav, struct dp_model *m, const char *config,
+                             const char *sysfs, const char *data, const char *socket,
+                             const char *roms)
+{
+    if (nav->usb_action) {
+        const char *mode = nav->usb_action == 1 ? "network" : "files";
+        nav->usb_action = 0;
+        if (strcmp(mode, m->usb_mode) == 0)
+            mode = "off";
+        int status = run_command("/usr/local/bin/usb-mode.sh \"$1\"", mode);
+        if (status == 4)
+            nav_notice(nav, "Сначала извлеките диск на ПК");
+        else if (status == 3)
+            nav_notice(nav, "Ядро не обнаружило USB-контроллер OTG");
+        else if (status == 5)
+            nav_notice(nav, "Ядро не поддерживает режим USB-диска");
+        else if (status == 6)
+            nav_notice(nav, "ROMS занят или ещё не смонтирован");
+        else if (status == 7)
+            nav_notice(nav, "Драйвер USB-сети недоступен");
+        else if (status != 0)
+            nav_notice(nav, "USB недоступен: проверьте OTG и карту");
+        else if (strcmp(mode, "files") == 0)
+            nav_notice(nav, "ROMS подключён к ПК через OTG");
+        refresh_usb(m);
+        dp_model_scan(m, roms);
+        if (access("/run/deepos-usb.export", F_OK) == 0)
+            m->roms_ok = 0;
+        return 1;
+    }
     if (!nav->module_action)
         return apply_selected_setting(nav, m, config, sysfs, data);
 
@@ -1197,6 +1253,7 @@ int main(int argc, char **argv)
     const char *sysfs_prefix = NULL;
     const char *set_kv = NULL;
     int print_config = 0;
+    int print_retroarch = 0;
     int do_apply = 0;
     int bench_frames = 0;
     int boot_splash = 0;
@@ -1229,6 +1286,7 @@ int main(int argc, char **argv)
         else if (strcmp(a, "--sysfs") == 0) sysfs_prefix = NEED_ARG();
         else if (strcmp(a, "--set") == 0) set_kv = NEED_ARG();
         else if (strcmp(a, "--print-config") == 0) print_config = 1;
+        else if (strcmp(a, "--print-retroarch-config") == 0) print_retroarch = 1;
         else if (strcmp(a, "--apply") == 0) do_apply = 1;
         else if (strcmp(a, "--bench") == 0) bench_frames = atoi(NEED_ARG());
         else if (strcmp(a, "--bench-out") == 0) bench_out = NEED_ARG();
@@ -1267,6 +1325,13 @@ int main(int argc, char **argv)
     if (!config_path) {
         snprintf(config_buf, sizeof(config_buf), "%s/config/settings.toml", data);
         config_path = config_buf;
+    }
+    if (print_retroarch) {
+        struct dp_config cfg;
+        dp_config_init(&cfg);
+        dp_config_load(&cfg, config_path);
+        dp_config_retroarch(&cfg);
+        return 0;
     }
 
     if (set_kv || print_config || do_apply) {
@@ -1317,6 +1382,8 @@ int main(int argc, char **argv)
     dp_model_load_continue(m, data);
     refresh_modules(m, mods_socket);
     model_load_config(m, config_path);
+    if (!out)
+        refresh_usb(m);
 
     /* Input diagnostics, in a child so the UI never waits: the report lists
      * every /dev/input node with its capabilities and then every raw event for
@@ -1420,7 +1487,7 @@ int main(int argc, char **argv)
             }
             quit = nav_key(&nav, m, roms, k);
             if (!quit)
-                apply_nav_actions(&nav, m, config_path, sysfs_prefix, data, mods_socket);
+                apply_nav_actions(&nav, m, config_path, sysfs_prefix, data, mods_socket, roms);
         }
     }
 
@@ -1483,6 +1550,7 @@ int main(int argc, char **argv)
         pid_t sound = 0;
         if (dp_input_open(&in) == 0) {
             unsigned long long sample_at = 0;
+            unsigned long long usb_at = 0;
             while (!quit && in.ready) {
                 enum dp_key k = dp_input_poll(&in, 250);
                 if (sound > 0 && waitpid(sound, NULL, WNOHANG) == sound)
@@ -1493,7 +1561,7 @@ int main(int argc, char **argv)
                     quit = nav_key(&nav, m, roms, k);
                     if (quit)
                         break;
-                    changed = apply_nav_actions(&nav, m, config_path, sysfs_prefix, data, mods_socket);
+                    changed = apply_nav_actions(&nav, m, config_path, sysfs_prefix, data, mods_socket, roms);
                     if (tab_screen(&nav) == DP_SCR_INFO) {
                         if (!m->input_test)
                             snprintf(m->si.last_key, sizeof(m->si.last_key), "%s", dp_key_name(k));
@@ -1509,6 +1577,10 @@ int main(int argc, char **argv)
                     }
                 }
                 unsigned long long now = now_us(CLOCK_MONOTONIC);
+                if (m->usb_mode[0] && (nav.tab == 2 || nav.tab == 4) && now >= usb_at) {
+                    changed |= refresh_usb(m);
+                    usb_at = now + 1000000;
+                }
                 if (tab_screen(&nav) == DP_SCR_INFO && (nav.tab != old_tab || now >= sample_at)) {
                     read_device_status(m, roms, "/dev/fb0", 0);
                     sample_at = now + 1000000;
@@ -1540,13 +1612,15 @@ int main(int argc, char **argv)
                 paint_nav(&cv, m, &nav);
                 if (game_status > 0) {
                     const char *message = game_status == 5 ? "Нет эмулятора для этой системы" :
+                                          game_status == 6 ? "Завершите передачу файлов по USB" :
                                           game_status == 4 ? "Запуск отклонён модулем" :
                                           "Не удалось запустить игру";
                     dp_ui_toast(&cv, message);
                 }
                 if (have_disp)
                     dp_display_present(&disp, &cv);
-                if (have_disp && !disp.fake && argc == 1 && game_status < 0 && !m->input_test) {
+                if (have_disp && !disp.fake && argc == 1 && game_status < 0 && !m->input_test &&
+                    m->prefs[DP_PREF_TONES] != 2) {
                     if ((k == DP_KEY_L1 || k == DP_KEY_L2 || k == DP_KEY_R1 || k == DP_KEY_R2) &&
                         nav.tab != old_tab)
                         sound = dp_sound_play(sound, DP_TONE_TAB);

@@ -18,6 +18,14 @@ if [ ! -e "$cfg" ]; then
     cp /usr/share/deepos/retroarch.cfg "$cfg"
 fi
 hotkeys=/usr/share/deepos/retroarch-hotkeys.cfg
+overrides=/run/deepos-retroarch.cfg
+tmp=$(mktemp /run/deepos-retroarch.XXXXXX)
+if (cat "$hotkeys" && /usr/bin/launcher --print-retroarch-config) > "$tmp" &&
+   mv -f "$tmp" "$overrides"; then
+    hotkeys=$overrides
+else
+    rm -f "$tmp"
+fi
 [ -r "$rom" ] || exit 2
 
 # Keep the donor loader and libraries together. A native build can omit lib/.

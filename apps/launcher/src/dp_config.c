@@ -14,11 +14,16 @@
 
 #define DP_CFG_LINE 256
 
+static const char *const pref_keys[DP_PREF_COUNT] = {
+    "menu_sounds", "video_smooth", "fps_show", "integer_scale",
+};
+
 void dp_config_init(struct dp_config *cfg)
 {
     cfg->brightness = 0;
     cfg->volume = 0;
     cfg->profile[0] = '\0';
+    memset(cfg->prefs, 0, sizeof(cfg->prefs));
 }
 
 static int valid_profile(const char *value)
@@ -76,6 +81,19 @@ int dp_config_set(struct dp_config *cfg, const char *kv)
         snprintf(cfg->profile, sizeof(cfg->profile), "%s", val);
         return 1;
     }
+    for (int i = 0; i < DP_PREF_COUNT; i++) {
+        if (strcmp(key, pref_keys[i]) != 0)
+            continue;
+        if (strcmp(val, "inherit") == 0)
+            cfg->prefs[i] = 0;
+        else if (strcmp(val, "on") == 0)
+            cfg->prefs[i] = 1;
+        else if (strcmp(val, "off") == 0)
+            cfg->prefs[i] = 2;
+        else
+            return -2;
+        return 1;
+    }
     return 0;
 }
 
@@ -116,17 +134,26 @@ int dp_config_load(struct dp_config *cfg, const char *path)
 int dp_config_save(const struct dp_config *cfg, const char *path)
 {
     char tmp[512];
-    if (snprintf(tmp, sizeof(tmp), "%s.tmp", path) >= (int)sizeof(tmp)) {
+    if (snprintf(tmp, sizeof(tmp), "%s.tmp.XXXXXX", path) >= (int)sizeof(tmp)) {
         return -1;
     }
-    FILE *f = fopen(tmp, "w");
+    int fd = mkstemp(tmp);
+    if (fd < 0)
+        return -1;
+    FILE *f = fdopen(fd, "w");
     if (!f) {
+        close(fd);
+        unlink(tmp);
         return -1;
     }
     fprintf(f, "# DEEPoS settings\n");
     fprintf(f, "brightness = %d\n", cfg->brightness);
     fprintf(f, "volume = %d\n", cfg->volume);
     fprintf(f, "profile = %s\n", cfg->profile[0] ? cfg->profile : "balanced");
+    for (int i = 0; i < DP_PREF_COUNT; i++) {
+        if (cfg->prefs[i])
+            fprintf(f, "%s = %s\n", pref_keys[i], cfg->prefs[i] == 1 ? "on" : "off");
+    }
     if (fflush(f) != 0 || fsync(fileno(f)) != 0) {
         fclose(f);
         unlink(tmp);
@@ -141,6 +168,19 @@ int dp_config_save(const struct dp_config *cfg, const char *path)
         return -1;
     }
     return 0;
+}
+
+void dp_config_retroarch(const struct dp_config *cfg)
+{
+    static const char *const keys[DP_PREF_COUNT] = {
+        [DP_PREF_SMOOTH] = "video_smooth",
+        [DP_PREF_FPS] = "fps_show",
+        [DP_PREF_INTEGER] = "video_scale_integer",
+    };
+    for (int i = 0; i < DP_PREF_COUNT; i++) {
+        if (keys[i] && cfg->prefs[i])
+            printf("%s = \"%s\"\n", keys[i], cfg->prefs[i] == 1 ? "true" : "false");
+    }
 }
 
 static int write_number(const char *path, long value)

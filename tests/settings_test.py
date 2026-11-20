@@ -78,8 +78,8 @@ def main():
 
         p = run(roms, data, "A")
         values, _ = read_cfg(data)
-        check("region card leaves the file alone",
-              values.get("brightness") == "40" and p.returncode == 0)
+        check("menu tones can be disabled without changing brightness",
+              values.get("menu_sounds") == "off" and values.get("brightness") == "40" and p.returncode == 0)
 
         p = run(roms, data, "RIGHT,RIGHT,A", "--sysfs", str(tmp / "sys"))
         values, _ = read_cfg(data)
@@ -105,6 +105,13 @@ def main():
         (policy / "scaling_min_freq").write_text("408000\n")
         p = run(roms, data, "DOWN,RIGHT,RIGHT,A", "--sysfs", str(tmp / "sys"))
         check("eco applies the hardware CPU cap", (policy / "scaling_max_freq").read_text().strip() == "816000")
+
+        run(roms, data, "DOWN,DOWN,A,RIGHT,RIGHT,A,DOWN,A")
+        result = subprocess.run([str(LAUNCHER), "--data", str(data), "--print-retroarch-config"],
+                                check=True, text=True, capture_output=True)
+        check("RetroArch launch override passes the three selected preferences",
+              set(result.stdout.splitlines()) == {'video_smooth = "true"',
+                  'fps_show = "true"', 'video_scale_integer = "true"'}, result.stdout)
 
     if failures:
         print(f"\nFAIL  settings: {len(failures)} problem(s)")

@@ -13,4 +13,3 @@
 ttyS2::respawn:/sbin/getty -L ttyS2 1500000 vt100
 ::ctrlaltdel:/sbin/reboot
 ::shutdown:/bin/umount -a -r
-::respawn:/usr/local/bin/gadget-getty.sh

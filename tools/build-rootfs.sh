@@ -59,6 +59,7 @@ sh "$REPO/tools/build-userland.sh" --out "$STAGE/usr/bin"
 # --- 3. overlay -----------------------------------------------------------
 echo "applying rootfs overlay"
 cp -a "$REPO/board/r36s-v20/rootfs-overlay/." "$STAGE/"
+ln -sf /run/deepos-usb-resolv.conf "$STAGE/etc/resolv.conf"
 mkdir -p "$STAGE/proc" "$STAGE/sys" "$STAGE/dev" "$STAGE/run" "$STAGE/tmp" \
          "$STAGE/flash" "$STAGE/data" "$STAGE/storage" "$STAGE/usr/share/deepos" "$STAGE/sbin"
 chmod 1777 "$STAGE/tmp"

@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 #include "dp_input.h"
+#include "dp_config.h"
 
 #define DP_MAX_SYSTEMS 175
 #define DP_MAX_CONTINUE 12
@@ -80,6 +81,9 @@ struct dp_model {
 
     int cfg_brightness;
     int cfg_volume;
+    int prefs[DP_PREF_COUNT];
+    char usb_mode[12];
+    char usb_link[24];
     char cfg_profile[16];
     int nmods;
     int modules_online;

@@ -450,6 +450,11 @@ struct dp_setting_card {
     int editable;
 };
 
+static const char *preference_label(int value)
+{
+    return value == 1 ? "Включено" : value == 2 ? "Выключено" : "Из RetroArch";
+}
+
 static void dp_screen_settings(struct dp_canvas *cv, const struct dp_model *m, int selected)
 {
     char meta[32];
@@ -458,8 +463,9 @@ static void dp_screen_settings(struct dp_canvas *cv, const struct dp_model *m, i
 
     struct dp_setting_card cards[12];
     memset(cards, 0, sizeof(cards));
-    cards[0].title = "Регион и язык";
-    snprintf(cards[0].sub, sizeof(cards[0].sub), "Русский");
+    cards[0].title = "Звуки меню";
+    cards[0].editable = 1;
+    snprintf(cards[0].sub, sizeof(cards[0].sub), "%s", preference_label(m->prefs[DP_PREF_TONES] != 2 ? 1 : 2));
     cards[1].title = "Управление";
     snprintf(cards[1].sub, sizeof(cards[1].sub), "Проверка кнопок");
     cards[2].title = "Дисплей";
@@ -474,25 +480,32 @@ static void dp_screen_settings(struct dp_canvas *cv, const struct dp_model *m, i
         snprintf(cards[3].sub, sizeof(cards[3].sub), "динамик · %d%%", m->cfg_volume);
     else
         snprintf(cards[3].sub, sizeof(cards[3].sub), "не задан");
-    cards[4].title = "Сеть";
-    snprintf(cards[4].sub, sizeof(cards[4].sub), "USB-модем");
+    cards[4].title = "USB-сеть";
+    cards[4].editable = 1;
+    snprintf(cards[4].sub, sizeof(cards[4].sub), "%s", strcmp(m->usb_mode, "network") == 0 ?
+             (m->usb_link[0] ? m->usb_link : "Ждёт DHCP от ПК") : "Выключена");
     cards[5].title = "Питание";
     cards[5].editable = 1;
     snprintf(cards[5].sub, sizeof(cards[5].sub), "%s",
              m->cfg_profile[0] ? m->cfg_profile : "не выбран");
-    cards[6].title = "Обновления";
-    snprintf(cards[6].sub, sizeof(cards[6].sub), "A/B разделы");
+    cards[6].title = "Фильтр игр";
+    cards[6].editable = 1;
+    snprintf(cards[6].sub, sizeof(cards[6].sub), "%s", preference_label(m->prefs[DP_PREF_SMOOTH]));
     cards[7].title = "Модули";
     snprintf(cards[7].sub, sizeof(cards[7].sub), "%d в списке", m->nmods);
-    cards[8].title = "Сведения";
-    snprintf(cards[8].sub, sizeof(cards[8].sub), "R36S-V20");
-    cards[9].title = "Память";
-    snprintf(cards[9].sub, sizeof(cards[9].sub), "%s",
-             m->have_sysinfo ? "из /proc/meminfo" : "нет данных");
-    cards[10].title = "Файлы и сейвы";
-    snprintf(cards[10].sub, sizeof(cards[10].sub), "DATA · ROMS");
-    cards[11].title = "Быстро";
-    snprintf(cards[11].sub, sizeof(cards[11].sub), "К настройке яркости");
+    cards[8].title = "FPS в играх";
+    cards[8].editable = 1;
+    snprintf(cards[8].sub, sizeof(cards[8].sub), "%s", preference_label(m->prefs[DP_PREF_FPS]));
+    cards[9].title = "Сведения";
+    snprintf(cards[9].sub, sizeof(cards[9].sub), "CPU · GPU · ОЗУ");
+    cards[10].title = "USB-файлы";
+    cards[10].editable = 1;
+    snprintf(cards[10].sub, sizeof(cards[10].sub), "%s", strcmp(m->usb_mode, "files") == 0 ?
+             "ROMS открыт на ПК" : "ROMS как USB-диск");
+    cards[11].title = "Масштаб игр";
+    cards[11].editable = 1;
+    snprintf(cards[11].sub, sizeof(cards[11].sub), "%s", m->prefs[DP_PREF_INTEGER] == 1 ?
+             "Целые пиксели" : m->prefs[DP_PREF_INTEGER] == 2 ? "По экрану" : "Из RetroArch");
 
     const int cols = 3, gap = 10;
     const int cw = (DP_W - 2 * DP_PAD - (cols - 1) * gap) / cols;
@@ -517,11 +530,10 @@ static void dp_screen_settings(struct dp_canvas *cv, const struct dp_model *m, i
         }
     }
 
-    int can_edit = selected == 2 || selected == 3 || selected == 5;
-    int can_open = selected == 1 || selected >= 7;
+    int can_edit = cards[selected].editable;
     const struct dp_hint items[] = {
         { "↑↓←→", "Выбор" },
-        { "A", can_edit ? "Изменить" : can_open ? "Открыть" : "Просмотр" },
+        { "A", can_edit ? "Изменить" : "Открыть" },
         { "L1/R1", "Вкладки" },
     };
     dp_hints(cv, items, 3, "Главная");
@@ -547,7 +559,8 @@ static void dp_screen_modules(struct dp_canvas *cv, const struct dp_model *m, in
     if (!m->nmods) {
         dp_empty(cv, m->modules_online ? "Нет установленных модулей" : "Модули недоступны",
                  m->modules_online ? "Папка /data/modules" : "Проверьте DATA и службу modd");
-        dp_hints(cv, NULL, 0, "Главная");
+        const struct dp_hint hints[] = { { "X", "Установка" } };
+        dp_hints(cv, hints, 1, "Главная");
         return;
     }
 
@@ -572,9 +585,10 @@ static void dp_screen_modules(struct dp_canvas *cv, const struct dp_model *m, in
     const char *id = m->mods[selected].id;
     const struct dp_hint hints[] = {
         { "L1/R1", "Вкладки" },
+        { "X", "Установка" },
         { "A", strcmp(id, "saves") == 0 ? "Создать копию" : "Профиль CPU" },
     };
-    dp_hints(cv, hints, strcmp(id, "thermal") == 0 || strcmp(id, "saves") == 0 ? 2 : 1, "Назад");
+    dp_hints(cv, hints, strcmp(id, "thermal") == 0 || strcmp(id, "saves") == 0 ? 3 : 2, "Назад");
 }
 
 static void dp_screen_files(struct dp_canvas *cv, const struct dp_model *m, int selected)
@@ -591,7 +605,7 @@ static void dp_screen_files(struct dp_canvas *cv, const struct dp_model *m, int 
 
     const char *rows[][2] = {
         { "DATA", m->data_ok ? "Доступна запись настроек и сейвов" : "Запись недоступна" },
-        { "ROMS", usage },
+        { "ROMS", strcmp(m->usb_mode, "files") == 0 ? "Извлеките диск на ПК, затем нажмите A" : usage },
         { "Библиотека", library },
     };
 
@@ -606,7 +620,8 @@ static void dp_screen_files(struct dp_canvas *cv, const struct dp_model *m, int 
         dp_hline(cv, 20, y + rh - 1, DP_W - 40, DP_COL_LINE);
         y += rh;
     }
-    dp_hints(cv, NULL, 0, "Главная");
+    const struct dp_hint hints[] = { { "A", "USB-файлы" } };
+    dp_hints(cv, hints, selected == 1, "Главная");
 }
 
 static void dp_fmt_uptime(unsigned seconds, char *out, size_t size)

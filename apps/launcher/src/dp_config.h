@@ -6,10 +6,13 @@
 #define DP_CONFIG_VOLUME_MAX 100
 #define DP_CONFIG_PROFILE_LEN 16
 
+enum dp_preference { DP_PREF_TONES, DP_PREF_SMOOTH, DP_PREF_FPS, DP_PREF_INTEGER, DP_PREF_COUNT };
+
 struct dp_config {
     int brightness;                     /* 0..100, 0 = do not touch */
     int volume;                         /* 0..100, 0 = do not touch */
     char profile[DP_CONFIG_PROFILE_LEN];/* "", "eco", "balanced", "max" */
+    int prefs[DP_PREF_COUNT];           /* 0 inherit, 1 on, 2 off */
 };
 
 /* Fills defaults: brightness 0, volume 0, profile "" (leave device alone). */
@@ -39,5 +42,6 @@ int dp_config_write_profile(const char *path, const char *profile);
 
 /* "brightness=40 volume=55 profile=eco" - one line, stable key order. */
 int dp_config_format(const struct dp_config *cfg, char *out, int outsz);
+void dp_config_retroarch(const struct dp_config *cfg);
 
 #endif /* DP_CONFIG_H */

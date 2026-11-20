@@ -337,30 +337,27 @@ def test_boot_report() -> None:
 
 def test_usb_gadget() -> None:
     overlay = ROOT / "board/r36s-v20/rootfs-overlay"
-    gadget = overlay / "usr/local/bin/usb-gadget.sh"
+    gadget = overlay / "usr/local/bin/usb-mode.sh"
     check("gadget script exists", gadget.exists())
     if gadget.exists():
         text = gadget.read_text(encoding="utf-8")
         check("gadget mounts configfs", "mount -t configfs" in text)
-        check("gadget binds a UDC", "> UDC" in text or ">UDC" in text)
-        check("gadget has acm function", "functions/acm.gs0" in text)
-        check("gadget has ncm function", "functions/ncm.usb0" in text)
-        check("gadget assigns link-local ip", "169.254.170.2/16" in text)
-        check("gadget is best-effort at boot", "|| true" in text)
-    getty = overlay / "usr/local/bin/gadget-getty.sh"
-    check("gadget getty helper exists", getty.exists())
-    if getty.exists():
-        gtext = getty.read_text(encoding="utf-8")
-        check("getty waits for the node", "/dev/ttyGS0" in gtext)
-        check("getty execs login", "getty -L /dev/ttyGS0" in gtext)
+        check("gadget binds a UDC", '> "$gadget/UDC"' in text)
+        check("gadget requests the device role", "usb_role/*ff300000" in text)
+        check("gadget starts DHCP without holding the mode lock", "udhcpc -f" in text and "9>&-" in text)
+        check("ROMS is unmounted before exposing it", text.index('umount "$storage"') <
+              text.index('"$roms" > "$lun/file"'))
+        check("USB helpers parse as POSIX sh", all(
+            subprocess.run(["sh", "-n", str(script)], check=False).returncode == 0
+            for script in (gadget, gadget.with_name("usb-lease.sh"))))
     inittab = (overlay / "etc/inittab").read_text(encoding="utf-8")
-    check("inittab starts the gadget waiter before ttyGS0 exists",
-          "::respawn:/usr/local/bin/gadget-getty.sh" in inittab.splitlines())
+    check("USB does not start a login console", "gadget-getty.sh" not in inittab)
     rcs = (overlay / "etc/init.d/rcS").read_text(encoding="utf-8")
-    check("rcS calls the gadget script", "usb-gadget.sh" in rcs)
+    check("USB starts only on explicit selection", "usb-gadget.sh" not in rcs and "telnetd" not in rcs)
+    check("rcS records same-card ROMS for USB", "/run/deepos-roms-device" in rcs)
     conf = (ROOT / "board/r36s-v20/linux.config").read_text(encoding="utf-8")
     for sym in ("CONFIG_USB_CONFIGFS_ACM=y", "CONFIG_USB_CONFIGFS_NCM=y",
-                "CONFIG_USB_F_ACM=y", "CONFIG_USB_F_NCM=y"):
+                "CONFIG_USB_F_ACM=y", "CONFIG_USB_F_NCM=y", "CONFIG_USB_CONFIGFS_MASS_STORAGE=y"):
         check(f"kernel has {sym}", sym in conf)
 
 
