@@ -126,3 +126,6 @@ function Start-Process {
         Remove-Item -LiteralPath $tmp -Recurse -Force
     }
 }
+
+# The last subprocess deliberately returns 23. Report the test's own result.
+exit 0
