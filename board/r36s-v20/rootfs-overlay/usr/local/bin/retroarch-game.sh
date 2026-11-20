@@ -6,8 +6,16 @@ runtime=${DEEPOS_EMULATORS:-/data/emus}
 extras=/usr/share/deepos/extra-emulators
 config=${DEEPOS_RETROARCH_CONFIG:-/storage/.config/retroarch}
 [ "$#" -eq 2 ] || exit 2
+# The donor's legacy Flycast 2021 has an unresolved rendering symbol.
+if [ "$1" = flycast2021 ] && { [ -r "$runtime/cores/flycast_libretro.so" ] ||
+                             [ -r "$extras/cores/flycast_libretro.so" ]; }; then
+    set -- flycast "$2"
+fi
 core=$runtime/cores/$1_libretro.so
 rom=$2
+if [ "$1" = emuscv ] && [ -r "$extras/cores/emuscv_libretro.so" ]; then
+    core=$extras/cores/emuscv_libretro.so
+fi
 [ -r "$core" ] || core=$extras/cores/$1_libretro.so
 [ -x "$runtime/retroarch" ] && [ -r "$core" ] || {
     echo "RetroArch or the core is missing: $core" >&2

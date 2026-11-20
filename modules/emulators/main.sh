@@ -6,6 +6,7 @@ inspect() {
     [ ! -x "$runtime/retroarch" ] || installed='установлен'
     count=0
     for core in "$runtime"/cores/*_libretro.so; do
+        [ "${core##*/}" != flycast2021_libretro.so ] || continue
         [ ! -f "$core" ] || count=$((count + 1))
     done
     for core in /usr/share/deepos/extra-emulators/cores/*_libretro.so; do

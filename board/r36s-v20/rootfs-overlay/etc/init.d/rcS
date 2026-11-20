@@ -167,6 +167,7 @@ if [ "$data_mounted" = yes ]; then
     refresh_module_entry thermal 5ce8d705136069f03cebbb17739e50022d23e8a1ff2a6bcf6171a415f9318cfd
     refresh_module_entry saves 59800fb67dd10a1f304d8b77bad021e4ce23e1e3406a5b6deba324491a76fbe0
     refresh_module_entry emulators 2f2aaf93b8309a1d3f369db494ed6792ce5ec6896cf5d8d490e6c0e9e136eb4c
+    refresh_module_entry emulators 6606cc162599db3232d9101f60e18f5ec21d698dc2cd64f0b69361437d7ad21e
     old_registry=$(sha256sum /data/emulators.toml 2>/dev/null)
     if [ "${old_registry%% *}" = c6b5672c7ea2979579882ae2b02883860d8bfcc04e8f9e10607949f233e46ff5 ]; then
         cp /usr/share/deepos/emulators.toml /data/.emulators.new &&
