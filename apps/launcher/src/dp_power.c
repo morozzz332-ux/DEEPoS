@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #define GPU_PATH "/class/devfreq/ff400000.gpu"
@@ -69,6 +70,42 @@ static int write_number(const char *path, long value)
     char buf[32];
     snprintf(buf, sizeof(buf), "%ld", value);
     return write_text(path, buf);
+}
+
+/* The vendor cpufreq driver applies a limit on a workqueue: an immediate
+ * read-back still shows the old value. Poll briefly before declaring failure,
+ * otherwise a successful write is reported as an error on the device. */
+static int wait_number(const char *path, long want)
+{
+    for (int i = 0; i < 25; i++) {
+        if (read_number(path) == want)
+            return 1;
+        struct timespec ts = {0, 10 * 1000 * 1000};
+        nanosleep(&ts, NULL);
+    }
+    return 0;
+}
+
+static int write_number_sync(const char *path, long value)
+{
+    return write_number(path, value) && wait_number(path, value);
+}
+
+static int wait_text(const char *path, const char *want)
+{
+    char buf[64];
+    for (int i = 0; i < 25; i++) {
+        if (read_text(path, buf, sizeof(buf)) && !strcmp(buf, want))
+            return 1;
+        struct timespec ts = {0, 10 * 1000 * 1000};
+        nanosleep(&ts, NULL);
+    }
+    return 0;
+}
+
+static int write_text_sync(const char *path, const char *value)
+{
+    return write_text(path, value) && wait_text(path, value);
 }
 
 static int join(char *out, size_t n, const char *dir, const char *name)
@@ -206,13 +243,13 @@ enum dp_power_result dp_power_apply(const char *sysfs_prefix, const char *profil
     }
     if (chosen < minimum) {
         /* The floor may not sit above the ceiling: lower it first. */
-        if (!write_number(minp, chosen) || read_number(minp) != chosen) {
+        if (!write_number_sync(minp, chosen)) {
             note(reason, reason_n, "min %ld выше цели %ld", minimum, chosen);
             return DP_POWER_ERROR;
         }
         lowered = 1;
     }
-    if (!write_number(maxp, chosen) || read_number(maxp) != chosen) {
+    if (!write_number_sync(maxp, chosen)) {
         note(reason, reason_n, "не удалось записать max %ld", chosen);
         return DP_POWER_ERROR;
     }
@@ -257,28 +294,28 @@ enum dp_power_result dp_power_restore(const char *sysfs_prefix,
     cur_min = read_number(minp);
     cur_max = read_number(maxp);
     if (want_max > 0 && want_max < cur_min && want_min > 0) {
-        if (!write_number(minp, want_min) || read_number(minp) != want_min) {
+        if (!write_number_sync(minp, want_min)) {
             note(reason, reason_n, "не удалось вернуть min %ld", want_min);
             return DP_POWER_ERROR;
         }
     }
     if (want_max > 0 && cur_max != want_max) {
-        if (!write_number(maxp, want_max) || read_number(maxp) != want_max) {
+        if (!write_number_sync(maxp, want_max)) {
             note(reason, reason_n, "не удалось вернуть max %ld", want_max);
             return DP_POWER_ERROR;
         }
     }
     if (want_min > 0 && read_number(minp) != want_min) {
-        if (!write_number(minp, want_min) || read_number(minp) != want_min) {
+        if (!write_number_sync(minp, want_min)) {
             note(reason, reason_n, "не удалось вернуть min %ld", want_min);
             return DP_POWER_ERROR;
         }
     }
     if (st->cpu_gov[0])
-        write_text(govp, st->cpu_gov);
+        write_text_sync(govp, st->cpu_gov);
     if (st->gpu_gov[0] && join(path, sizeof(path), root, GPU_PATH "/governor"))
-        write_text(path, st->gpu_gov);
-    if (want_max > 0 && read_number(maxp) != want_max) {
+        write_text_sync(path, st->gpu_gov);
+    if (want_max > 0 && !wait_number(maxp, want_max)) {
         note(reason, reason_n, "max не вернулся к %ld", want_max);
         return DP_POWER_ERROR;
     }
