@@ -30,8 +30,16 @@ fi
 hotkeys=/usr/share/deepos/retroarch-hotkeys.cfg
 overrides=/run/deepos-retroarch.cfg
 tmp=$(mktemp /run/deepos-retroarch.XXXXXX)
+# The packaged config is the baseline for every run; the copy under
+# /storage/.config is what the user (or RetroArch itself) may have edited, so it
+# goes on top of it through --appendconfig. Until 0.49 the packaged file was only
+# copied on first boot, which silently froze the defaults of that very first
+# image: audio latency, sinc resampling and the widget scale never reached the
+# board.
 print_overrides() {
-    cat "$hotkeys" && /usr/bin/launcher --print-retroarch-config || return 1
+    cat "$cfg" || return 1
+    cat "$hotkeys" || return 1
+    /usr/bin/launcher --print-retroarch-config || return 1
     case "$rom" in /games/*)
         for bios in /games/bios /games/roms/bios; do
             [ -d "$bios" ] || continue
@@ -87,11 +95,12 @@ if [ -x "$runtime/lib/ld-linux-aarch64.so.1" ]; then
     export ALSOFT_DRIVERS=alsa
     export ALSA_CONFIG_DIR="$runtime/alsa"
     $nice_cmd "$runtime/lib/ld-linux-aarch64.so.1" "$runtime/retroarch" \
-        --config "$cfg" --appendconfig "$hotkeys" -L "$core" "$rom"
+        --config /usr/share/deepos/retroarch.cfg --appendconfig "$overrides" \
+        -L "$core" "$rom"
 else
     export GBM_BACKENDS_PATH="${GBM_BACKENDS_PATH:-/usr/lib/gbm}"
-    $nice_cmd "$runtime/retroarch" --config "$cfg" --appendconfig "$hotkeys" \
-        -L "$core" "$rom"
+    $nice_cmd "$runtime/retroarch" --config /usr/share/deepos/retroarch.cfg \
+        --appendconfig "$overrides" -L "$core" "$rom"
 fi
 
 rc=$?

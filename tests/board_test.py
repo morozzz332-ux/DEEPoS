@@ -459,11 +459,14 @@ def test_gpu_and_ports_stack():
     check("RetroArch uses the SDL2 input driver (no udevd, no tty)",
           'input_driver = "sdl2"' in retro)
     check("RetroArch keeps the udev joypad driver", 'input_joypad_driver = "udev"' in retro)
-    # 6. Launch-time tuning taken from dArkOSRE: a threaded ALSA driver, sinc
-    #    resampling, threaded video and a readable widget scale.
-    check("RetroArch writes audio from its own thread", 'audio_driver = "alsathread"' in retro)
+    # 6. Launch-time tuning taken from dArkOSRE, with the parts that this board
+    #    rejects measured out: threaded video kills kmsdrm here, and the
+    #    synchronous ALSA driver is the one that produced sound.
+    check("RetroArch keeps the synchronous ALSA driver", 'audio_driver = "alsa"' in retro)
+    check("RetroArch opens the PCM through plughw", 'audio_device = "plughw:0,0"' in retro)
     check("RetroArch resamples with sinc", 'audio_resampler = "sinc"' in retro)
-    check("RetroArch enables threaded video", 'video_threaded = "true"' in retro)
+    check("RetroArch does not use the video driver kmsdrm rejects",
+          'video_threaded = "true"' not in retro)
     check("RetroArch scales its widgets for the 640x480 panel",
           'menu_widget_scale_factor = "2.5"' in retro)
     boost = overlay / "usr/local/bin/perf-boost.sh"
@@ -479,6 +482,9 @@ def test_gpu_and_ports_stack():
     check("rcS resets the GPU governor at boot",
           "perf-boost.sh off" in (overlay / "etc/init.d/rcS").read_text(encoding="utf-8"))
     game = (overlay / "usr/local/bin/retroarch-game.sh").read_text(encoding="utf-8")
+    check("retroarch-game.sh layers the packaged config under the user copy",
+          "--config /usr/share/deepos/retroarch.cfg" in game and
+          'cat "$cfg"' in game)
     check("retroarch-game.sh boosts the GPU for the core", '"$boost" on' in game)
     check("retroarch-game.sh restores the GPU on exit", '"$boost" off' in game)
     check("retroarch-game.sh restores the GPU when the wrapper is killed",

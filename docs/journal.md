@@ -1160,3 +1160,32 @@ video, виджетов 2.5, наличия и POSIX-ности `perf-boost.sh`,
 `video_threaded = "true"`, `menu_widget_scale_factor = "2.5"` доехали,
 `/usr/local/bin/perf-boost.sh` исполняемый, во время порта GPU на 650 МГц.
 Версия: `VERSION` → `0.48-v20-test`.
+
+## 2026-11-20 · 0.49: базовый конфиг RetroArch снова работает, threaded video убран
+
+Проверка на устройстве вскрыла две ошибки 0.47.
+
+1. **Настройки из `/usr/share/deepos/retroarch.cfg` не доезжали вообще.**
+   `retroarch-game.sh` копировал базовый файл в `/storage/.config/retroarch/`
+   только при первом запуске (`[ ! -e "$cfg" ]`), а там уже лежал вариант,
+   созданный на первой загрузке 0.41. Дальше RetroArch запускался с
+   `--config` этой копии, поэтому `audio_latency`, `sinc`, масштаб виджетов и
+   даже `input_driver` из новых версий не применялись никогда. Теперь база идёт
+   как `--config`, а пользовательская копия плюс хоткеи — сверху через
+   `--appendconfig`; правки пользователя продолжают работать, а дефолты
+   обновляются вместе с образом.
+2. **`video_threaded = "true"` на этой плате не работает.** Вербозный лог:
+   `[ERROR] [KMS] Error when switching mode` → `[ERROR] [Video] Cannot open
+   threaded video driver. Exiting...` → `Fatal error received in:
+   "video_driver_init_internal()"`. Ключ убран, остаются `video_vsync` и
+   `video_max_swapchain_images`.
+
+Звук: на чистом прогоне SNES-ядра (snes9x) звук слышен и кнопки работают —
+значит тракт RetroArch → ALSA → класс-D исправен. Ядро fceumm с нашим NES-ROM
+молчит; проверять дальше, это отдельная ветка (возможно, дамп ROM).
+`audio_driver` оставлен `"alsa"` (измеренно рабочий), добавлен
+`audio_device = "plughw:0,0"` — именно через plughw RetroArch открывает PCM
+(FLOAT_LE, 48 кГц) и звучит; `alsathread` перенесён в отложенные эксперименты.
+
+Тесты: 227 проверок `ok`, `PASS board`; добавлены проверки слоистого конфига,
+`plughw`, отсутствия `video_threaded`. Версия: `0.49-v20-test`.
