@@ -999,9 +999,50 @@ static void launch_record_write(const char *data_dir, const char *sys, const cha
     }
 }
 
-static int game_emulator(const char *emulators_path, const char *system, struct dp_launch_cfg *cfg)
+/* Only one game session may own the power snapshot and the launch record.
+ * The lock also survives a crash: a pid that no longer exists is stale. */
+static int session_lock(const char *data_dir)
 {
-    if (parse_emulators(emulators_path, system, cfg) == 0)
+    char path[600];
+    snprintf(path, sizeof(path), "%s/launch.lock", data_dir);
+    for (int attempt = 0; attempt < 2; attempt++) {
+        int fd = open(path, O_CREAT | O_EXCL | O_WRONLY, 0644);
+        if (fd >= 0) {
+            char buf[32];
+            int len = snprintf(buf, sizeof(buf), "%ld\n", (long)getpid());
+            if (write(fd, buf, (size_t)len) < 0)
+                fprintf(stderr, "launcher: cannot record the session pid\n");
+            close(fd);
+            return 1;
+        }
+        /* A read-only or missing DATA directory must not swallow the games. */
+        if (errno != EEXIST) {
+            fprintf(stderr, "launcher: cannot create %s, starting without the session lock\n", path);
+            return 1;
+        }
+        long pid = 0;
+        FILE *f = fopen(path, "r");
+        if (f) {
+            if (fscanf(f, "%ld", &pid) != 1)
+                pid = 0;
+            fclose(f);
+        }
+        if (pid > 0 && pid != (long)getpid() && kill((pid_t)pid, 0) == 0)
+            return 0;
+        unlink(path);
+    }
+    return 0;
+}
+
+static void session_unlock(const char *data_dir)
+{
+    char path[600];
+    snprintf(path, sizeof(path), "%s/launch.lock", data_dir);
+    unlink(path);
+}
+
+static int game_emulator(const char *emulators_path, const char *system, struct dp_launch_cfg *cfg)
+{    if (parse_emulators(emulators_path, system, cfg) == 0)
         return 0;
     if (strcmp(emulators_path, DEFAULT_EMULATORS) != 0)
         return -1;
@@ -1055,6 +1096,10 @@ static int launch_game(const struct dp_model *m, const char *roms, const char *m
         return 4;
     }
     *source = card;
+    if (!session_lock(data)) {
+        fprintf(stderr, "launcher: another game session is still running\n");
+        return 7;
+    }
     expand_rom(cfg.cmd, slot, cmd, sizeof(cmd));
     /* The game session owns the power profile only while it runs: capture the
      * real limits first and put them back after the child (and its group) are
@@ -1080,6 +1125,7 @@ static int launch_game(const struct dp_model *m, const char *roms, const char *m
         dp_power_restore(g_power_sysfs, &power, reason, sizeof(reason));
         unlink(snap);
     }
+    session_unlock(data);
     printf("launch\t%s\t%s\tslot=%d\t%d\n", sys, rom, slot, child);
     if (child == 126 || child == 127)
         return 5;

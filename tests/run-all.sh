@@ -17,6 +17,7 @@ python3 tests/modules_test.py
 python3 tests/boot_test.py
 python3 tests/updatr_test.py
 python3 tests/launch_test.py
+python3 tests/session_lock_test.py
 python3 tests/config_test.py
 python3 tests/settings_test.py
 python3 tests/bios_test.py
