@@ -20,20 +20,35 @@
 
 Полный список — `board/r36s-v20/data/bios-required.tsv`; на устройстве он
 лежит как `/usr/share/deepos/bios-required.tsv`, а отчёт о наличии пишется в
-`/flash/report/bios.txt` при каждой загрузке:
+`/flash/report/bios.txt` при каждой загрузке. У каждой строки есть четвёртая
+колонка: `required`, `hle` или `optional`.
 
 ```
-bios_ready=2/27
+bios_ready=2/12
+bios_missing=9
+bios_optional=1
 bios_dir=/storage/bios
+3do=missing(panafz1.bin)
 amiga=missing(kick34005.A500)
-dreamcast=missing(dc_boot.bin)
-gba=missing(gba_bios.bin)
-neogeo=missing(neogeo.zip)
 ...
-psx=/storage/bios/scph5501.bin
+atari_st=/storage/bios/tos.img
 ```
+
+`bios_missing` считает только те системы, без дампа которых игра не пойдёт;
+`bios_optional` — те, где ядро умеет обходиться без файла.
 
 Проверить вручную: `/usr/local/bin/bios-check.sh`.
+
+### Какие системы запускаются без дампа
+
+| Система | Ядро | Что будет без BIOS |
+|---|---|---|
+| PlayStation | `pcsx_rearmed` | игра стартует через HLE; не работают карты памяти и часть CD-функций |
+| Game Boy Advance | `mgba` | всё работает, дамп нужен только для точных замеров и «спящего» режима |
+| Dreamcast | `flycast` | частичный HLE-загрузчик; часть игр требует настоящий `dc_boot.bin` |
+
+Остальные девять систем из таблицы без своего дампа не запускаются: Saturn,
+Sega CD, PC Engine CD, Nintendo DS, NeoGeo, 3DO, Amiga, Sharp X68000, C64.
 
 Самые частые случаи:
 

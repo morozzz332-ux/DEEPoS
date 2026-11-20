@@ -462,6 +462,15 @@ def test_gpu_and_ports_stack():
     # BIOS dumps cannot be shipped, so the report has to say what is missing.
     table = ROOT / "board/r36s-v20/data/bios-required.tsv"
     check("bios-required.tsv exists", table.is_file() and table.stat().st_size > 0)
+    if table.is_file():
+        rows = [line.split("\t") for line in table.read_text(encoding="utf-8").splitlines()
+                if line and not line.startswith("#")]
+        check("bios table has four columns", all(len(row) == 4 for row in rows))
+        check("bios table marks HLE systems",
+              any(row[3].strip() == "hle" for row in rows) and
+              any(row[3].strip() == "required" for row in rows))
+        check("bios table marks the PS1 fallback",
+              any(row[0] == "psx" and row[3].strip() == "hle" for row in rows))
     bios = overlay / "usr/local/bin/bios-check.sh"
     check("bios-check.sh exists", bios.is_file())
     if bios.is_file():

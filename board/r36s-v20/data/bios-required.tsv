@@ -1,28 +1,34 @@
 # BIOS files RetroArch cores look for, relative to the BIOS directory
 # (/storage/bios on the ROMS partition, /games/bios on a second card).
 #
-# Columns: system<TAB>path<TAB>note
+# Columns: system<TAB>path<TAB>note<TAB>mode
+#   required  without the dump the core stops with a black screen
+#   hle       the core has a high-level emulation fallback, the game starts but
+#             some features (memory cards, CD audio seek, firmware menu) differ
+#   optional  region variant or extra file, one of the listed files is enough
+#
 # These are firmware dumps that cannot be shipped with DEEPoS: put your own
 # copies in place (see docs/BIOS.md). Open replacements that ARE shipped:
 # EmuTOS for Atari ST (tos.img) and C-BIOS for MSX (Machines/MSX*).
-psx	scph5501.bin	PS1 BIOS, NTSC-U; scph5502.bin (EU) and scph5500.bin (JP) also work
-psx	scph5502.bin	PS1 BIOS, optional region variant
-dreamcast	dc_boot.bin	Dreamcast BIOS; dc_flash.bin is optional
-dreamcast	dc_flash.bin	Dreamcast flash image, optional
-saturn	sega_101.bin	Saturn BIOS, JP
-saturn	mpr-17933.bin	Saturn BIOS, US/EU
-segacd	bios_CD_U.bin	Sega CD BIOS, US
-segacd	bios_CD_E.bin	Sega CD BIOS, EU
-segacd	bios_CD_J.bin	Sega CD BIOS, JP
-pcenginecd	syscard3.pce	PC Engine CD Super CD-ROM2 System Card 3.0
-pcenginecd	syscard2.pce	PC Engine CD System Card 2.0, optional
-nds	bios7.bin	NDS ARM7 BIOS
-nds	bios9.bin	NDS ARM9 BIOS
-nds	firmware.bin	NDS firmware image
-gba	gba_bios.bin	GBA BIOS, optional (mgba runs without it)
-neogeo	neogeo.zip	NeoGeo BIOS archive required by FBNeo for neogeo sets
-3do	panafz1.bin	3DO BIOS, Panasonic FZ-1
-amiga	kick34005.A500	Amiga Kickstart 1.3 for UAE4ARM
-x68000	iplrom.dat	Sharp X68000 IPL ROM
-x68000	cgrom.dat	Sharp X68000 character generator ROM
-c64	kernal-901227-03.bin	Commodore 64 KERNAL ROM
+psx	scph5501.bin	PS1 BIOS, NTSC-U; one region dump is enough	hle
+psx	scph5502.bin	PS1 BIOS, PAL	hle
+psx	scph5500.bin	PS1 BIOS, NTSC-J	hle
+dreamcast	dc_boot.bin	Dreamcast BIOS; Flycast boots with a partial HLE	hle
+dreamcast	dc_flash.bin	Dreamcast flash image, optional	optional
+saturn	sega_101.bin	Saturn BIOS, JP	required
+saturn	mpr-17933.bin	Saturn BIOS, US/EU	required
+segacd	bios_CD_U.bin	Sega CD BIOS, US	required
+segacd	bios_CD_E.bin	Sega CD BIOS, EU	required
+segacd	bios_CD_J.bin	Sega CD BIOS, JP	required
+pcenginecd	syscard3.pce	PC Engine CD Super CD-ROM2 System Card 3.0	required
+pcenginecd	syscard2.pce	PC Engine CD System Card 2.0, optional	optional
+nds	bios7.bin	NDS ARM7 BIOS	required
+nds	bios9.bin	NDS ARM9 BIOS	required
+nds	firmware.bin	NDS firmware image	required
+gba	gba_bios.bin	GBA BIOS; mGBA boots games without it	hle
+neogeo	neogeo.zip	NeoGeo BIOS archive required by FBNeo for neogeo sets	required
+3do	panafz1.bin	3DO BIOS, Panasonic FZ-1	required
+amiga	kick34005.A500	Amiga Kickstart 1.3 for UAE4ARM	required
+x68000	iplrom.dat	Sharp X68000 IPL ROM	required
+x68000	cgrom.dat	Sharp X68000 character generator ROM	required
+c64	kernal-901227-03.bin	Commodore 64 KERNAL ROM	required
