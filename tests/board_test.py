@@ -522,6 +522,10 @@ def test_volume_rocker():
           "has_volume_keys" in src_input and "key_fd" in src_input)
     check("input code prefers the adc-keys node", "adc-keys" in src_input)
 
+    run_port = (BOARD / "rootfs-overlay" / "usr" / "share" / "deepos" / "run-port.sh").read_text(encoding="utf-8")
+    check("run-port.sh enlarges the SDL audio buffer",
+          "SDL_AUDIO_DEVICE_SAMPLE_FRAMES" in run_port and "8192" in run_port)
+
     src_cfg = (ROOT / "apps" / "launcher" / "src" / "dp_config.c").read_text(encoding="utf-8")
     check("mixer level keeps headroom for the class-D stage", "* use * 84 / 10000" in src_cfg)
 

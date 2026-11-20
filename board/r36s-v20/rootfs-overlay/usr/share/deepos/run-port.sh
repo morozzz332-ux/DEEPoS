@@ -45,6 +45,10 @@ export __EGL_VENDOR_LIBRARY_FILENAMES=$runtime/egl/50_mesa.json
 export ALSA_CONFIG_DIR=$runtime/alsa
 export SDL_VIDEODRIVER="${SDL_VIDEODRIVER:-kmsdrm}"
 export SDL_AUDIODRIVER="${SDL_AUDIODRIVER:-alsa}"
+# A recompiled port can monopolise two cores; with the stock SDL buffer the ALSA
+# thread misses its deadline and the speaker crackles. 8192 frames (~170 ms at
+# 48 kHz) removed most of it on the device and costs nothing else.
+export SDL_AUDIO_DEVICE_SAMPLE_FRAMES="${SDL_AUDIO_DEVICE_SAMPLE_FRAMES:-8192}"
 export PYSDL2_DLL_PATH=$runtime/lib
 export SSL_CERT_FILE=$runtime/ca-bundle.crt
 export controlfolder=$control
