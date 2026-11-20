@@ -2,6 +2,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "dp_config.h"
+#include "dp_power.h"
 
 #include <fcntl.h>
 #include <glob.h>
@@ -320,31 +321,10 @@ int dp_config_apply_volume(const char *prefix, int percent)
 
 int dp_config_apply_cpu(const char *prefix, const char *profile)
 {
-    long limit = strcmp(profile, "eco") == 0 ? 816000 :
-                 strcmp(profile, "balanced") == 0 ? 1008000 :
-                 strcmp(profile, "max") == 0 ? 1416000 : 0;
-    if (!limit)
-        return 0;
-    char policy[448], path[512];
-    if (snprintf(policy, sizeof(policy), "%s/devices/system/cpu/cpufreq/policy0",
-                 prefix ? prefix : "/sys") >= (int)sizeof(policy))
-        return 0;
-    snprintf(path, sizeof(path), "%s/scaling_available_frequencies", policy);
-    FILE *f = fopen(path, "r");
-    if (!f)
-        return 0;
-    long chosen = 0, freq;
-    while (fscanf(f, "%ld", &freq) == 1) {
-        if (freq <= limit && freq > chosen)
-            chosen = freq;
-    }
-    fclose(f);
-    snprintf(path, sizeof(path), "%s/scaling_min_freq", policy);
-    long minimum = read_number(path);
-    if (minimum <= 0 || chosen < minimum)
-        return 0;
-    snprintf(path, sizeof(path), "%s/scaling_max_freq", policy);
-    return write_number(path, chosen) && read_number(path) == chosen;
+    char reason[96];
+    enum dp_power_result result = dp_power_apply(prefix, profile, NULL, NULL,
+                                                 reason, sizeof(reason));
+    return result == DP_POWER_APPLIED || result == DP_POWER_UNCHANGED;
 }
 
 int dp_config_apply(const struct dp_config *cfg, const char *sysfs_prefix,
@@ -357,11 +337,10 @@ int dp_config_apply(const struct dp_config *cfg, const char *sysfs_prefix,
     }
     if (cfg->volume > 0 && dp_config_apply_volume(sysfs_prefix, cfg->volume))
         applied++;
-    if (cfg->profile[0]) {
-        if (dp_config_write_profile(profile_path, cfg->profile))
-            applied++;
-        dp_config_apply_cpu(sysfs_prefix, cfg->profile);
-    }
+    /* The profile marker is written even when the CPU apply is refused: it
+     * records the user's choice, while the power result reports the device. */
+    if (cfg->profile[0])
+        dp_config_write_profile(profile_path, cfg->profile);
     return applied;
 }
 

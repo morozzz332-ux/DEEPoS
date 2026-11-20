@@ -290,6 +290,50 @@ def main() -> int:
             except subprocess.TimeoutExpired:
                 proc.kill()
 
+        # 9. the game session owns the real CPU limit only while it runs
+        psys = tmp / "psys"
+        policy = psys / "devices" / "system" / "cpu" / "cpufreq" / "policy0"
+        policy.mkdir(parents=True)
+        (policy / "scaling_available_frequencies").write_text(
+            "408000 816000 1008000 1296000 1416000 1512000\n", encoding="utf-8")
+        (policy / "scaling_min_freq").write_text("408000\n", encoding="utf-8")
+        (policy / "scaling_max_freq").write_text("1008000\n", encoding="utf-8")
+        (policy / "scaling_cur_freq").write_text("1008000\n", encoding="utf-8")
+        (policy / "scaling_governor").write_text("performance\n", encoding="utf-8")
+        power_stub = tmp / "power-stub.sh"
+        power_stub.write_text(
+            "#!/bin/sh\n"
+            f"echo 1416000 > {policy / 'scaling_max_freq'}\n"
+            f"echo performance > {policy / 'scaling_governor'}\n"
+            "exit 0\n"
+        )
+        power_stub.chmod(0o755)
+        power_emu = tmp / "emulators-power.toml"
+        power_emu.write_text(f'md = "sh {power_stub} %ROM%"\n')
+        pdata = tmp / "power-data"
+        pdata.mkdir()
+        res = run_launcher(["--roms", str(roms), "--data", str(pdata),
+                            "--sysfs", str(psys), "--emulators", str(power_emu),
+                            "--run-game", "md:g0.md"])
+        check(res.returncode == 0, f"power session exit {res.returncode}: {res.stderr}")
+        restored = (policy / "scaling_max_freq").read_text().strip()
+        check(restored == "1008000",
+              f"the real CPU limit must return after the game, got {restored}")
+        check(not (pdata / "power-before.tsv").exists(),
+              "power snapshot must be removed after a clean session")
+
+        # 10. a snapshot left behind by a crashed session is restored on start
+        (policy / "scaling_max_freq").write_text("1416000\n", encoding="utf-8")
+        (pdata / "power-before.tsv").write_text(
+            "408000\t1008000\tperformance\tsimple_ondemand\t-\n", encoding="utf-8")
+        res = run_launcher(["--roms", str(roms), "--data", str(pdata),
+                            "--sysfs", str(psys), "--screen", "settings", "--print-state"])
+        check(res.returncode == 0, f"stale snapshot start exit {res.returncode}: {res.stderr}")
+        stale = (policy / "scaling_max_freq").read_text().strip()
+        check(stale == "1008000", f"stale snapshot must be restored, got {stale}")
+        check(not (pdata / "power-before.tsv").exists(),
+              "stale snapshot must be consumed once")
+
     # 8. The scanner must not turn the launcher's own folders into consoles:
     #    a stray /storage/report/ra-probe.sh used to show up as "REPORT".
     with tempfile.TemporaryDirectory() as tmp:

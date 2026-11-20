@@ -21,6 +21,7 @@
 #include "dp_cores.h"
 #include "dp_modc.h"
 #include "dp_model.h"
+#include "dp_power.h"
 #include "dp_sound.h"
 #include "dp_theme.h"
 #include "dp_ui.h"
@@ -49,6 +50,8 @@ static void usage(void)
          "  --print-config    print the effective settings and exit\n"
          "  --print-retroarch-config  emit selected RetroArch overrides\n"
          "  --apply           write settings to sysfs/profile file\n"
+         "  --set-power P     set and apply a power profile (eco|balanced|max)\n"
+         "  --print-power     print the effective power profile and sysfs values\n"
          "  --sysfs PREFIX    sysfs root for --apply (tests, default empty)\n"
          "  --selftest        print the device environment and exit\n"
         "  --list-roms       list detected ROM systems with game counts\n");
@@ -235,15 +238,24 @@ static int settings_edit_card(struct dp_nav *nav, struct dp_model *m, int card, 
         return 1;
     }
     int applied = 1;
+    int power_card = 0;
     if (card == 2)
         applied = dp_config_apply_brightness(sysfs_prefix, cfg.brightness);
     else if (card == 3)
         applied = dp_config_apply_volume(sysfs_prefix, cfg.volume);
     else if (card == 5) {
+        struct dp_power_state state;
+        char reason[96];
+        enum dp_power_result result;
+        power_card = 1;
         dp_config_write_profile(profile_path, cfg.profile);
-        applied = dp_config_apply_cpu(sysfs_prefix, cfg.profile);
+        result = dp_power_apply(sysfs_prefix, cfg.profile, NULL, &state,
+                                reason, sizeof(reason));
+        applied = result == DP_POWER_APPLIED || result == DP_POWER_UNCHANGED;
+        if (!applied)
+            snprintf(nav->notice, sizeof(nav->notice), "Сохранено, питание: %s", reason);
     }
-    if (!applied)
+    if (!applied && !power_card)
         snprintf(nav->notice, sizeof(nav->notice), "Сохранено. Устройство не применило значение");
     /* The volume rocker has no card of its own: show the level right away. */
     if (applied && card == 3)
@@ -747,6 +759,7 @@ static void expand_rom(const char *tmpl, int save_slot, char *out,
  * change, which is what the keys are for. */
 static const char *g_vol_config;
 static const char *g_vol_sysfs;
+static const char *g_power_sysfs;
 static unsigned long long now_us(clockid_t clock_id);
 
 static void volume_step(int delta) {
@@ -983,7 +996,29 @@ static int launch_game(const struct dp_model *m, const char *roms, const char *m
     }
     *source = card;
     expand_rom(cfg.cmd, slot, cmd, sizeof(cmd));
+    /* The game session owns the power profile only while it runs: capture the
+     * real limits first and put them back after the child (and its group) are
+     * gone. The file copy survives a launcher crash on the next start. */
+    struct dp_power_state power;
+    char snap[600];
+    int power_saved = 0;
+    {
+        char probe[640];
+        const char *root = g_power_sysfs && g_power_sysfs[0] ? g_power_sysfs : "/sys";
+        snprintf(probe, sizeof(probe),
+                 "%s/devices/system/cpu/cpufreq/policy0/scaling_max_freq", root);
+        if (dp_power_read(g_power_sysfs, &power) && access(probe, W_OK) == 0) {
+            power_saved = 1;
+            snprintf(snap, sizeof(snap), "%s/power-before.tsv", data);
+            dp_power_snapshot_save(snap, &power);
+        }
+    }
     child = run_command(cmd, rom_path, 1);
+    if (power_saved) {
+        char reason[96];
+        dp_power_restore(g_power_sysfs, &power, reason, sizeof(reason));
+        unlink(snap);
+    }
     printf("launch\t%s\t%s\tslot=%d\t%d\n", sys, rom, slot, child);
     if (child == 126 || child == 127)
         return 5;
@@ -1721,6 +1756,58 @@ static int bench_run(struct dp_canvas *cv, struct dp_model *m, struct dp_nav *na
     return 0;
 }
 
+/* Module requests that touch real hardware are applied here, not by the module
+ * sandbox: the module writes <data>/module-data/<id>/request and reads back the
+ * confirmed <id>/status. Only the thermal profile needs this today. */
+static void apply_module_power_request(const char *data, const char *sysfs)
+{
+    char req[600];
+    char status[600];
+    char tmp[620];
+    char mode[32];
+
+    snprintf(req, sizeof(req), "%s/module-data/thermal/request", data);
+    FILE *in = fopen(req, "r");
+    if (!in)
+        return;
+    mode[0] = '\0';
+    if (!fgets(mode, sizeof(mode), in))
+        mode[0] = '\0';
+    fclose(in);
+    size_t len = strlen(mode);
+    while (len > 0 && (mode[len - 1] == '\n' || mode[len - 1] == '\r' || mode[len - 1] == ' '))
+        mode[--len] = '\0';
+    if (strcmp(mode, "eco") != 0 && strcmp(mode, "balanced") != 0 && strcmp(mode, "max") != 0) {
+        unlink(req);
+        return;
+    }
+
+    struct dp_power_state after;
+    char reason[128];
+    reason[0] = '\0';
+    int result = dp_power_apply(sysfs, mode, NULL, &after, reason, sizeof(reason));
+
+    snprintf(status, sizeof(status), "%s/module-data/thermal/status", data);
+    snprintf(tmp, sizeof(tmp), "%s.tmp", status);
+    FILE *out = fopen(tmp, "w");
+    if (out) {
+        fprintf(out,
+                "{\"mode\":\"%s\",\"result\":\"%s\",\"reason\":\"%s\","
+                "\"governor\":\"%s\",\"cpu_max_khz\":%s,\"gpu_max_hz\":%s,\"ts\":%ld}\n",
+                mode, dp_power_result_name(result), reason,
+                after.cpu_gov[0] ? after.cpu_gov : "unknown",
+                after.cpu_max[0] ? after.cpu_max : "0",
+                after.gpu_cur[0] ? after.gpu_cur : "0", (long)time(NULL));
+        if (fclose(out) == 0) {
+            if (rename(tmp, status) != 0)
+                unlink(tmp);
+        } else {
+            unlink(tmp);
+        }
+    }
+    unlink(req);
+}
+
 int main(int argc, char **argv)
 {
     dp_theme_load(NULL, "terminal", &dp_theme_current);
@@ -1748,7 +1835,9 @@ int main(int argc, char **argv)
     snprintf(config_buf, sizeof(config_buf), "/data/config/settings.toml");
     const char *sysfs_prefix = NULL;
     const char *set_kv = NULL;
+    const char *set_power = NULL;
     int print_config = 0;
+    int print_power = 0;
     int print_retroarch = 0;
     int do_apply = 0;
     int save_clock = 0;
@@ -1783,6 +1872,8 @@ int main(int argc, char **argv)
         else if (strcmp(a, "--config") == 0) config_path = NEED_ARG();
         else if (strcmp(a, "--sysfs") == 0) sysfs_prefix = NEED_ARG();
         else if (strcmp(a, "--set") == 0) set_kv = NEED_ARG();
+        else if (strcmp(a, "--set-power") == 0) set_power = NEED_ARG();
+        else if (strcmp(a, "--print-power") == 0) print_power = 1;
         else if (strcmp(a, "--print-config") == 0) print_config = 1;
         else if (strcmp(a, "--print-retroarch-config") == 0) print_retroarch = 1;
         else if (strcmp(a, "--apply") == 0) do_apply = 1;
@@ -1840,11 +1931,55 @@ int main(int argc, char **argv)
     }
     g_vol_config = config_path;
     g_vol_sysfs = sysfs_prefix;
+    g_power_sysfs = sysfs_prefix;
     if (print_retroarch) {
         struct dp_config cfg;
         dp_config_init(&cfg);
         dp_config_load(&cfg, config_path);
         dp_config_retroarch(&cfg);
+        return 0;
+    }
+
+    if (set_power) {
+        struct dp_config cfg;
+        struct dp_power_state before, after;
+        char profile_path[512], kv[32], detail[160], reason[96];
+        enum dp_power_result result;
+
+        if (strcmp(set_power, "eco") && strcmp(set_power, "balanced") &&
+            strcmp(set_power, "max")) {
+            fprintf(stderr, "launcher: unknown power profile '%s'\n", set_power);
+            return 2;
+        }
+        dp_config_init(&cfg);
+        dp_config_load(&cfg, config_path);
+        snprintf(kv, sizeof(kv), "profile=%s", set_power);
+        dp_config_set(&cfg, kv);
+        if (dp_config_save(&cfg, config_path) != 0) {
+            fprintf(stderr, "launcher: cannot save %s\n", config_path);
+            return 1;
+        }
+        snprintf(profile_path, sizeof(profile_path), "%s/cpu-profile", data);
+        dp_config_write_profile(profile_path, set_power);
+        result = dp_power_apply(sysfs_prefix, set_power, &before, &after,
+                                reason, sizeof(reason));
+        dp_power_format(set_power, &after, detail, sizeof(detail));
+        printf("power\t%s\t%s\t%s\n", dp_power_result_name(result),
+               reason[0] ? reason : "-", detail);
+        return 0;
+    }
+
+    if (print_power) {
+        struct dp_config cfg;
+        struct dp_power_state st;
+        char detail[160];
+        const char *profile;
+        dp_config_init(&cfg);
+        dp_config_load(&cfg, config_path);
+        profile = cfg.profile[0] ? cfg.profile : "balanced";
+        dp_power_read(sysfs_prefix, &st);
+        dp_power_format(profile, &st, detail, sizeof(detail));
+        printf("power\tread\t-\t%s\n", detail);
         return 0;
     }
 
@@ -1869,11 +2004,20 @@ int main(int argc, char **argv)
             }
         }
         if (do_apply) {
-            char profile_path[512];
+            char profile_path[512], detail[160], reason[96];
+            const char *profile = cfg.profile[0] ? cfg.profile : "balanced";
+            struct dp_power_state after;
+            enum dp_power_result result;
             int n;
             snprintf(profile_path, sizeof(profile_path), "%s/cpu-profile", data);
             n = dp_config_apply(&cfg, sysfs_prefix, profile_path);
+            dp_config_write_profile(profile_path, profile);
+            result = dp_power_apply(sysfs_prefix, profile, NULL, &after,
+                                    reason, sizeof(reason));
             printf("applied=%d\n", n);
+            dp_power_format(profile, &after, detail, sizeof(detail));
+            printf("power\t%s\t%s\t%s\n", dp_power_result_name(result),
+                   reason[0] ? reason : "-", detail);
             if (!strcmp(data, "/data") && (!sysfs_prefix || !sysfs_prefix[0])) {
                 struct dp_clock_settings saved;
                 dp_clock_load(data, &saved);
@@ -1885,6 +2029,24 @@ int main(int argc, char **argv)
         dp_config_format(&cfg, line, (int)sizeof(line));
         printf("config %s\n", line);
         return 0;
+    }
+
+    /* A module such as thermal cannot write sysfs itself: it drops a request
+     * file, and the launcher - which already owns brightness, volume and the
+     * CPU profile - applies it for real and publishes the confirmed result. */
+    apply_module_power_request(data, sysfs_prefix);
+
+    /* A game session that never returned left the real CPU/GPU limits in the
+     * snapshot file: put them back before the menu takes over. */
+    {
+        char snap[600];
+        struct dp_power_state pending;
+        snprintf(snap, sizeof(snap), "%s/power-before.tsv", data);
+        if (dp_power_snapshot_load(snap, &pending)) {
+            char reason[96];
+            dp_power_restore(sysfs_prefix, &pending, reason, sizeof(reason));
+            unlink(snap);
+        }
     }
 
     int scr = dp_screen_from_id(screen);
@@ -1962,6 +2124,7 @@ int main(int argc, char **argv)
         }
         *colon = '\0';
         int ok = dp_modc_action(mods_socket, spec, colon + 1) == 0;
+        apply_module_power_request(data, sysfs_prefix);
         printf("%s\t%s\t%s\n", spec, colon + 1, ok ? "ok" : "failed");
         dp_model_free(m);
         return ok ? 0 : 1;

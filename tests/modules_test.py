@@ -17,6 +17,7 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODD = os.path.join(ROOT, "apps", "modd", "modd")
+LAUNCHER = os.path.join(ROOT, "apps", "launcher", "launcher")
 MODULES = os.path.join(ROOT, "modules")
 
 failures = []
@@ -30,7 +31,8 @@ def check(name, cond, detail=""):
         failures.append(name)
 
 
-def sysfs_fixture(base, cpu_max=1008000, governor="schedutil", gpu_max=400000000):
+def sysfs_fixture(base, cpu_max=1008000, governor="schedutil", gpu_max=400000000,
+                  available=None):
     tree = {
         "sys/class/thermal/thermal_zone0/type": "soc-thermal\n",
         "sys/class/thermal/thermal_zone0/temp": "48000\n",
@@ -42,6 +44,9 @@ def sysfs_fixture(base, cpu_max=1008000, governor="schedutil", gpu_max=400000000
         "sys/devices/platform/ff400000.gpu/devfreq/ff400000.gpu/cur_freq": "400000000\n",
         "sys/devices/platform/ff400000.gpu/devfreq/ff400000.gpu/max_freq": f"{gpu_max}\n",
     }
+    if available:
+        tree["sys/devices/system/cpu/cpufreq/policy0/scaling_available_frequencies"] = available
+        tree["sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq"] = "408000\n"
     for rel, text in tree.items():
         path = os.path.join(base, rel)
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -78,7 +83,8 @@ def run_module(tmp):
 def run_root_helper(tmp, data):
     helper = os.path.join(MODULES, "thermal", "root", "thermal-apply.sh")
     profile = os.path.join(tmp, "cpu-profile")
-    env = dict(os.environ, SYSFS_PREFIX=tmp, PROFILE_FILE=profile, APPLY="/bin/true")
+    env = dict(os.environ, SYSFS_PREFIX=tmp, PROFILE_FILE=profile, APPLY="/bin/true",
+               LAUNCHER=LAUNCHER, DATA_ROOT=tmp)
     proc = subprocess.run(["sh", helper, data], capture_output=True, text=True, env=env, timeout=20)
     check("helper exits 0", proc.returncode == 0, proc.stderr.strip())
     check("request consumed", not os.path.exists(os.path.join(data, "request")))
@@ -90,6 +96,38 @@ def run_root_helper(tmp, data):
         check("status cpu", status.get("cpu_max_khz") == 1008000, str(status))
         check("status governor", status.get("governor") == "schedutil", str(status))
     check("profile file", os.path.exists(profile) and open(profile).read().strip() == "eco")
+
+
+def run_root_helper_applied(tmp):
+    base = os.path.join(tmp, "apply")
+    os.makedirs(base)
+    sysfs_fixture(base, cpu_max=1416000, governor="performance",
+                  available="408000 816000 1008000 1416000\n")
+    data = os.path.join(base, "module-data")
+    os.makedirs(data)
+    with open(os.path.join(data, "request"), "w", encoding="utf-8") as handle:
+        handle.write("eco\n")
+    helper = os.path.join(MODULES, "thermal", "root", "thermal-apply.sh")
+    profile = os.path.join(base, "cpu-profile")
+    env = dict(os.environ, SYSFS_PREFIX=base, PROFILE_FILE=profile,
+               LAUNCHER=LAUNCHER, DATA_ROOT=base)
+    proc = subprocess.run(["sh", helper, data], capture_output=True, text=True, env=env, timeout=20)
+    check("applied helper exits 0", proc.returncode == 0, proc.stderr.strip())
+    max_path = os.path.join(base, "sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq")
+    with open(max_path, encoding="utf-8") as handle:
+        real_max = handle.read().strip()
+    check("applied helper lowers the real limit", real_max == "816000", real_max)
+    status_path = os.path.join(data, "status")
+    if os.path.exists(status_path):
+        status = json.load(open(status_path, encoding="utf-8"))
+        check("applied status result", status.get("result") == "applied", str(status))
+        check("applied status cpu", status.get("cpu_max_khz") == 816000, str(status))
+        check("applied status mode", status.get("mode") == "eco", str(status))
+    else:
+        check("applied status written", False)
+    check("applied profile file", open(profile).read().strip() == "eco")
+    with open(os.path.join(base, "config", "settings.toml"), encoding="utf-8") as handle:
+        check("applied settings agree", "profile = eco" in handle.read())
 
 
 def run_modd(tmp, data):
@@ -226,6 +264,36 @@ def run_saves_rotation(tmp, data):
     archives = sorted(os.listdir(os.path.join(tmp, "backup")))
     check("saves rotation keeps 2", len(archives) == 2, str(archives))
 
+def run_launcher_pending_request(tmp):
+    base = os.path.join(tmp, "pending")
+    os.makedirs(base)
+    sysfs_fixture(base, cpu_max=1416000, governor="performance",
+                  available="408000 816000 1008000 1416000\n")
+    data = os.path.join(base, "data")
+    request = os.path.join(data, "module-data", "thermal", "request")
+    os.makedirs(os.path.dirname(request))
+    with open(request, "w", encoding="utf-8") as handle:
+        handle.write("eco\n")
+    roms = os.path.join(base, "roms")
+    os.makedirs(roms)
+    proc = subprocess.run(
+        [LAUNCHER, "--data", data, "--roms", roms,
+         "--sysfs", os.path.join(base, "sys"), "--print-state"],
+        capture_output=True, text=True, timeout=20)
+    check("pending request launcher rc", proc.returncode == 0, proc.stderr.strip())
+    max_path = os.path.join(base, "sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq")
+    with open(max_path, encoding="utf-8") as handle:
+        real_max = handle.read().strip()
+    check("pending request applied once", real_max == "816000", real_max)
+    check("pending request consumed", not os.path.exists(request))
+    status_path = os.path.join(data, "module-data", "thermal", "status")
+    check("pending request status", os.path.exists(status_path))
+    if os.path.exists(status_path):
+        status = json.load(open(status_path, encoding="utf-8"))
+        check("pending status result", status.get("result") == "applied", str(status))
+        check("pending status mode", status.get("mode") == "eco", str(status))
+
+
 def main():
     tmp = tempfile.mkdtemp(prefix="deepos-modules-")
     try:
@@ -234,6 +302,10 @@ def main():
         data = run_module(tmp)
         print("module thermal: root helper")
         run_root_helper(tmp, data)
+        print("module thermal: root helper applies the real limit")
+        run_root_helper_applied(tmp)
+        print("module thermal: launcher applies a pending request")
+        run_launcher_pending_request(tmp)
         print("module thermal: through modd")
         run_modd(tmp, data)
         print("module saves: direct protocol")

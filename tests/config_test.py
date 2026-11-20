@@ -107,12 +107,47 @@ def main() -> int:
         r = run("--config", str(cfg), "--data", str(data), "--sysfs", str(sysfs) + "/", "--apply")
         d = parse(r.stdout)
         check("apply rc", r.returncode == 0, r.stderr)
-        check("apply reported 2 knobs", d.get("applied") == "2", r.stdout)
+        check("apply reported 1 knob", d.get("applied") == "1", r.stdout)
+        check("apply reported power unsupported",
+              "power\tunsupported" in r.stdout, r.stdout)
         check("backlight written", bl.read_text(encoding="utf-8").strip() == "18",
               bl.read_text(encoding="utf-8"))
         marker = data / "cpu-profile"
         check("profile marker written", marker.exists())
         check("profile marker content", marker.read_text(encoding="utf-8").strip() == "eco")
+
+        # 5b. one power handler: applied limits are read back from sysfs
+        policy = sysfs / "devices" / "system" / "cpu" / "cpufreq" / "policy0"
+        policy.mkdir(parents=True)
+        (policy / "scaling_available_frequencies").write_text(
+            "408000 816000 1008000 1296000 1416000 1512000\n", encoding="utf-8")
+        (policy / "scaling_max_freq").write_text("1416000\n", encoding="utf-8")
+        (policy / "scaling_min_freq").write_text("408000\n", encoding="utf-8")
+        (policy / "scaling_cur_freq").write_text("1416000\n", encoding="utf-8")
+        (policy / "scaling_governor").write_text("performance\n", encoding="utf-8")
+
+        r = run("--config", str(cfg), "--data", str(data), "--sysfs", str(sysfs),
+                "--set-power", "balanced")
+        check("set-power rc", r.returncode == 0, r.stderr)
+        check("set-power applied", "power\tapplied" in r.stdout, r.stdout)
+        check("balanced limit", (policy / "scaling_max_freq").read_text().strip() == "1008000")
+        check("set-power saved profile",
+              "profile = balanced" in cfg.read_text(encoding="utf-8"))
+        check("set-power marker", marker.read_text(encoding="utf-8").strip() == "balanced")
+
+        r = run("--config", str(cfg), "--data", str(data), "--sysfs", str(sysfs),
+                "--set-power", "max")
+        check("max limit", (policy / "scaling_max_freq").read_text().strip() == "1296000")
+
+        r = run("--config", str(cfg), "--data", str(data), "--sysfs", str(sysfs),
+                "--print-power")
+        check("print-power profile", "profile=max" in r.stdout, r.stdout)
+        check("print-power limit", "cpu=408000..1296000" in r.stdout, r.stdout)
+        check("print-power governor", "governor=performance" in r.stdout, r.stdout)
+
+        r = run("--config", str(cfg), "--data", str(data), "--sysfs", str(sysfs),
+                "--set-power", "turbo")
+        check("reject unknown power profile", r.returncode == 2, f"rc={r.returncode}")
 
         # 6. malformed file is tolerated: valid keys survive, bad ones ignored
         bad = tmp / "bad.toml"

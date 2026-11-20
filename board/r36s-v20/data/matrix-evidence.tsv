@@ -1,0 +1,11 @@
+# Measured V20 acceptance evidence. One row per system and check.
+# Columns: system<TAB>check<TAB>status<TAB>evidence
+#
+# checks: core_load stand menu video audio controls sticks volume fn_save exit
+#         sram exit_state resume reboot recovery performance
+# status: PASS FAIL BLOCKED NOT_RUN NOT_APPLICABLE
+#
+# Only rows measured on real V20 hardware belong here. Never copy a host
+# (ARM64 stand, container) result into a hardware column.
+nes	audio	PASS	тон 440 Гц чист, 0 EPIPE за 20 с (V20-HANDOFF-SPEC, 0.51)
+gba	audio	PASS	NFS Underground: буфер 4096 кадров, 44.1 кГц, без EPIPE (V20-HANDOFF-SPEC, 0.51)

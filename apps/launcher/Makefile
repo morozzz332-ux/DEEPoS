@@ -20,7 +20,7 @@ all: $(BIN)
 $(BIN): $(OBJ)
 	$(CC) $(CFLAGS) -o $@ $(OBJ) $(LDFLAGS)
 
-src/%.o: src/%.c src/dp_canvas.h src/dp_font.h src/dp_model.h src/dp_sound.h src/dp_theme.h src/dp_ui.h
+src/%.o: src/%.c src/dp_canvas.h src/dp_font.h src/dp_model.h src/dp_power.h src/dp_sound.h src/dp_theme.h src/dp_ui.h
 	$(CC) $(CFLAGS) $(DEFS) -c -o $@ $<
 
 src/dp_clock.o: src/dp_clock.h src/dp_zones.def

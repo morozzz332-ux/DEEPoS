@@ -8,6 +8,7 @@ python3 tests/input_test.py
 python3 tests/display_test.py
 python3 tests/launcher_mod_test.py
 python3 tests/board_test.py
+python3 tests/matrix_test.py
 python3 tests/image_test.py
 python3 tests/dpflash_test.py
 python3 tests/modd_test.py
