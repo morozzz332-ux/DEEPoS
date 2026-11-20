@@ -16,6 +16,7 @@
 #include "dp_display.h"
 #include "dp_input.h"
 #include "dp_config.h"
+#include "dp_clock.h"
 #include "dp_modc.h"
 #include "dp_model.h"
 #include "dp_sound.h"
@@ -26,6 +27,7 @@ static void usage(void)
 {
     puts("usage: launcher [options]\n"
          "  --roms DIR        ROM library root (default /storage)\n"
+         "  --roms2 DIR       second ROM library (normally the mounted TF2 card)\n"
          "  --data DIR        DEEPoS data dir (default /data)\n"
          "  --screen NAME     continue|systems|games|settings|modules|files|info\n"
          "  --out FILE.ppm    write the rendered frame (P6)\n"
@@ -34,6 +36,7 @@ static void usage(void)
          "  --battery N       battery percentage 0..100\n"
          "  --charging        draw the charging mark\n"
          "  --clock HH:MM     status-bar time\n"
+         "  --save-clock      keep the UTC time on orderly shutdown\n"
          "  --rom-used MB     used megabytes on the ROM partition\n"
          "  --rom-total MB    total megabytes on the ROM partition\n"
          "  --keys LIST       apply synthetic keys (comma separated, for tests)\n"
@@ -63,11 +66,24 @@ struct dp_nav {
     char lsys[32];
     char lrom[DP_ROM_NAME];
     int lslot;
+    enum dp_rom_source lsource;
     int settings_edit; /* card index + 1, applied after the key */
     int volume_delta;
     struct { int tab, sel; } back[2];
     int nback;
     int module_action;
+    int module_toggle;
+    int module_describe;
+    int module_details;
+    int module_help;
+    int module_import;
+    char module_text[DP_MOD_TEXT];
+    struct dp_clock_settings clock_settings;
+    struct tm clock_draft;
+    int device_clock;
+    int clock_panel; /* 1 = date/time, 2 = region */
+    int clock_choice;
+    int clock_apply;
     int usb_action; /* 1 network, 2 files */
     pid_t backup_pid;
     char notice[128];  /* one-shot message drawn above the hint bar */
@@ -120,11 +136,11 @@ static int row_count(const struct dp_model *m, const struct dp_nav *nav)
     if (scr == DP_SCR_GAMES)
         return m->nroms;
     if (scr == DP_SCR_SETTINGS)
-        return 12;
+        return DP_SETTINGS_COUNT;
     if (scr == DP_SCR_MODULES)
         return m->nmods;
     if (scr == DP_SCR_FILES)
-        return 3;
+        return 4;
     return 0;
 }
 
@@ -247,11 +263,13 @@ static void nav_shortcut(struct dp_nav *nav, int tab)
     nav->sel = 0;
 }
 
-static void nav_launch(struct dp_nav *nav, const char *system, const char *rom, int slot)
+static void nav_launch(struct dp_nav *nav, const char *system, const char *rom, int slot,
+                       enum dp_rom_source source)
 {
     snprintf(nav->lsys, sizeof(nav->lsys), "%s", system);
     snprintf(nav->lrom, sizeof(nav->lrom), "%s", rom);
     nav->lslot = slot;
+    nav->lsource = source;
     nav->launch = 1;
 }
 
@@ -296,6 +314,31 @@ static int nav_key(struct dp_nav *nav, struct dp_model *m, const char *roms, enu
     int scr = tab_screen(nav);
     int cols = nav_grid_cols(scr);
 
+    if ((nav->module_details || nav->module_help) && key != DP_KEY_QUIT) {
+        if (key == DP_KEY_Y || key == DP_KEY_B) {
+            nav->module_details = 0;
+            nav->module_help = 0;
+        } else if (nav->module_help && key == DP_KEY_A)
+            nav->module_import = 1;
+        return 0;
+    }
+    if (nav->clock_panel && key != DP_KEY_QUIT) {
+        if (key == DP_KEY_B)
+            nav->clock_panel = 0;
+        else if (key == DP_KEY_A)
+            nav->clock_apply = 1;
+        else if (nav->clock_panel == 2 && (key == DP_KEY_UP || key == DP_KEY_DOWN)) {
+            int count = dp_clock_zone_count();
+            nav->clock_choice = (nav->clock_choice + count + (key == DP_KEY_DOWN ? 1 : -1)) % count;
+        } else if (nav->clock_panel == 1 && (key == DP_KEY_LEFT || key == DP_KEY_RIGHT)) {
+            nav->clock_choice = (nav->clock_choice + DP_CLOCK_FIELDS +
+                                 (key == DP_KEY_RIGHT ? 1 : -1)) % DP_CLOCK_FIELDS;
+        } else if (nav->clock_panel == 1 && (key == DP_KEY_UP || key == DP_KEY_DOWN)) {
+            dp_clock_edit(&nav->clock_draft, nav->clock_choice, key == DP_KEY_UP ? 1 : -1);
+        }
+        return 0;
+    }
+
     if (m->input_test && key != DP_KEY_QUIT) {
         if (key == DP_KEY_B && strcmp(m->si.last_key, "b") == 0) {
             m->input_test = 0;
@@ -330,7 +373,8 @@ static int nav_key(struct dp_nav *nav, struct dp_model *m, const char *roms, enu
         if (scr == DP_SCR_GAMES) {
             nav->level = 0;
             nav->sel = nav->system;
-        }
+        } else if (scr == DP_SCR_MODULES && nav->sel < m->nmods)
+            nav->module_describe = 1;
         break;
     case DP_KEY_LEFT:
     case DP_KEY_RIGHT: {
@@ -368,8 +412,15 @@ static int nav_key(struct dp_nav *nav, struct dp_model *m, const char *roms, enu
     case DP_KEY_A:
     case DP_KEY_START:
     case DP_KEY_X:
-        if (key == DP_KEY_X && scr == DP_SCR_MODULES) {
-            nav_notice(nav, "Модули: /data/modules, затем перезапуск");
+        if (scr == DP_SCR_MODULES) {
+            if (key == DP_KEY_START || (key == DP_KEY_X && !m->nmods)) {
+                nav->module_help = 1;
+            } else if (nav->sel < m->nmods) {
+                if (key == DP_KEY_X)
+                    nav->module_action = 1;
+                else if (key == DP_KEY_A)
+                    nav->module_toggle = 1;
+            }
             break;
         }
         if (key == DP_KEY_X && scr != DP_SCR_CONTINUE)
@@ -380,7 +431,20 @@ static int nav_key(struct dp_nav *nav, struct dp_model *m, const char *roms, enu
             nav->level = 1;
             nav->sel = 0;
         } else if (scr == DP_SCR_SETTINGS) {
-            if (nav->sel == 2 || nav->sel == 3 || nav->sel == 5 || nav->sel == 0 ||
+            if (nav->sel == DP_SETTINGS_CLOCK || nav->sel == DP_SETTINGS_REGION) {
+                if (nav->sel == DP_SETTINGS_REGION) {
+                    nav->clock_choice = m->clock_zone;
+                    nav->clock_panel = 2;
+                } else {
+                    time_t now = !nav->device_clock && nav->clock_settings.anchor ?
+                                 nav->clock_settings.anchor : time(NULL);
+                    if (!localtime_r(&now, &nav->clock_draft) ||
+                        nav->clock_draft.tm_year < 100 || nav->clock_draft.tm_year > 199)
+                        nav->clock_draft = (struct tm){ .tm_year = 100, .tm_mday = 1 };
+                    nav->clock_choice = DP_CLOCK_DAY;
+                    nav->clock_panel = 1;
+                }
+            } else if (nav->sel == 2 || nav->sel == 3 || nav->sel == 5 || nav->sel == 0 ||
                 nav->sel == 6 || nav->sel == 8 || nav->sel == 11)
                 nav->settings_edit = nav->sel + 1;
             else if (nav->sel == 4 || nav->sel == 10)
@@ -395,18 +459,18 @@ static int nav_key(struct dp_nav *nav, struct dp_model *m, const char *roms, enu
                 nav_shortcut(nav, 5);
         } else if (scr == DP_SCR_FILES && nav->sel == 1) {
             nav->usb_action = 2;
-        } else if (scr == DP_SCR_MODULES && nav->sel < m->nmods) {
-            nav->module_action = nav->sel + 1;
         } else if (scr == DP_SCR_GAMES && nav->sel < m->nroms &&
                    nav->system >= 0 && nav->system < m->nsys) {
-            nav_launch(nav, m->systems[nav->system].id, m->rom_names[nav->sel], -1);
+            const struct dp_rom_item *game = &m->roms[nav->sel];
+            nav_launch(nav, m->systems[nav->system].id, game->name, -1, game->source);
         } else if (scr == DP_SCR_CONTINUE) {
             if (m->ncont == 0 && key != DP_KEY_X) {
                 nav_tab(nav, 1);
             } else if (nav->sel < m->ncont) {
                 const struct dp_continue_item *it = &m->cont[nav->sel];
                 if (it->sys_id[0] && it->rom[0])
-                    nav_launch(nav, it->sys_id, it->rom, key == DP_KEY_X ? -1 : it->slot);
+                    nav_launch(nav, it->sys_id, it->rom, key == DP_KEY_X ? -1 : it->slot,
+                               it->source);
             }
         }
         break;
@@ -586,12 +650,13 @@ static int run_command(const char *cmd, const char *arg) {
  * moved to the top with the slot we actually used, so "Продолжить" always
  * reflects the last session. Written atomically (tmp + fsync + rename). */
 static void continue_update(const char *data_dir, const struct dp_model *m, const char *sys,
-                            const char *rom, int slot)
+                            const char *rom, int slot, enum dp_rom_source source)
 {
     char path[1024];
     char tmp[1060];
     char lines[DP_MAX_CONTINUE][768];
     int nline = 0;
+    const char *card = source == DP_ROM_TF2 ? "tf2" : "tf1";
 
     if (strpbrk(rom, "\t\r\n") || strpbrk(sys, "\t\r\n"))
         return;
@@ -619,17 +684,18 @@ static void continue_update(const char *data_dir, const struct dp_model *m, cons
             /* drop the row we are about to rewrite */
             char copy[768];
             snprintf(copy, sizeof(copy), "%s", line);
-            char *fields[7] = { 0 };
+            char *fields[8] = { 0 };
             int nf = 0;
             char *q = copy;
             fields[nf++] = q;
-            for (; *q && nf < 7; q++) {
+            for (; *q && nf < 8; q++) {
                 if (*q == '\t') {
                     *q = '\0';
                     fields[nf++] = q + 1;
                 }
             }
-            if (nf >= 7 && strcmp(fields[5], sys) == 0 && strcmp(fields[6], rom) == 0)
+            if (nf >= 7 && strcmp(fields[5], sys) == 0 && strcmp(fields[6], rom) == 0 &&
+                (nf == 7 ? source != DP_ROM_TF2 : strcmp(fields[7], card) == 0))
                 continue;
             snprintf(lines[nline], sizeof(lines[nline]), "%s", line);
             nline++;
@@ -642,8 +708,8 @@ static void continue_update(const char *data_dir, const struct dp_model *m, cons
         fprintf(stderr, "launcher: cannot write %s\n", tmp);
         return;
     }
-    fprintf(out, "%s\t%s\tнедавно\t%d\t%d\t%s\t%s\n", title, system_name, slot,
-            slot >= 0 ? 1 : 0, sys, rom);
+    fprintf(out, "%s\t%s\tнедавно\t%d\t%d\t%s\t%s%s\n", title, system_name, slot,
+            slot >= 0 ? 1 : 0, sys, rom, source == DP_ROM_TF2 ? "\ttf2" : "");
     int total = 1;
     for (int i = 0; i < nline && total < DP_MAX_CONTINUE; i++, total++)
         fprintf(out, "%s\n", lines[i]);
@@ -665,7 +731,8 @@ static void continue_update(const char *data_dir, const struct dp_model *m, cons
 }
 
 static int launch_game(const struct dp_model *m, const char *roms, const char *mods_socket,
-                       const char *emulators_path, const char *sys, const char *rom, int slot)
+                       const char *emulators_path, const char *sys, const char *rom, int slot,
+                       enum dp_rom_source *source)
 {
     struct dp_launch_cfg cfg;
     char rom_path[1024];
@@ -673,15 +740,6 @@ static int launch_game(const struct dp_model *m, const char *roms, const char *m
     int allow = 1;
     int child;
 
-    if (access("/run/deepos-usb.export", F_OK) == 0) {
-        fprintf(stderr, "launcher: ROMS is currently reserved for USB file transfer\n");
-        return 6;
-    }
-    dp_modc_launch(mods_socket, sys, rom, &allow);
-    if (!allow) {
-        printf("blocked\t%s\t%s\n", sys, rom);
-        return 4;
-    }
     if (parse_emulators(emulators_path, sys, &cfg) != 0 &&
         (strcmp(emulators_path, DEFAULT_EMULATORS) != 0 ||
          (parse_emulators(BUILTIN_EMULATORS, sys, &cfg) != 0 &&
@@ -689,16 +747,23 @@ static int launch_game(const struct dp_model *m, const char *roms, const char *m
         fprintf(stderr, "launcher: no emulator for '%s' in %s\n", sys, emulators_path);
         return 5;
     }
-    const char *folder = sys;
-    for (int i = 0; i < m->nsys; i++) {
-        if (strcmp(m->systems[i].id, sys) == 0) {
-            folder = m->systems[i].folder;
-            break;
-        }
+    int usb = access("/run/deepos-usb.export", F_OK) == 0;
+    enum dp_rom_source card = *source;
+    if (usb && card == DP_ROM_AUTO)
+        card = DP_ROM_TF2;
+    if (usb && card == DP_ROM_TF1)
+        return 6;
+    card = dp_model_rom_path(m, roms, sys, rom, card, rom_path, sizeof(rom_path));
+    if (card == DP_ROM_AUTO)
+        return usb && *source == DP_ROM_AUTO ? 6 : 7;
+    if (usb && (!strcmp(sys, "ports") || strstr(cfg.cmd, "retroarch-game.sh")))
+        return 6; /* the runtime stores its saves and settings on TF1 */
+    dp_modc_launch(mods_socket, sys, rom, &allow);
+    if (!allow) {
+        printf("blocked\t%s\t%s\n", sys, rom);
+        return 4;
     }
-    int len = snprintf(rom_path, sizeof(rom_path), "%s/%s/%s", roms, folder, rom);
-    if (len < 0 || (size_t)len >= sizeof(rom_path))
-        return 1;
+    *source = card;
     expand_rom(cfg.cmd, slot, cmd, sizeof(cmd));
     child = run_command(cmd, rom_path);
     printf("launch\t%s\t%s\tslot=%d\t%d\n", sys, rom, slot, child);
@@ -710,9 +775,10 @@ static int launch_game(const struct dp_model *m, const char *roms, const char *m
 static int launch_selected(struct dp_nav *nav, struct dp_model *m, const char *roms,
                            const char *mods_socket, const char *emulators, const char *data)
 {
-    int rc = launch_game(m, roms, mods_socket, emulators, nav->lsys, nav->lrom, nav->lslot);
+    int rc = launch_game(m, roms, mods_socket, emulators, nav->lsys, nav->lrom, nav->lslot,
+                         &nav->lsource);
     if (rc == 0) {
-        continue_update(data, m, nav->lsys, nav->lrom, nav->lslot);
+        continue_update(data, m, nav->lsys, nav->lrom, nav->lslot, nav->lsource);
         dp_model_load_continue(m, data);
         if (tab_screen(nav) == DP_SCR_CONTINUE)
             nav->sel = 0;
@@ -724,13 +790,24 @@ static int launch_selected(struct dp_nav *nav, struct dp_model *m, const char *r
 static int count_event_devices(void);
 static void fill_sysinfo(struct dp_model *m, const char *fb_path, int details);
 
+static int show_clock(struct dp_model *m, time_t now)
+{
+    struct tm local;
+    char hhmm[8], day[16];
+    if (!localtime_r(&now, &local))
+        return 0;
+    strftime(hhmm, sizeof(hhmm), "%H:%M", &local);
+    strftime(day, sizeof(day), "%d.%m.%Y", &local);
+    int changed = strcmp(hhmm, m->st.clock) || strcmp(day, m->clock_date);
+    snprintf(m->st.clock, sizeof(m->st.clock), "%s", hhmm);
+    snprintf(m->clock_date, sizeof(m->clock_date), "%s", day);
+    return changed;
+}
+
 static void read_device_status(struct dp_model *m, const char *roms, const char *fb_path,
                                int details)
 {
-    time_t now = time(NULL);
-    struct tm local;
-    if (localtime_r(&now, &local))
-        strftime(m->st.clock, sizeof(m->st.clock), "%H:%M", &local);
+    show_clock(m, time(NULL));
 
     struct statvfs fs;
     if (m->roms_ok && statvfs(roms, &fs) == 0) {
@@ -1043,6 +1120,15 @@ static void bench_write(const char *path, const char *bench_line, const char *de
 static void paint_nav(struct dp_canvas *cv, struct dp_model *m, struct dp_nav *nav)
 {
     dp_ui_paint(cv, m, (enum dp_screen)tab_screen(nav), nav->system, nav->sel);
+    if (nav->module_details && nav->sel < m->nmods)
+        dp_ui_module_details(cv, &m->mods[nav->sel], nav->module_text);
+    if (nav->module_help)
+        dp_ui_module_details(cv, NULL, "На ПК скопируйте папку модуля в ROMS/modules.\n"
+                             "Внутри нужны module.toml и main.sh.\n"
+                             "Нажмите A для импорта и перезагрузите консоль.\n"
+                             "Новые модули появятся выключенными.");
+    if (nav->clock_panel)
+        dp_ui_clock(cv, nav->clock_panel == 2, nav->clock_choice, &nav->clock_draft);
     if (nav->notice[0]) {
         dp_ui_toast(cv, nav->notice);
         nav->notice[0] = '\0';
@@ -1070,6 +1156,49 @@ static int apply_nav_actions(struct dp_nav *nav, struct dp_model *m, const char 
                              const char *sysfs, const char *data, const char *socket,
                              const char *roms)
 {
+    if (nav->module_import) {
+        nav->module_import = 0;
+        int result = run_command("/bin/sh /usr/share/deepos/import-modules.sh", "");
+        nav_notice(nav, result == 0 ? "Модули скопированы. Перезагрузите консоль." :
+                        result == 2 ? "В ROMS/modules нет новых модулей" :
+                        "Импорт не завершён. Проверьте доступ к DATA и ROMS.");
+        return 1;
+    }
+    if (nav->clock_apply) {
+        nav->clock_apply = 0;
+        struct dp_clock_settings next = nav->clock_settings;
+        if (nav->clock_panel == 2) {
+            next.zone = nav->clock_choice;
+            if (dp_clock_select_zone(next.zone, nav->device_clock) != 0) {
+                nav_notice(nav, "Не удалось применить часовой пояс");
+                return 1;
+            }
+        } else {
+            next.anchor = dp_clock_to_epoch(nav->clock_draft);
+            if (next.anchor == (time_t)-1) {
+                nav_notice(nav, "Такого времени нет в выбранном поясе");
+                return 1;
+            }
+            if (nav->device_clock && dp_clock_set(next.anchor) != 0) {
+                nav_notice(nav, "Не удалось установить дату и время");
+                return 1;
+            }
+            if (nav->device_clock && access("/dev/rtc0", F_OK) == 0)
+                run_command("/sbin/hwclock -w -u", "");
+        }
+        if (dp_clock_save(data, &next) != 0) {
+            if (nav->clock_panel == 2)
+                dp_clock_select_zone(nav->clock_settings.zone, nav->device_clock);
+            nav_notice(nav, "Не удалось сохранить на DATA");
+            return 1;
+        }
+        nav->clock_settings = next;
+        m->clock_zone = next.zone;
+        if (nav->device_clock || next.anchor)
+            show_clock(m, nav->device_clock ? time(NULL) : next.anchor);
+        nav->clock_panel = 0;
+        return 1;
+    }
     if (nav->usb_action) {
         const char *mode = nav->usb_action == 1 ? "network" : "files";
         nav->usb_action = 0;
@@ -1096,11 +1225,48 @@ static int apply_nav_actions(struct dp_nav *nav, struct dp_model *m, const char 
             m->roms_ok = 0;
         return 1;
     }
-    if (!nav->module_action)
+    if (!nav->module_action && !nav->module_toggle && !nav->module_describe)
         return apply_selected_setting(nav, m, config, sysfs, data);
 
-    const char *id = m->mods[nav->module_action - 1].id;
+    const struct dp_module_info *mi = &m->mods[nav->sel];
+    const char *id = mi->id;
+    if (nav->module_describe) {
+        nav->module_describe = 0;
+        nav->module_text[0] = '\0';
+        dp_modc_describe(socket, id, nav->module_text, sizeof(nav->module_text));
+        if (!nav->module_text[0])
+            snprintf(nav->module_text, sizeof(nav->module_text), "%s",
+                     strcmp(id, "thermal") == 0 ? "X открывает выбор профиля процессора." :
+                     strcmp(id, "saves") == 0 ? "X создаёт резервную копию сохранений на DATA." :
+                     "Автор не добавил описание в module.toml.");
+        nav->module_details = 1;
+        return 1;
+    }
+    if (nav->module_toggle) {
+        nav->module_toggle = 0;
+        int enabled = !mi->enabled || strcmp(mi->state, "disabled") == 0;
+        if (dp_modc_set_enabled(socket, id, enabled) != 0)
+            nav_notice(nav, "Не удалось сохранить состояние модуля");
+        refresh_modules(m, socket);
+        nav_clamp(nav, m);
+        return 1;
+    }
     nav->module_action = 0;
+    if (!mi->enabled || strcmp(mi->state, "disabled") == 0) {
+        nav_notice(nav, "Сначала включите модуль кнопкой A");
+        return 1;
+    }
+    if (mi->on_demand) {
+        nav->module_text[0] = '\0';
+        if (dp_modc_inspect(socket, id, nav->module_text, sizeof(nav->module_text)) == 0 &&
+            nav->module_text[0])
+            nav->module_details = 1;
+        else
+            nav_notice(nav, "Модуль не вернул данные");
+        refresh_modules(m, socket);
+        nav_clamp(nav, m);
+        return 1;
+    }
     if (strcmp(id, "thermal") == 0) {
         nav_shortcut(nav, 2);
         nav->sel = 5;
@@ -1230,6 +1396,7 @@ static int bench_run(struct dp_canvas *cv, struct dp_model *m, struct dp_nav *na
 int main(int argc, char **argv)
 {
     const char *roms = "/storage";
+    const char *roms2 = NULL;
     const char *data = "/data";
     const char *screen = "continue";
     const char *out = NULL;
@@ -1255,6 +1422,7 @@ int main(int argc, char **argv)
     int print_config = 0;
     int print_retroarch = 0;
     int do_apply = 0;
+    int save_clock = 0;
     int bench_frames = 0;
     int boot_splash = 0;
     const char *bench_out = NULL;
@@ -1263,6 +1431,7 @@ int main(int argc, char **argv)
         const char *a = argv[i];
         #define NEED_ARG() (i + 1 < argc ? argv[++i] : (usage(), exit(2), ""))
         if (strcmp(a, "--roms") == 0) roms = NEED_ARG();
+        else if (strcmp(a, "--roms2") == 0) roms2 = NEED_ARG();
         else if (strcmp(a, "--data") == 0) data = NEED_ARG();
         else if (strcmp(a, "--screen") == 0) screen = NEED_ARG();
         else if (strcmp(a, "--out") == 0) out = NEED_ARG();
@@ -1288,6 +1457,7 @@ int main(int argc, char **argv)
         else if (strcmp(a, "--print-config") == 0) print_config = 1;
         else if (strcmp(a, "--print-retroarch-config") == 0) print_retroarch = 1;
         else if (strcmp(a, "--apply") == 0) do_apply = 1;
+        else if (strcmp(a, "--save-clock") == 0) save_clock = 1;
         else if (strcmp(a, "--bench") == 0) bench_frames = atoi(NEED_ARG());
         else if (strcmp(a, "--bench-out") == 0) bench_out = NEED_ARG();
         else if (strcmp(a, "--list") == 0) {
@@ -1301,6 +1471,9 @@ int main(int argc, char **argv)
             struct dp_model *lm = dp_model_new();
             if (!lm)
                 return 1;
+            lm->tf2_root = roms2 ? roms2 :
+                           !strcmp(roms, "/storage") && access("/run/deepos-tf2-device", F_OK) == 0 ?
+                           "/games" : NULL;
             dp_model_scan(lm, roms);
             for (int s = 0; s < lm->nsys; s++)
                 printf("%s\t%u\t%s\n", lm->systems[s].id, lm->systems[s].games,
@@ -1321,6 +1494,16 @@ int main(int argc, char **argv)
 
     if (boot_splash)
         return show_boot_splash(out, fb_path);
+
+    if (save_clock) {
+        struct dp_clock_settings saved;
+        dp_clock_load(data, &saved);
+        time_t now = time(NULL);
+        /* With no RTC or configured clock a cold boot may still be at 1970. */
+        if (now > saved.anchor && now >= 946684800)
+            return dp_clock_save(data, &(struct dp_clock_settings){ saved.zone, now }) != 0;
+        return 0;
+    }
 
     if (!config_path) {
         snprintf(config_buf, sizeof(config_buf), "%s/config/settings.toml", data);
@@ -1360,6 +1543,13 @@ int main(int argc, char **argv)
             snprintf(profile_path, sizeof(profile_path), "%s/cpu-profile", data);
             n = dp_config_apply(&cfg, sysfs_prefix, profile_path);
             printf("applied=%d\n", n);
+            if (!strcmp(data, "/data") && (!sysfs_prefix || !sysfs_prefix[0])) {
+                struct dp_clock_settings saved;
+                dp_clock_load(data, &saved);
+                dp_clock_select_zone(saved.zone, 1);
+                if (saved.anchor > time(NULL))
+                    dp_clock_set(saved.anchor);
+            }
         }
         dp_config_format(&cfg, line, (int)sizeof(line));
         printf("config %s\n", line);
@@ -1377,6 +1567,9 @@ int main(int argc, char **argv)
         fputs("launcher: out of memory\n", stderr);
         return 1;
     }
+    m->tf2_root = roms2 ? roms2 :
+                  !strcmp(roms, "/storage") && access("/run/deepos-tf2-device", F_OK) == 0 ?
+                  "/games" : NULL;
     if (dp_model_scan(m, roms) < 0)
         fprintf(stderr, "launcher: cannot read ROMs at %s (empty library)\n", roms);
     dp_model_load_continue(m, data);
@@ -1419,9 +1612,10 @@ int main(int argc, char **argv)
         *colon = '\0';
         copy_field(sys, sizeof(sys), spec);
         copy_field(rom, sizeof(rom), colon + 1);
-        rc_game = launch_game(m, roms, mods_socket, emulators_path, sys, rom, save_slot);
+        enum dp_rom_source source = DP_ROM_AUTO;
+        rc_game = launch_game(m, roms, mods_socket, emulators_path, sys, rom, save_slot, &source);
         if (rc_game == 0)
-            continue_update(data, m, sys, rom, save_slot);
+            continue_update(data, m, sys, rom, save_slot, source);
         dp_model_free(m);
         return rc_game;
     }
@@ -1454,6 +1648,12 @@ int main(int argc, char **argv)
     snprintf(m->st.clock, sizeof(m->st.clock), "%s", clock);
     m->rom_used_mb = rom_used;
     m->rom_total_mb = rom_total;
+    struct dp_clock_settings clock_settings;
+    dp_clock_load(data, &clock_settings);
+    m->clock_zone = clock_settings.zone;
+    dp_clock_select_zone(clock_settings.zone, 0);
+    if (argc > 1 && clock_settings.anchor)
+        show_clock(m, clock_settings.anchor);
     if (argc == 1)
         read_device_status(m, roms, "/dev/fb0", 1);
 
@@ -1465,6 +1665,8 @@ int main(int argc, char **argv)
     }
 
     struct dp_nav nav = { 0 };
+    nav.device_clock = argc == 1;
+    nav.clock_settings = clock_settings;
     nav.tab = tab_from_screen(scr);
     if (scr == DP_SCR_GAMES) {
         nav.level = 1;
@@ -1551,17 +1753,22 @@ int main(int argc, char **argv)
         if (dp_input_open(&in) == 0) {
             unsigned long long sample_at = 0;
             unsigned long long usb_at = 0;
+            unsigned long long clock_at = 0;
             while (!quit && in.ready) {
                 enum dp_key k = dp_input_poll(&in, 250);
                 if (sound > 0 && waitpid(sound, NULL, WNOHANG) == sound)
                     sound = 0;
                 int old_tab = nav.tab, old_level = nav.level, old_sel = nav.sel;
+                int old_module_details = nav.module_details;
+                int old_module_help = nav.module_help;
+                int old_clock_panel = nav.clock_panel;
                 int changed = 0;
                 if (k != DP_KEY_NONE) {
                     quit = nav_key(&nav, m, roms, k);
                     if (quit)
                         break;
                     changed = apply_nav_actions(&nav, m, config_path, sysfs_prefix, data, mods_socket, roms);
+                    changed |= old_clock_panel || nav.clock_panel;
                     if (tab_screen(&nav) == DP_SCR_INFO) {
                         if (!m->input_test)
                             snprintf(m->si.last_key, sizeof(m->si.last_key), "%s", dp_key_name(k));
@@ -1577,6 +1784,10 @@ int main(int argc, char **argv)
                     }
                 }
                 unsigned long long now = now_us(CLOCK_MONOTONIC);
+                if (nav.device_clock && now >= clock_at) {
+                    changed |= show_clock(m, time(NULL));
+                    clock_at = now + 1000000;
+                }
                 if (m->usb_mode[0] && (nav.tab == 2 || nav.tab == 4) && now >= usb_at) {
                     changed |= refresh_usb(m);
                     usb_at = now + 1000000;
@@ -1606,13 +1817,15 @@ int main(int argc, char **argv)
                     changed = 1;
                 }
                 if (!changed && !nav.notice[0]
-                    && nav.tab == old_tab && nav.level == old_level && nav.sel == old_sel)
+                    && nav.tab == old_tab && nav.level == old_level && nav.sel == old_sel
+                    && nav.module_details == old_module_details && nav.module_help == old_module_help)
                     continue;
                 int have_notice = nav.notice[0] != '\0';
                 paint_nav(&cv, m, &nav);
                 if (game_status > 0) {
                     const char *message = game_status == 5 ? "Нет эмулятора для этой системы" :
                                           game_status == 6 ? "Завершите передачу файлов по USB" :
+                                          game_status == 7 ? "Файл игры недоступен. Проверьте карту." :
                                           game_status == 4 ? "Запуск отклонён модулем" :
                                           "Не удалось запустить игру";
                     dp_ui_toast(&cv, message);

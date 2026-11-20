@@ -140,6 +140,19 @@ def run() -> None:
             check(deny.get("result", {}).get("allow") is False,
                   f"launch.before must deny blocked rom: {deny}")
 
+            off = client.call("module.set_enabled", {"module": "hook", "enabled": 0})
+            check(off.get("result", {}).get("enabled") is False, f"disable hook: {off}")
+            hook = next(m for m in client.call("status")["result"]["modules"]
+                        if m["id"] == "hook")
+            check(hook.get("enabled") is False and hook["state"] == "stopped",
+                  f"disabled hook was running or missing its saved state: {hook}")
+            check("error" in client.call("initialize", {"module": "hook"}),
+                  "a disabled module was initialized")
+            check(client.call("launch.before", {"system": "md", "rom": "blocked.md"})
+                  .get("result", {}).get("allow") is True, "disabled hook still blocks games")
+            check("result" in client.call("module.describe", {"module": "hook"}),
+                  "module description should be available when disabled")
+
             bye = client.call("shutdown")
             check(bye.get("result", {}).get("stopped") is True, f"shutdown: {bye}")
             client.close()
@@ -153,6 +166,26 @@ def run() -> None:
                 failures.append(f"modd exit code {proc.returncode}")
             err = proc.stderr.read().decode(errors="replace")
             check("listening on" in err, "modd did not log its listening socket")
+
+        proc, sock = start_modd(tmp, FIXTURES)
+        try:
+            client = Client(sock)
+            hook = next(m for m in client.call("status")["result"]["modules"]
+                        if m["id"] == "hook")
+            check(hook.get("enabled") is False, "module switch was lost on restart")
+            on = client.call("module.set_enabled", {"module": "hook", "enabled": 1})
+            check(on.get("result", {}).get("enabled") is True, f"enable hook: {on}")
+            check(client.call("launch.before", {"system": "md", "rom": "blocked.md"})
+                  .get("result", {}).get("allow") is False, "re-enabled hook does not run")
+            client.call("shutdown")
+            client.close()
+        finally:
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+                failures.append("restarted modd did not exit")
 
 
 def main() -> int:

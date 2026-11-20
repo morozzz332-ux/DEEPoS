@@ -54,6 +54,53 @@ static struct dp_module *find_module(const char *id)
     return NULL;
 }
 
+static int enabled_path(char *path, size_t size, const char *id)
+{
+    int n = snprintf(path, size, "%s/.enabled-%s", g_data_dir, id);
+    return n >= 0 && (size_t)n < size;
+}
+
+static void load_enabled(struct dp_module *m)
+{
+    char path[600];
+    if (!enabled_path(path, sizeof(path), m->id))
+        return;
+    FILE *file = fopen(path, "r");
+    if (file) {
+        int value = fgetc(file);
+        if ((value == '0' || value == '1') && fgetc(file) == '\n')
+            m->enabled = value == '1';
+        fclose(file);
+    }
+}
+
+static int store_enabled(struct dp_module *m, int enabled)
+{
+    char path[600], temporary[620];
+    const char value[] = { enabled ? '1' : '0', '\n' };
+    if (!enabled_path(path, sizeof(path), m->id))
+        return -1;
+    snprintf(temporary, sizeof(temporary), "%s.XXXXXX", path);
+    int fd = mkstemp(temporary);
+    if (fd < 0)
+        return -1;
+    int ok = write(fd, value, sizeof(value)) == sizeof(value) && fsync(fd) == 0;
+    if (close(fd) != 0)
+        ok = 0;
+    if (!ok || rename(temporary, path) != 0) {
+        unlink(temporary);
+        return -1;
+    }
+    if (!enabled || m->state == MODD_DISABLED) {
+        dp_module_stop(m);
+        m->state = MODD_STOPPED;
+        m->fail_n = 0;
+        m->last_error[0] = '\0';
+    }
+    m->enabled = enabled;
+    return 0;
+}
+
 static void load_modules(const char *dir)
 {
     DIR *d = opendir(dir);
@@ -75,10 +122,16 @@ static void load_modules(const char *dir)
             fprintf(stderr, "modd: skip %s (bad manifest)\n", ent->d_name);
             continue;
         }
-        if (!m.enabled) {
-            fprintf(stderr, "modd: skip %s (disabled)\n", m.id);
+        if (strspn(m.id, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
+                != strlen(m.id) || find_module(m.id)) {
+            fprintf(stderr, "modd: invalid or duplicate module id in %s\n", ent->d_name);
             continue;
         }
+        char imported[sizeof(m.dir) + 32];
+        snprintf(imported, sizeof(imported), "%s/.deepos-roms-import", m.dir);
+        if (access(imported, F_OK) == 0)
+            m.enabled = 0;
+        load_enabled(&m);
         g_mods[g_nmods++] = m;
         fprintf(stderr, "modd: loaded module %s (%s)\n", m.id, m.entry);
     }
@@ -91,17 +144,23 @@ static void status_json(char *out, size_t n)
     used += (size_t)snprintf(out + used, n - used, "{\"version\":\"%s\",\"modules\":[",
                              MODD_VERSION);
     for (int i = 0; i < g_nmods; i++) {
-        char id[96], err[200];
-        dp_json_escape(g_mods[i].id, id, sizeof(id));
-        dp_json_escape(g_mods[i].last_error, err, sizeof(err));
-        used += (size_t)snprintf(out + used, n - used,
-                                 "%s{\"id\":%s,\"state\":\"%s\",\"starts\":%d,"
-                                 "\"failures\":%d,\"last_error\":%s}",
-                                 i ? "," : "", id,
-                                 dp_module_state_name(g_mods[i].state),
-                                 g_mods[i].starts, g_mods[i].fail_n, err);
-        if (used >= n - 8)
+        const struct dp_module *m = &g_mods[i];
+        char name[160], err[160], row[496];
+        if (!dp_json_escape(m->name, name, sizeof(name)))
+            strcpy(name, "\"\"");
+        if (!dp_json_escape(m->last_error, err, sizeof(err)))
+            strcpy(err, "\"\"");
+        int length = snprintf(row, sizeof(row),
+                              "%s{\"id\":\"%s\",\"state\":\"%s\",\"enabled\":%s,"
+                              "\"on_demand\":%s,\"name\":%s,\"starts\":%d,"
+                              "\"failures\":%d,\"last_error\":%s}",
+                              i ? "," : "", m->id, dp_module_state_name(m->state),
+                              m->enabled ? "true" : "false", m->on_demand ? "true" : "false",
+                              name, m->starts, m->fail_n, err);
+        if (length < 0 || (size_t)length >= sizeof(row) || (size_t)length + 3 > n - used)
             break;
+        memcpy(out + used, row, (size_t)length);
+        used += (size_t)length;
     }
     snprintf(out + used, n - used, "]}");
 }
@@ -111,7 +170,7 @@ static int bring_up(struct dp_module *m)
 {
     char reply[MODD_MAX_LINE];
 
-    if (m->state == MODD_DISABLED)
+    if (!m->enabled || m->state == MODD_DISABLED)
         return -1;
     if (m->pid > 0 && m->state == MODD_READY)
         return 0;
@@ -153,7 +212,7 @@ static void handle_request(char *line, char *out, size_t out_n)
     }
 
     if (!strcmp(method, "status")) {
-        char payload[4096];
+        char payload[8000];
         status_json(payload, sizeof(payload));
         snprintf(out, out_n, "{\"jsonrpc\":\"2.0\",\"id\":%ld,\"result\":%s}", id, payload);
         return;
@@ -176,7 +235,7 @@ static void handle_request(char *line, char *out, size_t out_n)
         for (int i = 0; i < g_nmods; i++) {
             struct dp_module *m = &g_mods[i];
             char reply[MODD_MAX_LINE];
-            if (m->state == MODD_DISABLED)
+            if (!m->enabled || m->on_demand || m->state == MODD_DISABLED)
                 continue;
             if (bring_up(m) != 0)
                 continue;
@@ -206,6 +265,26 @@ static void handle_request(char *line, char *out, size_t out_n)
         return;
     }
 
+    if (!strcmp(method, "module.set_enabled")) {
+        long enabled;
+        if (!dp_json_get_int(line, "enabled", &enabled) || (enabled != 0 && enabled != 1))
+            snprintf(out, out_n,
+                     "{\"id\":%ld,\"error\":{\"message\":\"expected enabled=0 or 1\"}}", id);
+        else if (store_enabled(m, (int)enabled) != 0)
+            snprintf(out, out_n,
+                     "{\"id\":%ld,\"error\":{\"message\":\"cannot save module state\"}}", id);
+        else
+            snprintf(out, out_n, "{\"id\":%ld,\"result\":{\"enabled\":%s}}",
+                     id, m->enabled ? "true" : "false");
+        return;
+    }
+    if (!strcmp(method, "module.describe")) {
+        char description[sizeof(m->description) * 6 + 3];
+        dp_json_escape(m->description, description, sizeof(description));
+        snprintf(out, out_n, "{\"id\":%ld,\"result\":{\"description\":%s}}", id, description);
+        return;
+    }
+
     if (!strcmp(method, "initialize")) {
         if (bring_up(m) == 0)
             snprintf(out, out_n,
@@ -215,6 +294,8 @@ static void handle_request(char *line, char *out, size_t out_n)
             snprintf(out, out_n,
                      "{\"jsonrpc\":\"2.0\",\"id\":%ld,\"error\":{\"message\":\"initialize failed\"}}",
                      id);
+        if (m->on_demand)
+            dp_module_stop(m);
         return;
     }
 
@@ -234,10 +315,16 @@ static void handle_request(char *line, char *out, size_t out_n)
         snprintf(params, sizeof(params), "{\"action\":\"%s\"}", action);
         rc = dp_module_request(m, "action.invoke", params, action_timeout_ms(),
                                reply, sizeof(reply));
+        if (m->on_demand)
+            dp_module_stop(m);
         if (rc == 0) {
+            char message[256] = "", escaped[sizeof(message) * 6 + 3];
+            if (!dp_json_get_str(reply, "message", message, sizeof(message)))
+                message[0] = '\0';
+            dp_json_escape(message, escaped, sizeof(escaped));
             snprintf(out, out_n,
-                     "{\"jsonrpc\":\"2.0\",\"id\":%ld,\"result\":{\"ok\":true,\"module\":\"%s\"}}",
-                     id, m->id);
+                     "{\"jsonrpc\":\"2.0\",\"id\":%ld,\"result\":{\"ok\":true,\"module\":\"%s\","
+                     "\"message\":%s}}", id, m->id, escaped);
         } else {
             dp_module_fail(m, rc == -1 ? "action timeout" : "action failed");
             snprintf(out, out_n,

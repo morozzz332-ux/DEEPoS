@@ -95,6 +95,10 @@ int dp_module_load(struct dp_module *m, const char *dir)
                 snprintf(m->id, sizeof(m->id), "%s", value);
             else if (!strcmp(line, "enabled"))
                 m->enabled = strcmp(value, "false") != 0;
+            else if (!strcmp(line, "name"))
+                snprintf(m->name, sizeof(m->name), "%s", value);
+            else if (!strcmp(line, "description"))
+                snprintf(m->description, sizeof(m->description), "%s", value);
             else if (!strcmp(line, "entry"))
                 snprintf(m->entry, sizeof(m->entry), "%s", value);
             else if (!strcmp(line, "runtime"))
@@ -106,6 +110,8 @@ int dp_module_load(struct dp_module *m, const char *dir)
                 snprintf(m->entry, sizeof(m->entry), "%s", value);
             else if (!strcmp(line, "runtime"))
                 snprintf(m->runtime, sizeof(m->runtime), "%s", value);
+            else if (!strcmp(line, "mode"))
+                m->on_demand = !strcmp(value, "ondemand");
         } else if (!strcmp(section, "limits")) {
             if (!strcmp(line, "memory_mb"))
                 m->memory_mb = atoi(value);

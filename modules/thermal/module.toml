@@ -1,6 +1,7 @@
 # DEEPoS module manifest (api 3, Arch-R compatible shape).
 id = "thermal"
 name = "Температура и профили"
+description = "Открывает настройки профиля процессора по X. Температуры доступны в разделе Сведения."
 api_version = 3
 version = "0.1.0"
 

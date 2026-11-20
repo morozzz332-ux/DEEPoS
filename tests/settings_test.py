@@ -4,6 +4,7 @@
 Checks the real launcher binary, the real settings.toml on the DATA tree and
 the profile file the modules read.
 """
+import datetime
 import pathlib
 import subprocess
 import sys
@@ -112,6 +113,22 @@ def main():
         check("RetroArch launch override passes the three selected preferences",
               set(result.stdout.splitlines()) == {'video_smooth = "true"',
                   'fps_show = "true"', 'video_scale_integer = "true"'}, result.stdout)
+
+        clock = data / "config" / "clock"
+        february = datetime.datetime(2024, 2, 29, 12, tzinfo=datetime.timezone.utc)
+        clock.write_text(f"UTC {int(february.timestamp())}\n")
+        p = run(roms, data, "DOWN,DOWN,DOWN,DOWN,RIGHT,A,DOWN,DOWN,A")
+        check("region list saves the named time zone with the same UTC timestamp",
+              p.returncode == 0 and clock.read_text() ==
+              f"Europe/Moscow {int(february.timestamp())}\n")
+        p = run(roms, data, "DOWN,DOWN,DOWN,DOWN,A,RIGHT,DOWN,A")
+        january = february.replace(month=1)
+        check("date editor changes the month and saves the corresponding UTC timestamp",
+              p.returncode == 0 and clock.read_text() ==
+              f"Europe/Moscow {int(january.timestamp())}\n")
+        run(roms, data, "DOWN,DOWN,DOWN,DOWN,A,UP,B")
+        check("B discards the date draft",
+              clock.read_text() == f"Europe/Moscow {int(january.timestamp())}\n")
 
     if failures:
         print(f"\nFAIL  settings: {len(failures)} problem(s)")

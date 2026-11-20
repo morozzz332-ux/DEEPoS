@@ -47,6 +47,42 @@ mount_boot_card() {
     mount_part "$card_path" "${card}p5" /storage && roms_mounted=yes
 }
 
+mount_game_card() {
+    best=; best_score=0; best_size=0
+    for reader in /sys/block/mmcblk[0-9]; do
+        disk=${reader##*/}
+        [ "$disk" != "$card" ] && [ -n "$card" ] || continue
+        [ "$(cat "$reader/device/type" 2>/dev/null)" = SD ] || continue
+        for partition in "$reader"/"${disk}"p[0-9]* "$reader"; do
+            device="/dev/${partition##*/}"
+            [ -b "$device" ] || continue
+            info=$(blkid "$device" 2>/dev/null)
+            case "$info" in
+                *'LABEL="BOOT"'*|*'LABEL="ARCHR"'*|*'LABEL="DATA"'*) continue ;;
+            esac
+            case "$info" in
+                *'TYPE="exfat"'*) fs=exfat; score=3 ;;
+                *'TYPE="vfat"'*) fs=vfat; score=2 ;;
+                *'TYPE="ext4"'*) fs=ext4; score=1 ;;
+                *) continue ;;
+            esac
+            case "$info" in *'LABEL="ROMS"'*|*'LABEL="EASYROMS"'*|*'LABEL="GAMES"'*) score=4 ;; esac
+            sectors=$(cat "$partition/size" 2>/dev/null)
+            case "$sectors" in ''|*[!0-9]*) continue ;; esac
+            if [ "$score" -gt "$best_score" ] ||
+                { [ "$score" -eq "$best_score" ] && [ "$sectors" -gt "$best_size" ]; }; then
+                best=$device; best_fs=$fs; best_score=$score; best_size=$sectors
+            fi
+        done
+    done
+    [ -n "$best" ] || return 0
+    options=ro,nosuid,nodev,noexec
+    [ "$best_fs" != ext4 ] || options=$options,noload
+    if is_mounted /games || mount -t "$best_fs" -o "$options" "$best" /games; then
+        printf '%s\n' "$best" > /run/deepos-tf2-device
+    fi
+}
+
 # 1. Kernel filesystems. All best-effort: init may run on a re-exec or with
 #    devtmpfs already mounted by the kernel.
 mount -t proc     proc     /proc                 2>/dev/null || true
@@ -80,6 +116,9 @@ fi
 mount_boot_card /proc/self/mountinfo /sys/dev/block
 if [ "$roms_mounted" = yes ] && is_mounted /run; then
     printf '/dev/%sp5\n' "$card" > /run/deepos-roms-device
+fi
+if is_mounted /run && [ -d /games ]; then
+    mount_game_card
 fi
 
 # 4. Writable places the launcher expects even on a fresh card.
@@ -115,6 +154,15 @@ refresh_module_entry() {
         mv -f "$module_dir/.main.new" "$module_dir/main.sh"
 }
 if [ "$data_mounted" = yes ]; then
+    for module in battery storage emulators; do
+        [ ! -e "/data/modules/$module" ] && [ ! -L "/data/modules/$module" ] || continue
+        staged=$(mktemp -d /data/modules/.install.XXXXXX) || continue
+        if cp -a "/usr/share/deepos/modules/$module/." "$staged/"; then
+            mv -T "$staged" "/data/modules/$module" || rm -rf "$staged"
+        else
+            rm -rf "$staged"
+        fi
+    done
     refresh_module_entry thermal 5ce8d705136069f03cebbb17739e50022d23e8a1ff2a6bcf6171a415f9318cfd
     refresh_module_entry saves 59800fb67dd10a1f304d8b77bad021e4ce23e1e3406a5b6deba324491a76fbe0
     old_registry=$(sha256sum /data/emulators.toml 2>/dev/null)
@@ -126,6 +174,14 @@ fi
 if [ "$roms_mounted" = yes ] && [ ! -d /storage/ports ]; then
     mkdir -p /storage/ports 2>/dev/null || true
     cp -a /usr/share/deepos/roms/. /storage/ 2>/dev/null || true
+fi
+if [ "$roms_mounted" = yes ] && [ ! -f /storage/.deepos-folders-v1 ] &&
+   [ -r /usr/share/deepos/rom-folders.txt ]; then
+    set --
+    while IFS= read -r folder; do
+        [ -z "$folder" ] || set -- "$@" "/storage/$folder"
+    done < /usr/share/deepos/rom-folders.txt
+    mkdir -p "$@" /storage/modules && touch /storage/.deepos-folders-v1
 fi
 
 # Start modd after provisioning so its socket is available on the first boot.
@@ -167,6 +223,7 @@ if [ "$flash_mounted" = yes ]; then
             echo "gpu_cur: $(cat /sys/class/devfreq/ff400000.gpu/cur_freq 2>/dev/null)"
         } > $rep/cpufreq.txt 2>/dev/null || true
         ls /data/modules 2>/dev/null > $rep/modules.txt || true
+        cat /run/deepos-tf2-device 2>/dev/null > "$rep/tf2.txt" || true
         dmesg 2>/dev/null | grep -iE "joypad|input:|evdev" > $rep/input-dmesg.txt || true
         ls -l /dev/input > $rep/input-devices.txt 2>/dev/null || true
         grep joypad /proc/modules > $rep/input-modules.txt 2>/dev/null || true

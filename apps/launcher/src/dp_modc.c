@@ -102,18 +102,61 @@ static int take_string(const char *p, char *dst, size_t dst_len, const char **ne
     p++;
     size_t used = 0;
     while (*p && *p != '"') {
-        if (*p == '\\' && p[1])
+        char ch = *p;
+        if (*p == '\\' && p[1]) {
             p++;
+            ch = *p;
+            if (ch == 'n')
+                ch = '\n';
+            else if (ch == 'u' && strspn(p + 1, "0123456789abcdefABCDEF") >= 4) {
+                ch = ' ';
+                p += 4;
+            }
+        }
         if (used + 1 < dst_len)
-            dst[used++] = *p;
+            dst[used++] = ch;
         p++;
     }
     if (*p != '"')
         return -1;
-    dst[used] = '\0';
+    if (dst_len)
+        dst[used] = '\0';
     if (next)
         *next = p + 1;
     return 0;
+}
+
+static int get_string(const char *json, const char *key, char *out, size_t size)
+{
+    const char *field = strstr(json, key);
+    return field ? take_string(field + strlen(key), out, size, NULL) : -1;
+}
+
+int dp_modc_set_enabled(const char *socket_path, const char *module_id, int enabled)
+{
+    char params[128], payload[128];
+    snprintf(params, sizeof(params), "{\"module\":\"%s\",\"enabled\":%d}", module_id, !!enabled);
+    if (dp_modc_call(socket_path, "module.set_enabled", params, payload, sizeof(payload)) != 0)
+        return -1;
+    return strstr(payload, enabled ? "\"enabled\":true" : "\"enabled\":false") ? 0 : -1;
+}
+
+int dp_modc_describe(const char *socket_path, const char *module_id, char *out, size_t size)
+{
+    char params[128], payload[DP_MOD_TEXT * 6 + 64];
+    snprintf(params, sizeof(params), "{\"module\":\"%s\"}", module_id);
+    if (dp_modc_call(socket_path, "module.describe", params, payload, sizeof(payload)) != 0)
+        return -1;
+    return get_string(payload, "\"description\":", out, size);
+}
+
+int dp_modc_inspect(const char *socket_path, const char *module_id, char *out, size_t size)
+{
+    char params[128], payload[DP_MOD_TEXT * 6 + 128];
+    snprintf(params, sizeof(params), "{\"module\":\"%s\",\"action\":\"inspect\"}", module_id);
+    if (dp_modc_call(socket_path, "action.invoke", params, payload, sizeof(payload)) != 0)
+        return -1;
+    return get_string(payload, "\"message\":", out, size);
 }
 
 int dp_modc_action(const char *socket_path, const char *module_id, const char *action)
@@ -152,32 +195,35 @@ int dp_modc_status(const char *socket_path, struct dp_model *m)
         return -1;
 
     m->nmods = 0;
-    const char *mods = strstr(payload, "\"modules\":[");
+    char *mods = strstr(payload, "\"modules\":[");
     if (!mods)
         return -1;
-    const char *p = mods + strlen("\"modules\":[");
-
-    while (*p && m->nmods < DP_MAX_MODULES) {
-        const char *id = strstr(p, "\"id\":");
-        if (!id)
-            break;
-        id += strlen("\"id\":");
-        struct dp_module_info *mi = &m->mods[m->nmods];
-        if (take_string(id, mi->id, sizeof(mi->id), &p) != 0)
-            return -1;
-        const char *st = strstr(p, "\"state\":");
-        if (st) {
-            st += strlen("\"state\":");
-            if (take_string(st, mi->state, sizeof(mi->state), &p) != 0)
-                return -1;
-        } else {
-            snprintf(mi->state, sizeof(mi->state), "unknown");
+    char *p = mods + strlen("\"modules\":[");
+    while (*p == '{' && m->nmods < DP_MAX_MODULES) {
+        const char *end = p + 1;
+        while (*end && *end != '}') {
+            if (*end == '"') {
+                if (take_string(end, NULL, 0, &end) != 0)
+                    return -1;
+            } else {
+                end++;
+            }
         }
+        if (*end != '}')
+            return -1;
+        char *next = p + (end - p);
+        *next++ = '\0';
+        struct dp_module_info *mi = &m->mods[m->nmods];
+        memset(mi, 0, sizeof(*mi));
+        if (get_string(p, "\"id\":", mi->id, sizeof(mi->id)) != 0)
+            return -1;
+        if (get_string(p, "\"state\":", mi->state, sizeof(mi->state)) != 0)
+            snprintf(mi->state, sizeof(mi->state), "unknown");
+        get_string(p, "\"name\":", mi->name, sizeof(mi->name));
+        mi->enabled = !strstr(p, "\"enabled\":false");
+        mi->on_demand = strstr(p, "\"on_demand\":true") != NULL;
         m->nmods++;
-        const char *next_obj = strchr(p, '{');
-        if (!next_obj)
-            break;
-        p = next_obj;
+        p = *next == ',' ? next + 1 : next;
     }
     return 0;
 }

@@ -1,0 +1,13 @@
+id = "emulators"
+name = "Эмуляторы"
+description = "Проверяет наличие RetroArch и считает установленные ядра. Нажмите X, чтобы посмотреть результат."
+api_version = 3
+version = "0.1.0"
+
+[run]
+runtime = "sh"
+entry = "main.sh"
+mode = "ondemand"
+
+[limits]
+memory_mb = 8

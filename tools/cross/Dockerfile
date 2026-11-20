@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu libc6-dev-arm64-cross \
         gcc-arm-none-eabi \
         python3 python3-pillow python3-pyelftools xz-utils wget ca-certificates \
-        device-tree-compiler dosfstools mtools squashfs-tools \
+        device-tree-compiler dosfstools mtools squashfs-tools tzdata \
         e2fsprogs exfatprogs make git rsync file \
     && rm -rf /var/lib/apt/lists/*
 

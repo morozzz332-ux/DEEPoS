@@ -1,6 +1,7 @@
 # DEEPoS module manifest (api 3, Arch-R compatible shape).
 id = "saves"
 name = "Бэкап сейвов"
+description = "По X создаёт резервную копию сохранений RetroArch на разделе DATA."
 api_version = 3
 version = "0.1.0"
 

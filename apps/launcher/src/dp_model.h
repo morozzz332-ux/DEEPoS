@@ -13,16 +13,28 @@
 #define DP_SYS_NAME 40
 #define DP_TITLE_LEN 64
 #define DP_ROM_NAME 256
-#define DP_MAX_MODULES 8
-#define DP_MOD_ID 32
+#define DP_MAX_MODULES 16
+#define DP_MOD_ID 48
 #define DP_MOD_STATE 16
+#define DP_MOD_TEXT 256
+#define DP_SETTINGS_CLOCK 12
+#define DP_SETTINGS_REGION 13
+#define DP_SETTINGS_COUNT 14
+
+enum dp_rom_source { DP_ROM_AUTO, DP_ROM_TF1, DP_ROM_TF2 };
 
 struct dp_system {
     char id[DP_SYS_ID];       /* directory name, lower-case */
     char name[DP_SYS_NAME];   /* human readable */
-    char folder[DP_SYS_ID + 5]; /* original path relative to library root */
+    char folders[2][DP_SYS_ID + 5]; /* relative path on each card */
     char extensions[256];
     unsigned games;
+    unsigned tf2_games;
+};
+
+struct dp_rom_item {
+    char *name;
+    enum dp_rom_source source;
 };
 
 struct dp_continue_item {
@@ -33,11 +45,15 @@ struct dp_continue_item {
     int has_save;
     char sys_id[32];          /* folder id, e.g. "md" */
     char rom[DP_ROM_NAME];    /* file name inside the system folder */
+    enum dp_rom_source source;
 };
 
 struct dp_module_info {
     char id[DP_MOD_ID];       /* module id from module.toml */
     char state[DP_MOD_STATE]; /* ready / stopped / disabled / unknown */
+    char name[96];
+    int enabled;
+    int on_demand;
 };
 
 struct dp_status {
@@ -66,7 +82,7 @@ struct dp_model {
     struct dp_system systems[DP_MAX_SYSTEMS];
     int nsys;
     unsigned total_games;
-    char **rom_names;         /* sorted file names for the open system */
+    struct dp_rom_item *roms;  /* sorted files for the open system */
     int nroms;
 
     struct dp_continue_item cont[DP_MAX_CONTINUE];
@@ -78,6 +94,8 @@ struct dp_model {
     /* 1 when the runtime directory is usable right now */
     int data_ok;
     int roms_ok;
+    int tf2_ok;
+    const char *tf2_root;
 
     int cfg_brightness;
     int cfg_volume;
@@ -85,6 +103,8 @@ struct dp_model {
     char usb_mode[12];
     char usb_link[24];
     char cfg_profile[16];
+    char clock_date[16];
+    int clock_zone;
     int nmods;
     int modules_online;
 
@@ -103,6 +123,9 @@ void dp_model_free(struct dp_model *m);
 
 /* Counts ROM files per system directory. Returns number of systems found or -1. */
 int dp_model_scan(struct dp_model *m, const char *roms_dir);
+enum dp_rom_source dp_model_rom_path(const struct dp_model *m, const char *roms_dir,
+                                     const char *id, const char *rom, enum dp_rom_source source,
+                                     char *path, size_t size);
 int dp_model_load_games(struct dp_model *m, const char *roms_dir, int system_index);
 
 /* Reads "<title>\t<system>\t<meta>\t<slot>\t<save>" lines; missing file is not an error. */

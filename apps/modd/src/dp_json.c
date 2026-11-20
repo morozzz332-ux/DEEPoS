@@ -62,6 +62,8 @@ static const char *unescape(const char *p, char *out, size_t n)
     while (*p && *p != '"') {
         char ch = *p++;
         if (ch == '\\') {
+            if (!*p)
+                return NULL;
             char esc = *p++;
             switch (esc) {
             case 'n': ch = '\n'; break;
@@ -74,6 +76,8 @@ static const char *unescape(const char *p, char *out, size_t n)
             case '"': ch = '"'; break;
             case 'u':
                 /* keep the 4 hex digits as a single placeholder */
+                if (strspn(p, "0123456789abcdefABCDEF") < 4)
+                    return NULL;
                 p += 4;
                 ch = '?';
                 break;
@@ -99,8 +103,8 @@ int dp_json_get_str(const char *json, const char *key, char *out, size_t n)
     p = skip_ws(p + 1);
     if (*p != '"')
         return 0;
-    unescape(p + 1, out, n);
-    return 1;
+    const char *end = unescape(p + 1, out, n);
+    return end && *end == '"';
 }
 
 size_t dp_json_escape(const char *in, char *out, size_t n)
@@ -122,7 +126,7 @@ size_t dp_json_escape(const char *in, char *out, size_t n)
         default:
             break;
         }
-        if (ch < 0x20) {
+        if (!rep && ch < 0x20) {
             snprintf(buf, sizeof(buf), "\\u%04x", ch);
             rep = buf;
         }

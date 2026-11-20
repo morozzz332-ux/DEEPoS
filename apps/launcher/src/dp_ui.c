@@ -345,8 +345,9 @@ static void dp_screen_systems(struct dp_canvas *cv, const struct dp_model *m, in
     dp_section(cv, "ИГРЫ / СИСТЕМЫ", meta);
 
     if (m->nsys == 0) {
-        dp_empty(cv, m->roms_ok ? "Библиотека пуста" : "Раздел ROMS недоступен",
-                 m->roms_ok ? "Скопируйте игры в папки систем на карте" : NULL);
+        int available = m->roms_ok || m->tf2_ok;
+        dp_empty(cv, available ? "Библиотека пуста" : "Раздел ROMS недоступен",
+                 available ? "Скопируйте игры в папки систем на карте" : NULL);
         dp_hints(cv, NULL, 0, "Главная");
         return;
     }
@@ -430,7 +431,11 @@ static void dp_screen_games(struct dp_canvas *cv, const struct dp_model *m, int 
         int iw = dp_text_small_w(idx, 1);
         dp_row_frame(cv, 8, y, DP_W - 16, rh - 1, i == selected);
         dp_text_small(cv, 20, y + 10, idx, DP_COL_FG3, 1);
-        dp_text_fit(cv, 20 + iw + 14, y + 7, DP_W - 70 - iw, m->rom_names[i], DP_COL_FG, 0);
+        dp_text_fit(cv, 20 + iw + 14, y + 7, DP_W - (m->tf2_ok ? 114 : 70) - iw,
+                    m->roms[i].name, DP_COL_FG, 0);
+        if (m->tf2_ok)
+            dp_text_small(cv, DP_W - 55, y + 10,
+                          m->roms[i].source == DP_ROM_TF2 ? "TF2" : "TF1", DP_COL_FG2, 1);
         dp_hline(cv, 20, y + rh - 1, DP_W - 40, DP_COL_LINE);
         y += rh;
     }
@@ -458,10 +463,10 @@ static const char *preference_label(int value)
 static void dp_screen_settings(struct dp_canvas *cv, const struct dp_model *m, int selected)
 {
     char meta[32];
-    snprintf(meta, sizeof(meta), "%d параметров", 12);
+    snprintf(meta, sizeof(meta), "%d параметров", DP_SETTINGS_COUNT);
     dp_section(cv, "НАСТРОЙКИ", meta);
 
-    struct dp_setting_card cards[12];
+    struct dp_setting_card cards[DP_SETTINGS_COUNT];
     memset(cards, 0, sizeof(cards));
     cards[0].title = "Звуки меню";
     cards[0].editable = 1;
@@ -506,16 +511,25 @@ static void dp_screen_settings(struct dp_canvas *cv, const struct dp_model *m, i
     cards[11].editable = 1;
     snprintf(cards[11].sub, sizeof(cards[11].sub), "%s", m->prefs[DP_PREF_INTEGER] == 1 ?
              "Целые пиксели" : m->prefs[DP_PREF_INTEGER] == 2 ? "По экрану" : "Из RetroArch");
+    cards[DP_SETTINGS_CLOCK].title = "Дата и время";
+    cards[DP_SETTINGS_CLOCK].editable = 1;
+    snprintf(cards[DP_SETTINGS_CLOCK].sub, sizeof(cards[DP_SETTINGS_CLOCK].sub), "%s %s",
+             m->clock_date[0] ? m->clock_date : "Установить", m->st.clock);
+    cards[DP_SETTINGS_REGION].title = "Регион";
+    cards[DP_SETTINGS_REGION].editable = 1;
+    snprintf(cards[DP_SETTINGS_REGION].sub, sizeof(cards[DP_SETTINGS_REGION].sub), "%s",
+             dp_clock_zone_label(m->clock_zone));
 
     const int cols = 3, gap = 10;
     const int cw = (DP_W - 2 * DP_PAD - (cols - 1) * gap) / cols;
     const int ch = 82;
     const int y0 = DP_BODY_Y0 + 8;
 
-    for (int i = 0; i < 12; i++) {
+    int first = (selected / cols >= 4) ? cols : 0;
+    for (int i = first; i < DP_SETTINGS_COUNT && i < first + 4 * cols; i++) {
         int col = i % cols, row = i / cols;
         int cx = DP_PAD + col * (cw + gap);
-        int cy = y0 + row * (ch + 8);
+        int cy = y0 + (row - first / cols) * (ch + 8);
         int sel = i == selected;
         dp_rect(cv, cx, cy, cw, ch, sel ? DP_COL_SEL : DP_COL_PANEL);
         dp_frame(cv, cx, cy, cw, ch, sel ? DP_COL_ACC : DP_COL_LINE);
@@ -539,6 +553,41 @@ static void dp_screen_settings(struct dp_canvas *cv, const struct dp_model *m, i
     dp_hints(cv, items, 3, "Главная");
 }
 
+void dp_ui_clock(struct dp_canvas *cv, int region, int selected, const struct tm *draft)
+{
+    const int x = 40, w = DP_W - 2 * x;
+    const int y = region ? 82 : 142, h = region ? 356 : 194;
+    dp_rect(cv, x, y, w, h, DP_COL_PANEL2);
+    dp_frame(cv, x, y, w, h, DP_COL_ACC);
+    dp_text(cv, x + 20, y + 16, region ? "РЕГИОН И ЧАСОВОЙ ПОЯС" : "ДАТА И ВРЕМЯ",
+            DP_COL_FG, 1);
+    dp_hline(cv, x + 20, y + 47, w - 40, DP_COL_LINE);
+    if (region) {
+        int first = dp_first_visible(selected, 8);
+        for (int i = first; i < dp_clock_zone_count() && i < first + 8; i++) {
+            int row = y + 54 + (i - first) * 30;
+            dp_row_frame(cv, x + 16, row, w - 32, 28, i == selected);
+            dp_text_fit(cv, x + 28, row + 6, w - 56, dp_clock_zone_label(i), DP_COL_FG, 1);
+        }
+    } else {
+        const char *labels[] = { "День", "Месяц", "Год", "Часы", "Минуты" };
+        const int values[] = { draft->tm_mday, draft->tm_mon + 1, draft->tm_year + 1900,
+                               draft->tm_hour, draft->tm_min };
+        const int cell = (w - 40) / DP_CLOCK_FIELDS;
+        for (int i = 0; i < DP_CLOCK_FIELDS; i++) {
+            int left = x + 20 + i * cell;
+            char text[16];
+            snprintf(text, sizeof(text), "%02d", values[i]);
+            dp_row_frame(cv, left, y + 60, cell - 5, 66, i == selected);
+            dp_text_small(cv, left + 9, y + 68, labels[i], DP_COL_FG2, 1);
+            dp_text(cv, left + 9, y + 94, text, DP_COL_FG, 1);
+        }
+    }
+    dp_text_small(cv, x + 20, y + h - 29,
+                  region ? "↑↓ Список     A Сохранить     B Отмена" :
+                           "←→ Поле   ↑↓ Значение   A Сохранить   B Отмена", DP_COL_ACC, 1);
+}
+
 static const char *mod_state_label(const char *state)
 {
     if (strcmp(state, "ready") == 0)
@@ -546,8 +595,21 @@ static const char *mod_state_label(const char *state)
     if (strcmp(state, "stopped") == 0)
         return "остановлен";
     if (strcmp(state, "disabled") == 0)
-        return "отключён";
+        return "автоотключение";
+    if (strcmp(state, "failed") == 0)
+        return "сбой";
     return "неизвестно";
+}
+
+static const char *module_name(const struct dp_module_info *module)
+{
+    if (module->name[0])
+        return module->name;
+    if (strcmp(module->id, "thermal") == 0)
+        return "Температура и профили";
+    if (strcmp(module->id, "saves") == 0)
+        return "Резервные копии сейвов";
+    return module->id;
 }
 
 static void dp_screen_modules(struct dp_canvas *cv, const struct dp_model *m, int selected)
@@ -559,7 +621,7 @@ static void dp_screen_modules(struct dp_canvas *cv, const struct dp_model *m, in
     if (!m->nmods) {
         dp_empty(cv, m->modules_online ? "Нет установленных модулей" : "Модули недоступны",
                  m->modules_online ? "Папка /data/modules" : "Проверьте DATA и службу modd");
-        const struct dp_hint hints[] = { { "X", "Установка" } };
+        const struct dp_hint hints[] = { { "START", "Установка" } };
         dp_hints(cv, hints, 1, "Главная");
         return;
     }
@@ -570,25 +632,67 @@ static void dp_screen_modules(struct dp_canvas *cv, const struct dp_model *m, in
     const int first = dp_first_visible(selected, rows);
     int y = y0;
     for (int i = first; i < m->nmods && i < first + rows; i++) {
-        const char *state = mod_state_label(m->mods[i].state);
-        const char *id = m->mods[i].id;
-        const char *name = strcmp(id, "thermal") == 0 ? "Температура и профили" :
-                           strcmp(id, "saves") == 0 ? "Резервные копии сейвов" : id;
-        uint16_t color = strcmp(m->mods[i].state, "ready") == 0 ? DP_COL_ACC : DP_COL_FG2;
-        int right = DP_W - 20 - dp_text_small_w(state, 1);
+        const struct dp_module_info *module = &m->mods[i];
+        const char *state = !module->enabled ? "" :
+                            module->on_demand && strcmp(module->state, "stopped") == 0 ?
+                            "По запросу" : mod_state_label(module->state);
+        int active = module->enabled && strcmp(module->state, "disabled") != 0;
+        const char *toggle = active ? "Вкл" : "Выкл";
+        const int toggle_x = DP_W - 78;
+        int right = toggle_x - 18 - dp_text_small_w(state, 1);
         dp_row_frame(cv, 8, y, DP_W - 16, rh - 1, i == selected);
-        dp_text_fit(cv, 20, y + 15, right - 40, name, DP_COL_FG, 0);
-        dp_text_small(cv, right, y + 18, state, color, 1);
+        dp_text_fit(cv, 20, y + 15, right - 34, module_name(module), DP_COL_FG, 0);
+        dp_text_small(cv, right, y + 18, state, DP_COL_FG2, 1);
+        uint16_t color = active ? DP_COL_ACC : DP_COL_FG2;
+        dp_frame(cv, toggle_x, y + 10, 54, 31, color);
+        dp_text_small(cv, toggle_x + (54 - dp_text_small_w(toggle, 1)) / 2, y + 18,
+                      toggle, color, 1);
         dp_hline(cv, 20, y + rh - 1, DP_W - 40, DP_COL_LINE);
         y += rh;
     }
-    const char *id = m->mods[selected].id;
+    const struct dp_module_info *module = &m->mods[selected];
+    const char *action = module->on_demand ? "Показать" :
+                         strcmp(module->id, "saves") == 0 ? "Копия" : "Профиль";
+    int has_action = module->on_demand || strcmp(module->id, "thermal") == 0 ||
+                     strcmp(module->id, "saves") == 0;
     const struct dp_hint hints[] = {
-        { "L1/R1", "Вкладки" },
-        { "X", "Установка" },
-        { "A", strcmp(id, "saves") == 0 ? "Создать копию" : "Профиль CPU" },
+        { "A", "Вкл/Выкл" },
+        { "Y", "Описание" },
+        { has_action ? "X" : "START", has_action ? action : "Установка" },
+        { "START", "Установка" },
     };
-    dp_hints(cv, hints, strcmp(id, "thermal") == 0 || strcmp(id, "saves") == 0 ? 3 : 2, "Назад");
+    dp_hints(cv, hints, has_action ? 4 : 3, "Назад");
+}
+
+void dp_ui_module_details(struct dp_canvas *cv, const struct dp_module_info *module,
+                          const char *message)
+{
+    const int x = 48, y = 112, w = DP_W - 2 * x, h = 230;
+    char line[DP_MOD_TEXT];
+    dp_rect(cv, x, y, w, h, DP_COL_PANEL2);
+    dp_frame(cv, x, y, w, h, DP_COL_ACC);
+    dp_text_fit(cv, x + 20, y + 18, w - 40,
+                module ? module_name(module) : "Установка модуля", DP_COL_FG, 0);
+    dp_hline(cv, x + 20, y + 50, w - 40, DP_COL_LINE);
+    for (int row = 0; *message && row < 5; row++) {
+        size_t length = strcspn(message, "\n");
+        memcpy(line, message, length);
+        line[length] = '\0';
+        while (dp_text_small_w(line, 1) > w - 40) {
+            char *space = strrchr(line, ' ');
+            if (!space)
+                break;
+            *space = '\0';
+        }
+        dp_text_fit(cv, x + 20, y + 64 + row * 24, w - 40, line, DP_COL_FG, 1);
+        message += strlen(line);
+        while (*message == ' ')
+            message++;
+        if (*message == '\n')
+            message++;
+    }
+    dp_text_small(cv, x + 20, y + h - 30, module ? "B / Y  Закрыть" :
+                  "A  Импорт     B / Y  Закрыть", DP_COL_ACC, 1);
 }
 
 static void dp_screen_files(struct dp_canvas *cv, const struct dp_model *m, int selected)
@@ -602,10 +706,18 @@ static void dp_screen_files(struct dp_canvas *cv, const struct dp_model *m, int 
         snprintf(usage, sizeof(usage), "%s", m->roms_ok ? "Папка доступна" : "Папка недоступна");
     char library[64];
     dp_library_summary(library, sizeof(library), m);
+    char tf2[64] = "Карта не подключена";
+    if (m->tf2_ok) {
+        unsigned count = 0;
+        for (int i = 0; i < m->nsys; i++)
+            count += m->systems[i].tf2_games;
+        snprintf(tf2, sizeof(tf2), "Карта подключена · %u %s", count, dp_games_word(count));
+    }
 
     const char *rows[][2] = {
         { "DATA", m->data_ok ? "Доступна запись настроек и сейвов" : "Запись недоступна" },
         { "ROMS", strcmp(m->usb_mode, "files") == 0 ? "Извлеките диск на ПК, затем нажмите A" : usage },
+        { "TF2 Game", tf2 },
         { "Библиотека", library },
     };
 

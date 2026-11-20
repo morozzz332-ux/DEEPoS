@@ -20,7 +20,20 @@ fi
 hotkeys=/usr/share/deepos/retroarch-hotkeys.cfg
 overrides=/run/deepos-retroarch.cfg
 tmp=$(mktemp /run/deepos-retroarch.XXXXXX)
-if (cat "$hotkeys" && /usr/bin/launcher --print-retroarch-config) > "$tmp" &&
+print_overrides() {
+    cat "$hotkeys" && /usr/bin/launcher --print-retroarch-config || return 1
+    case "$rom" in /games/*)
+        for bios in /games/bios /games/roms/bios; do
+            [ -d "$bios" ] || continue
+            for entry in "$bios"/*; do
+                [ -f "$entry" ] || [ -d "$entry" ] || continue
+                printf 'system_directory = "%s"\n' "$bios"
+                return
+            done
+        done ;;
+    esac
+}
+if print_overrides > "$tmp" &&
    mv -f "$tmp" "$overrides"; then
     hotkeys=$overrides
 else

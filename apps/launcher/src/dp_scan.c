@@ -84,8 +84,8 @@ void dp_model_free(struct dp_model *m)
 {
     if (m) {
         for (int i = 0; i < m->nroms; i++)
-            free(m->rom_names[i]);
-        free(m->rom_names);
+            free(m->roms[i].name);
+        free(m->roms);
     }
     free(m);
 }
@@ -138,7 +138,8 @@ static void system_extensions(FILE *registry, struct dp_system *system)
     }
 }
 
-static int scan_library(struct dp_model *m, const char *roms_dir, const char *prefix, FILE *registry)
+static int scan_library(struct dp_model *m, const char *roms_dir, const char *prefix,
+                        FILE *registry, enum dp_rom_source source)
 {
     char root[1024];
     if (snprintf(root, sizeof(root), "%s/%s", roms_dir, prefix) >= (int)sizeof(root))
@@ -147,31 +148,42 @@ static int scan_library(struct dp_model *m, const char *roms_dir, const char *pr
     if (!d)
         return -1;
     struct dirent *e;
-    while ((e = readdir(d)) != NULL && m->nsys < DP_MAX_SYSTEMS) {
+    while ((e = readdir(d)) != NULL) {
         if (e->d_name[0] == '.' || strlen(e->d_name) >= DP_SYS_ID ||
-            strcasecmp(e->d_name, "bios") == 0 || strcasecmp(e->d_name, "roms") == 0)
+            strcasecmp(e->d_name, "bios") == 0 || strcasecmp(e->d_name, "roms") == 0 ||
+            strcasecmp(e->d_name, "modules") == 0)
             continue;
         struct dp_system s = {0};
+        char *folder = s.folders[source - 1];
         snprintf(s.id, sizeof(s.id), "%.23s", e->d_name);
-        snprintf(s.folder, sizeof(s.folder), "%.5s%.23s", prefix, e->d_name);
+        snprintf(folder, sizeof(s.folders[0]), "%.5s%.23s", prefix, e->d_name);
         for (char *p = s.id; *p; p++) {
             if (*p >= 'A' && *p <= 'Z')
                 *p = (char)(*p - 'A' + 'a');
         }
-        int duplicate = 0;
-        for (int i = 0; i < m->nsys; i++)
-            if (strcmp(m->systems[i].id, s.id) == 0)
-                duplicate = 1;
-        if (duplicate)
+        int existing = 0;
+        while (existing < m->nsys && strcmp(m->systems[existing].id, s.id) != 0)
+            existing++;
+        if ((existing == m->nsys && m->nsys >= DP_MAX_SYSTEMS) ||
+            (existing < m->nsys && m->systems[existing].folders[source - 1][0]))
             continue;
         char path[2048];
-        snprintf(path, sizeof(path), "%s/%s", roms_dir, s.folder);
+        snprintf(path, sizeof(path), "%s/%s", roms_dir, folder);
         system_extensions(registry, &s);
         s.games = (unsigned)dp_count_roms(path, s.extensions);
         if (!s.games)
             continue;
-        dp_system_name(s.id, s.name, sizeof(s.name));
-        m->systems[m->nsys++] = s;
+        if (existing == m->nsys) {
+            dp_system_name(s.id, s.name, sizeof(s.name));
+            s.tf2_games = source == DP_ROM_TF2 ? s.games : 0;
+            m->systems[m->nsys++] = s;
+        } else {
+            struct dp_system *target = &m->systems[existing];
+            snprintf(target->folders[source - 1], sizeof(target->folders[0]), "%s", folder);
+            target->games += s.games;
+            if (source == DP_ROM_TF2)
+                target->tf2_games = s.games;
+        }
         m->total_games += s.games;
     }
     closedir(d);
@@ -183,12 +195,15 @@ int dp_model_scan(struct dp_model *m, const char *roms_dir)
     m->nsys = 0;
     m->total_games = 0;
     FILE *registry = fopen("/data/emus/extensions.tsv", "r");
-    m->roms_ok = scan_library(m, roms_dir, "", registry) == 0;
+    m->roms_ok = scan_library(m, roms_dir, "", registry, DP_ROM_TF1) == 0;
     if (m->roms_ok)
-        scan_library(m, roms_dir, "roms/", registry);
+        scan_library(m, roms_dir, "roms/", registry, DP_ROM_TF1);
+    m->tf2_ok = m->tf2_root && scan_library(m, m->tf2_root, "", registry, DP_ROM_TF2) == 0;
+    if (m->tf2_ok)
+        scan_library(m, m->tf2_root, "roms/", registry, DP_ROM_TF2);
     if (registry)
         fclose(registry);
-    if (!m->roms_ok)
+    if (!m->roms_ok && !m->tf2_ok)
         return -1;
     qsort(m->systems, (size_t)m->nsys, sizeof(m->systems[0]), dp_sys_cmp);
     return m->nsys;
@@ -196,52 +211,88 @@ int dp_model_scan(struct dp_model *m, const char *roms_dir)
 
 static int rom_cmp(const void *a, const void *b)
 {
-    const char *x = *(char *const *)a;
-    const char *y = *(char *const *)b;
-    int order = strcasecmp(x, y);
-    return order != 0 ? order : strcmp(x, y);
+    const struct dp_rom_item *x = a, *y = b;
+    int order = strcasecmp(x->name, y->name);
+    if (!order)
+        order = strcmp(x->name, y->name);
+    return order ? order : (int)x->source - (int)y->source;
+}
+
+static void load_games(struct dp_model *m, const char *root, const struct dp_system *system,
+                       enum dp_rom_source source, size_t *capacity)
+{
+    char path[2048];
+    const char *folder = system->folders[source - 1];
+    if (!root || !*folder)
+        return;
+    int len = snprintf(path, sizeof(path), "%s/%s", root, folder);
+    if (len < 0 || (size_t)len >= sizeof(path))
+        return;
+    DIR *d = opendir(path);
+    if (!d)
+        return;
+
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        if (!is_rom(d, e->d_name, system->extensions))
+            continue;
+        if ((size_t)m->nroms == *capacity) {
+            size_t next = *capacity ? *capacity * 2 : 32;
+            struct dp_rom_item *items = realloc(m->roms, next * sizeof(*items));
+            if (!items)
+                break;
+            m->roms = items;
+            *capacity = next;
+        }
+        char *name = strdup(e->d_name);
+        if (!name)
+            break;
+        m->roms[m->nroms++] = (struct dp_rom_item){name, source};
+    }
+    closedir(d);
 }
 
 int dp_model_load_games(struct dp_model *m, const char *roms_dir, int system_index)
 {
     for (int i = 0; i < m->nroms; i++)
-        free(m->rom_names[i]);
-    free(m->rom_names);
-    m->rom_names = NULL;
+        free(m->roms[i].name);
+    free(m->roms);
+    m->roms = NULL;
     m->nroms = 0;
     if (system_index < 0 || system_index >= m->nsys)
         return 0;
-    char path[2048];
     const struct dp_system *system = &m->systems[system_index];
-    int len = snprintf(path, sizeof(path), "%s/%s", roms_dir, system->folder);
-    if (len < 0 || (size_t)len >= sizeof(path))
-        return -1;
-    DIR *d = opendir(path);
-    if (!d)
-        return -1;
-
     size_t capacity = 0;
-    struct dirent *e;
-    while ((e = readdir(d)) != NULL) {
-        if (!is_rom(d, e->d_name, system->extensions))
-            continue;
-        if ((size_t)m->nroms == capacity) {
-            size_t next = capacity ? capacity * 2 : 32;
-            char **items = realloc(m->rom_names, next * sizeof(*items));
-            if (!items)
-                break;
-            m->rom_names = items;
-            capacity = next;
-        }
-        char *name = strdup(e->d_name);
-        if (!name)
-            break;
-        m->rom_names[m->nroms++] = name;
-    }
-    closedir(d);
+    load_games(m, roms_dir, system, DP_ROM_TF1, &capacity);
+    load_games(m, m->tf2_root, system, DP_ROM_TF2, &capacity);
     if (m->nroms > 1)
-        qsort(m->rom_names, (size_t)m->nroms, sizeof(*m->rom_names), rom_cmp);
+        qsort(m->roms, (size_t)m->nroms, sizeof(*m->roms), rom_cmp);
     return m->nroms;
+}
+
+enum dp_rom_source dp_model_rom_path(const struct dp_model *m, const char *roms_dir,
+                                     const char *id, const char *rom, enum dp_rom_source source,
+                                     char *path, size_t size)
+{
+    const struct dp_system *system = NULL;
+    for (int i = 0; i < m->nsys; i++)
+        if (!strcmp(m->systems[i].id, id)) {
+            system = &m->systems[i];
+            break;
+        }
+    for (enum dp_rom_source card = DP_ROM_TF1; card <= DP_ROM_TF2; card++) {
+        if (source != DP_ROM_AUTO && card != source)
+            continue;
+        const char *root = card == DP_ROM_TF2 ? m->tf2_root : roms_dir;
+        const char *folder = system ? system->folders[card - 1] : id;
+        if (!root || !*folder)
+            continue;
+        int len = snprintf(path, size, "%s/%s/%s", root, folder, rom);
+        struct stat file;
+        if (len >= 0 && (size_t)len < size && stat(path, &file) == 0 && S_ISREG(file.st_mode))
+            return card;
+    }
+    return DP_ROM_AUTO;
 }
 
 int dp_model_load_continue(struct dp_model *m, const char *data_dir)
@@ -261,11 +312,11 @@ int dp_model_load_continue(struct dp_model *m, const char *data_dir)
             line[--len] = '\0';
         if (!len || line[0] == '#')
             continue;
-        char *fields[7] = { 0 };
+        char *fields[8] = { 0 };
         int nf = 0;
         char *p = line;
         fields[nf++] = p;
-        for (; *p && nf < 7; p++) {
+        for (; *p && nf < 8; p++) {
             if (*p == '\t') {
                 *p = '\0';
                 fields[nf++] = p + 1;
@@ -284,6 +335,8 @@ int dp_model_load_continue(struct dp_model *m, const char *data_dir)
             snprintf(it->sys_id, sizeof(it->sys_id), "%s", fields[5]);
         if (nf > 6 && fields[6])
             snprintf(it->rom, sizeof(it->rom), "%s", fields[6]);
+        it->source = nf > 7 && !strcmp(fields[7], "tf2") ? DP_ROM_TF2 :
+                     nf > 7 && !strcmp(fields[7], "tf1") ? DP_ROM_TF1 : DP_ROM_AUTO;
         m->ncont++;
     }
     fclose(f);

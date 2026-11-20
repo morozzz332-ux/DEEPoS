@@ -18,11 +18,14 @@ enum modd_state {
 
 struct dp_module {
     char id[48];
+    char name[96];
+    char description[256];
     char dir[512];
     char entry[512];
     char runtime[24];
     int memory_mb;
     int enabled;
+    int on_demand;
 
     pid_t pid;
     int fd_in;

@@ -12,4 +12,5 @@
 ::respawn:/usr/bin/launcher
 ttyS2::respawn:/sbin/getty -L ttyS2 1500000 vt100
 ::ctrlaltdel:/sbin/reboot
+::shutdown:/usr/bin/launcher --save-clock
 ::shutdown:/bin/umount -a -r

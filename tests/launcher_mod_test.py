@@ -93,6 +93,20 @@ def main():
                   p.returncode == 0 and blob.startswith(b"P6\n") and len(blob) > 640 * 480 * 3,
                   (p.returncode, len(blob)))
 
+            keys = [str(LAUNCHER), "--roms", str(tmpdir / "roms"), "--data", str(data),
+                    "--modules-socket", str(sock), "--screen", "modules", "--out", str(ppm)]
+            subprocess.run(keys + ["--keys", "Y"], check=True, capture_output=True)
+            check("Y opens the description", ppm.read_bytes() != blob)
+            subprocess.run(keys + ["--keys", "Y,B"], check=True, capture_output=True)
+            check("B closes the description", ppm.read_bytes() == blob)
+            module = lines[0].split("\t")[0]
+            subprocess.run(keys + ["--keys", "A"], check=True, capture_output=True)
+            switch = data / f".enabled-{module}"
+            check("A saves the off switch and updates the row",
+                  switch.read_text() == "0\n" and ppm.read_bytes() != blob)
+            subprocess.run(keys + ["--keys", "A"], check=True, capture_output=True)
+            check("A switches the module back on", switch.read_text() == "1\n")
+
             p = subprocess.run(
                 [str(LAUNCHER), "--roms", str(tmpdir / "roms"), "--data", str(data),
                  "--modules-socket", str(sock), "--module-action", "thermal:eco"],

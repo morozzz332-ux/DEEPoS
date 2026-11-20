@@ -6,7 +6,7 @@
 #   1. busybox (static, board/busybox.config) as /bin/busybox + applet links
 #   2. our own binaries cross-compiled: launcher, modd, saved (static)
 #   3. rootfs overlay: /etc (os-release, fstab, inittab, rcS), /data, /storage
-#   4. module tree for thermal/saves, shipped read-only under /usr/share/deepos
+#   4. bundled modules and selected time zones
 #
 # Outputs: build/rootfs.squashfs and build/rootfs-stage/ (both git-ignored)
 set -eu
@@ -60,8 +60,10 @@ sh "$REPO/tools/build-userland.sh" --out "$STAGE/usr/bin"
 echo "applying rootfs overlay"
 cp -a "$REPO/board/r36s-v20/rootfs-overlay/." "$STAGE/"
 ln -sf /run/deepos-usb-resolv.conf "$STAGE/etc/resolv.conf"
+sh "$REPO/tools/install-zones.sh" "$REPO/apps/launcher/src/dp_zones.def" "$STAGE"
 mkdir -p "$STAGE/proc" "$STAGE/sys" "$STAGE/dev" "$STAGE/run" "$STAGE/tmp" \
-         "$STAGE/flash" "$STAGE/data" "$STAGE/storage" "$STAGE/usr/share/deepos" "$STAGE/sbin"
+         "$STAGE/flash" "$STAGE/data" "$STAGE/storage" "$STAGE/games" \
+         "$STAGE/usr/share/deepos" "$STAGE/sbin"
 chmod 1777 "$STAGE/tmp"
 chmod 0755 "$STAGE/etc/init.d/rcS" "$STAGE/usr/local/bin/"*.sh \
            "$STAGE/usr/share/deepos/roms/ports/demo.sh"
@@ -72,10 +74,11 @@ chmod 0755 "$STAGE/etc/init.d/rcS" "$STAGE/usr/local/bin/"*.sh \
 # --- 4. modules -----------------------------------------------------------
 echo "shipping modules"
 mkdir -p "$STAGE/usr/share/deepos/modules"
-cp -a "$REPO/modules/thermal" "$REPO/modules/saves" "$STAGE/usr/share/deepos/modules/"
+cp -a "$REPO/modules/." "$STAGE/usr/share/deepos/modules/"
 chmod 0755 "$STAGE/usr/share/deepos/modules/"*/main.sh \
            "$STAGE/usr/share/deepos/modules/"*/root/*.sh
 cp "$REPO/board/r36s-v20/data/emulators.toml" "$STAGE/usr/share/deepos/"
+cp "$REPO/board/r36s-v20/data/rom-folders.txt" "$STAGE/usr/share/deepos/"
 install -D -m 0644 "$REPO/tools/fonts/terminus/OFL.TXT" \
     "$STAGE/usr/share/licenses/deepos/terminus-OFL.txt"
 

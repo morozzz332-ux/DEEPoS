@@ -109,6 +109,31 @@ def main() -> int:
         check(res.returncode == 0 and marker.read_text().splitlines() == [str(game)],
               f"nested Arch-R library forwards the original path: {res.stderr}")
 
+        dual1 = tmp / "tf1"
+        dual2 = tmp / "tf2"
+        (dual1 / "md").mkdir(parents=True)
+        (dual2 / "roms" / "MD").mkdir(parents=True)
+        first = dual1 / "md" / "same.md"
+        second = dual2 / "roms" / "MD" / "same.md"
+        first.write_text("first card")
+        second.write_text("second card")
+        dual_data = tmp / "dual-data"
+        dual_data.mkdir()
+        dual_args = ["--roms", str(dual1), "--roms2", str(dual2), "--emulators", str(emu),
+                     "--data", str(dual_data)]
+        listed = run_launcher(dual_args + ["--list-roms"])
+        check("md\t2\t" in listed.stdout and "TOTAL\t2\t1" in listed.stdout,
+              f"two cards share one system: {listed.stdout}")
+        res = run_launcher(dual_args + ["--screen", "systems", "--keys", "a,a"])
+        check(res.returncode == 0 and marker.read_text().splitlines() == [str(first)],
+              f"first equal game resolves to TF1: {res.stderr}")
+        res = run_launcher(dual_args + ["--screen", "systems", "--keys", "a,down,a"])
+        check(res.returncode == 0 and marker.read_text().splitlines() == [str(second)],
+              f"second equal game resolves to TF2: {res.stderr}")
+        res = run_launcher(dual_args + ["--keys", "a"])
+        check(res.returncode == 0 and marker.read_text().splitlines() == [str(second)],
+              f"Continue preserves TF2 even when TF1 has the same ROM: {res.stderr}")
+
         # 2. unknown system -> code 5
         res = run_launcher(["--roms", str(roms), "--emulators", str(emu),
                             "--run-game", "snes:g0.sfc"])

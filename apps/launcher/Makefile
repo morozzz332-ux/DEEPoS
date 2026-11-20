@@ -17,6 +17,8 @@ $(BIN): $(OBJ)
 src/%.o: src/%.c src/dp_canvas.h src/dp_font.h src/dp_model.h src/dp_sound.h src/dp_theme.h src/dp_ui.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+src/dp_clock.o: src/dp_clock.h src/dp_zones.def
+
 test: $(BIN)
 	@echo "run: python tests/run.py"
 

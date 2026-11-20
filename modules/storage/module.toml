@@ -1,0 +1,13 @@
+id = "storage"
+name = "Хранилище"
+description = "Показывает свободное место на DATA и ROMS. Нажмите X, чтобы обновить показания."
+api_version = 3
+version = "0.1.0"
+
+[run]
+runtime = "sh"
+entry = "main.sh"
+mode = "ondemand"
+
+[limits]
+memory_mb = 8

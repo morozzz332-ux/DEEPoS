@@ -17,6 +17,9 @@ int dp_modc_status(const char *socket_path, struct dp_model *m);
 /* Invokes one module action ("eco", "backup", ...). Returns 0 when the
  * supervisor accepted it, -1 when the call failed or modd reported an error. */
 int dp_modc_action(const char *socket_path, const char *module_id, const char *action);
+int dp_modc_set_enabled(const char *socket_path, const char *module_id, int enabled);
+int dp_modc_describe(const char *socket_path, const char *module_id, char *out, size_t size);
+int dp_modc_inspect(const char *socket_path, const char *module_id, char *out, size_t size);
 
 /* Asks every module for its launch decision. Returns 0 when the call went
  * through (allow is 1 or 0), -1 when the supervisor is unreachable (allow

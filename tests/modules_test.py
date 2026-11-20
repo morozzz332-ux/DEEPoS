@@ -98,10 +98,16 @@ def run_modd(tmp, data):
         return
     modules = os.path.join(tmp, "modules")
     os.makedirs(modules, exist_ok=True)
-    shutil.copytree(os.path.join(MODULES, "thermal"), os.path.join(modules, "thermal"), dirs_exist_ok=True)
-    for name in ("main.sh",):
-        path = os.path.join(modules, "thermal", name)
+    for module in ("thermal", "battery", "storage", "emulators"):
+        shutil.copytree(os.path.join(MODULES, module), os.path.join(modules, module))
+        path = os.path.join(modules, module, "main.sh")
         os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
+    battery = os.path.join(tmp, "sys/class/power_supply/test-battery")
+    os.makedirs(battery)
+    for field, value in (("capacity", "74"), ("status", "Charging")):
+        with open(os.path.join(battery, field), "w") as handle:
+            handle.write(value + "\n")
+    open(os.path.join(modules, "emulators", ".deepos-roms-import"), "w").close()
     socket = os.path.join(tmp, "modd.sock")
     env = dict(os.environ, MODD_INIT_MS="2000", MODD_ACTION_MS="2000", SYSFS_PREFIX=tmp)
     proc = subprocess.Popen([MODD, "--modules", modules, "--socket", socket, "--data", data],
@@ -129,7 +135,23 @@ def run_modd(tmp, data):
         check("modd initialize", "result" in init and "error" not in init, str(init)[:120])
         act = call({"id": 3, "method": "action.invoke", "params": {"module": "thermal", "action": "eco"}})
         check("modd action", "result" in act and "error" not in act, str(act)[:120])
-        call({"id": 4, "method": "shutdown"})
+        call({"id": 4, "method": "launch.before", "params": {"system": "md", "rom": "g0.md"}})
+        status = call({"id": 5, "method": "status"})["result"]["modules"]
+        diagnostic = {m["id"]: m for m in status if m.get("on_demand")}
+        check("diagnostics stay idle on game launch",
+              len(diagnostic) == 3 and all(m["starts"] == 0 for m in diagnostic.values()))
+        check("manually imported modules start disabled", diagnostic["emulators"]["enabled"] is False)
+        call({"id": 6, "method": "module.set_enabled", "params": {"module": "emulators", "enabled": 1}})
+        for number, (module, expected) in enumerate(
+                (("battery", "74%"), ("storage", "TF2:"), ("emulators", "Ядер RetroArch:")), 7):
+            result = call({"id": number, "method": "action.invoke",
+                           "params": {"module": module, "action": "inspect"}})
+            check(f"{module} returns its readings", expected in result.get("result", {}).get("message", ""),
+                  str(result))
+        status = call({"id": 10, "method": "status"})["result"]["modules"]
+        check("diagnostics exit after collecting readings",
+              all(m["state"] == "stopped" and m["starts"] == 1 for m in status if m.get("on_demand")))
+        call({"id": 11, "method": "shutdown"})
         client.close()
     finally:
         proc.terminate()

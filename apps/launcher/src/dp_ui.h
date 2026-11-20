@@ -3,6 +3,7 @@
 #define DP_UI_H
 
 #include "dp_canvas.h"
+#include "dp_clock.h"
 #include "dp_model.h"
 
 enum dp_screen {
@@ -28,6 +29,9 @@ void dp_ui_boot_splash(struct dp_canvas *cv);
 
 /* Transient message above the hint bar (failed launch, read-only card, ...). */
 void dp_ui_toast(struct dp_canvas *cv, const char *message);
+void dp_ui_module_details(struct dp_canvas *cv, const struct dp_module_info *module,
+                          const char *message);
+void dp_ui_clock(struct dp_canvas *cv, int region, int selected, const struct tm *draft);
 
 /* Centred panel for the guided hardware measurement (BENCH.ON on BOOT). */
 void dp_ui_overlay(struct dp_canvas *cv, const char *title, const char *line1,
