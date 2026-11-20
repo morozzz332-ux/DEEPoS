@@ -409,8 +409,8 @@ enum dp_key dp_input_poll(struct dp_input *in, int timeout_ms)
         return DP_KEY_NONE;
     struct pollfd fds[] = {
         { .fd = in->key_fd, .events = POLLIN },
-        { .fd = in->volume_only && in->key_fd >= 0 ? -1 : in->fd, .events = POLLIN },
-        { .fd = in->volume_only ? -1 : in->axis_fd, .events = POLLIN },
+        { .fd = in->fd, .events = POLLIN },
+        { .fd = in->game_only ? -1 : in->axis_fd, .events = POLLIN },
     };
     if (poll(fds, sizeof(fds) / sizeof(fds[0]), timeout_ms) <= 0)
         return DP_KEY_NONE;
@@ -437,11 +437,16 @@ enum dp_key dp_input_poll(struct dp_input *in, int timeout_ms)
         struct dp_input_event ev;
         while (read(fds[i].fd, &ev, sizeof(ev)) == (ssize_t)sizeof(ev)) {
             enum dp_key key = DP_KEY_NONE;
-            if (ev.type == EV_ABS && i != 0 && !in->volume_only)
+            if (ev.type == EV_ABS && i != 0 && !in->game_only)
                 key = input_axis(in, &ev);
-            if (ev.type == EV_KEY && i != 2 &&
-                ((i != 0 && !in->volume_only) || ev.code == KEY_VOLUMEUP || ev.code == KEY_VOLUMEDOWN))
-                key = input_button(in, &ev);
+            if (ev.type == EV_KEY && i != 2) {
+                int volume = ev.code == KEY_VOLUMEUP || ev.code == KEY_VOLUMEDOWN;
+                int chord = ev.code == BTN_SELECT || ev.code == KEY_SELECT || ev.code == KEY_START;
+                if (volume || (i == 1 && (!in->game_only || chord)))
+                    key = input_button(in, &ev);
+                if (in->game_only && !volume && key != DP_KEY_MENU_BACK)
+                    key = DP_KEY_NONE;
+            }
             if (key == DP_KEY_NONE)
                 continue;
             in->last_us = (unsigned long long)ev.sec * 1000000ULL +

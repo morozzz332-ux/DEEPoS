@@ -459,6 +459,33 @@ def test_gpu_and_ports_stack():
     check("RetroArch uses the SDL2 input driver (no udevd, no tty)",
           'input_driver = "sdl2"' in retro)
     check("RetroArch keeps the udev joypad driver", 'input_joypad_driver = "udev"' in retro)
+    register = overlay / "usr/local/bin/register-v20-joypad.sh"
+    check("rcS registers the built-in gamepad after mdev",
+          0 <= rc.find("mdev -s 2>/dev/null") < rc.find(str(register.relative_to(overlay).as_posix())))
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp)
+        events, records = root / "input", root / "udev" / "data"
+        for index, devnum, name, phys in (
+            (1, "13:65", "adc-keys", "adc-keys/input0"),
+            (4, "13:68", "r36s_Gamepad", "usb/input0"),
+            (7, "13:71", "r36s_Gamepad", "archr-singleadc-joypad/input0"),
+        ):
+            event = events / f"event{index}"
+            (event / "device").mkdir(parents=True)
+            (event / "dev").write_text(devnum + "\n", encoding="ascii")
+            (event / "device/name").write_text(name + "\n", encoding="ascii")
+            (event / "device/phys").write_text(phys + "\n", encoding="ascii")
+        cmd = ["sh", str(register), str(events), str(records)]
+        result = subprocess.run(cmd, capture_output=True)
+        record = records / "c13:71"
+        check("V20 publishes the udev properties for its built-in gamepad only",
+              result.returncode == 0 and list(records.iterdir()) == [record] and
+              record.read_text(encoding="ascii") == "E:ID_INPUT=1\nE:ID_INPUT_JOYSTICK=1\n")
+        if record.is_file():
+            record.write_text("existing udev data\n", encoding="ascii")
+            result = subprocess.run(cmd, capture_output=True)
+            check("V20 preserves an existing udev record on startup",
+                  result.returncode == 0 and record.read_text(encoding="ascii") == "existing udev data\n")
     # 6. Launch-time tuning taken from dArkOSRE, with the parts that this board
     #    rejects measured out: threaded video kills kmsdrm here, and the
     #    synchronous ALSA driver is the one that produced sound.
@@ -482,9 +509,11 @@ def test_gpu_and_ports_stack():
     check("rcS resets the GPU governor at boot",
           "perf-boost.sh off" in (overlay / "etc/init.d/rcS").read_text(encoding="utf-8"))
     game = (overlay / "usr/local/bin/retroarch-game.sh").read_text(encoding="utf-8")
-    check("retroarch-game.sh layers the packaged config under the user copy",
+    check("retroarch-game.sh layers the user config, system hotkeys and launch overrides",
           "--config /usr/share/deepos/retroarch.cfg" in game and
-          'cat "$cfg"' in game)
+          'append="$cfg|$hotkeys|$overrides"' in game and
+          game.count('--appendconfig "$append"') == 2 and
+          "mktemp /run/deepos-retroarch.XXXXXX" in game)
     check("retroarch-game.sh boosts the GPU for the core", '"$boost" on' in game)
     check("retroarch-game.sh restores the GPU on exit", '"$boost" off' in game)
     check("retroarch-game.sh restores the GPU when the wrapper is killed",

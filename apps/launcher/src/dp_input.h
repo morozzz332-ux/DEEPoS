@@ -53,7 +53,7 @@ struct dp_input {
     unsigned seen;
     unsigned stick_mask; /* bit 0 = left, bit 1 = right */
     int inspect;
-    int volume_only;
+    int game_only; /* only the physical exit chord and volume during gameplay */
     struct dp_axis axes[DP_STICK_AXES];
     int ready;      /* 1 while the device is open and has not disappeared */
     int swap_ab;    /* legacy vendor DTB labels the face buttons the other way */

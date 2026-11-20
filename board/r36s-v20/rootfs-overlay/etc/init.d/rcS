@@ -112,6 +112,9 @@ if [ -r "$joypad" ] && ! insmod "$joypad"; then
     echo "DEEPoS: cannot load the Arch-R V20 joypad driver" >&2
 fi
 [ -x /sbin/mdev ] && mdev -s 2>/dev/null || true
+if is_mounted /run; then
+    /usr/local/bin/register-v20-joypad.sh || echo "DEEPoS: cannot register the V20 gamepad" >&2
+fi
 
 # 2a. Mali-G31 (panfrost) is modular in this kernel: nothing else creates the
 #     render node, so every OpenGL application (RetroArch gl, PortMaster ports)

@@ -21,6 +21,7 @@ fi
     echo "RetroArch or the core is missing: $core" >&2
     exit 126
 }
+[ -r "$rom" ] || exit 2
 
 mkdir -p "$config/saves" "$config/states"
 cfg=$config/retroarch.cfg
@@ -28,17 +29,14 @@ if [ ! -e "$cfg" ]; then
     cp /usr/share/deepos/retroarch.cfg "$cfg"
 fi
 hotkeys=/usr/share/deepos/retroarch-hotkeys.cfg
-overrides=/run/deepos-retroarch.cfg
-tmp=$(mktemp /run/deepos-retroarch.XXXXXX)
-# The packaged config is the baseline for every run; the copy under
-# /storage/.config is what the user (or RetroArch itself) may have edited, so it
-# goes on top of it through --appendconfig. Until 0.49 the packaged file was only
-# copied on first boot, which silently froze the defaults of that very first
-# image: audio latency, sinc resampling and the widget scale never reached the
-# board.
+overrides=$(mktemp /run/deepos-retroarch.XXXXXX)
+boost=/usr/local/bin/perf-boost.sh
+trap 'rm -f "$overrides"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+# RetroArch uses the first occurrence of a key within one file. Separate the
+# layers so each append overrides earlier layers, including on older cards.
 print_overrides() {
-    cat "$cfg" || return 1
-    cat "$hotkeys" || return 1
     /usr/bin/launcher --print-retroarch-config || return 1
     case "$rom" in /games/*)
         for bios in /games/bios /games/roms/bios; do
@@ -52,26 +50,23 @@ print_overrides() {
     *)
         # ROMs on the internal card keep their BIOS next to them on the ROMS
         # partition; without this override a config from another card wins.
-        [ -d /storage/bios ] &&
-            printf 'system_directory = "%s"\n' /storage/bios ;;
+        if [ -d /storage/bios ]; then
+            printf 'system_directory = "%s"\n' /storage/bios
+        fi ;;
     esac
 }
-if print_overrides > "$tmp" &&
-   mv -f "$tmp" "$overrides"; then
-    hotkeys=$overrides
-else
-    rm -f "$tmp"
-fi
-[ -r "$rom" ] || exit 2
+print_overrides > "$overrides"
+append="$cfg|$hotkeys|$overrides"
 
 # dArkOSRE raises the GPU clock for the whole emulator run and restores it on
 # exit; panfrost's on-demand governor otherwise idles between frames.
-boost=/usr/local/bin/perf-boost.sh
-[ -x "$boost" ] && "$boost" on
-# Same guard as run-port.sh: a killed wrapper must not leave the GPU pinned.
-[ -x "$boost" ] && ( while kill -0 $$ 2>/dev/null; do sleep 5; done; "$boost" off ) >/dev/null 2>&1 &
-trap '[ -x "$boost" ] && "$boost" off' EXIT INT TERM
-# A single-core SoC with a 60 Hz panel: let the emulator win against the
+if [ -x "$boost" ]; then
+    trap 'rm -f "$overrides"; "$boost" off' EXIT
+    "$boost" on
+    # Keep the existing cleanup guard for invocations outside the launcher.
+    ( while kill -0 $$ 2>/dev/null; do sleep 5; done; "$boost" off ) >/dev/null 2>&1 &
+fi
+# On the 60 Hz panel, the emulator gets priority over the
 # launcher's poll loop.
 nice_cmd=
 command -v nice >/dev/null 2>&1 && nice_cmd="nice -n -5"
@@ -95,14 +90,10 @@ if [ -x "$runtime/lib/ld-linux-aarch64.so.1" ]; then
     export ALSOFT_DRIVERS=alsa
     export ALSA_CONFIG_DIR="$runtime/alsa"
     $nice_cmd "$runtime/lib/ld-linux-aarch64.so.1" "$runtime/retroarch" \
-        --config /usr/share/deepos/retroarch.cfg --appendconfig "$overrides" \
+        --config /usr/share/deepos/retroarch.cfg --appendconfig "$append" \
         -L "$core" "$rom"
 else
     export GBM_BACKENDS_PATH="${GBM_BACKENDS_PATH:-/usr/lib/gbm}"
     $nice_cmd "$runtime/retroarch" --config /usr/share/deepos/retroarch.cfg \
-        --appendconfig "$overrides" -L "$core" "$rom"
+        --appendconfig "$append" -L "$core" "$rom"
 fi
-
-rc=$?
-[ -x "$boost" ] && "$boost" off
-exit "$rc"

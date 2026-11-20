@@ -2,6 +2,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdio.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
@@ -746,6 +747,7 @@ static void expand_rom(const char *tmpl, int save_slot, char *out,
  * change, which is what the keys are for. */
 static const char *g_vol_config;
 static const char *g_vol_sysfs;
+static unsigned long long now_us(clockid_t clock_id);
 
 static void volume_step(int delta) {
     struct dp_config cfg;
@@ -762,44 +764,79 @@ static void volume_step(int delta) {
         dp_config_apply_volume(g_vol_sysfs, cfg.volume);
 }
 
-/* Waits for `pid`, feeding volume-key presses to the mixer meanwhile. */
-static int wait_with_volume(pid_t pid, int *status, int watch_volume) {
+/* The emulator keeps its own controller descriptors. This observer handles
+ * hardware volume and gives the game's native exit shortcut first refusal. */
+static int wait_for_command(pid_t pid, int *status, int watch_game) {
     struct dp_input in;
-    int opened = watch_volume && g_vol_config && dp_input_open(&in) == 0;
+    int opened = watch_game && dp_input_open(&in) == 0;
     if (opened)
-        in.volume_only = 1;
+        in.game_only = 1;
+    int requested = 0, reaped = 0;
+    unsigned long long term_at = 0, kill_at = 0;
     int result = 0;
     for (;;) {
-        int armed = opened && in.ready;
-        pid_t done = waitpid(pid, status, armed ? WNOHANG : 0);
-        if (done < 0 && errno == EINTR)
-            continue;
-        if (done < 0)
-            result = -1;
-        if (done != 0)
+        int armed = (opened && in.ready) || term_at || kill_at;
+        if (!reaped) {
+            pid_t done = waitpid(pid, status, armed ? WNOHANG : 0);
+            if (done < 0 && errno == EINTR)
+                continue;
+            if (done < 0) {
+                result = -1;
+                break;
+            }
+            reaped = done == pid;
+        }
+        if (reaped && (!kill_at || (kill(-pid, 0) < 0 && errno == ESRCH)))
             break;
-        enum dp_key k = dp_input_poll(&in, 200);
+        unsigned long long now = now_us(CLOCK_MONOTONIC);
+        if (term_at && now >= term_at) {
+            kill(-pid, SIGTERM);
+            term_at = 0;
+            kill_at = now + 1500000;
+        }
+        if (kill_at && now >= kill_at) {
+            kill(-pid, SIGKILL);
+            kill_at = 0;
+            if (reaped)
+                break;
+        }
+        enum dp_key k = DP_KEY_NONE;
+        if (opened && in.ready) {
+            k = dp_input_poll(&in, 100);
+        } else {
+            const struct timespec delay = { .tv_nsec = 20000000 };
+            nanosleep(&delay, NULL);
+        }
         if (k == DP_KEY_VOL_UP)
             volume_step(5);
         else if (k == DP_KEY_VOL_DOWN)
             volume_step(-5);
+        else if (k == DP_KEY_MENU_BACK && !requested) {
+            requested = 1;
+            term_at = now_us(CLOCK_MONOTONIC) + 250000;
+        }
     }
     if (opened)
         dp_input_close(&in);
-    return result;
+    return result < 0 ? result : requested;
 }
 
-static int run_command(const char *cmd, const char *arg, int watch_volume) {
+static int run_command(const char *cmd, const char *arg, int watch_game) {
     pid_t pid = fork();
     int status = 0;
     if (pid < 0)
         return -1;
     if (pid == 0) {
+        if (watch_game && setpgid(0, 0) != 0)
+            _exit(127);
         execl("/bin/sh", "sh", "-c", cmd, "launcher", arg, (char *)NULL);
         _exit(127);
     }
-    if (wait_with_volume(pid, &status, watch_volume) != 0)
+    int result = wait_for_command(pid, &status, watch_game);
+    if (result < 0)
         return -1;
+    if (result > 0)
+        return 0;
     if (WIFEXITED(status))
         return WEXITSTATUS(status);
     return -1;

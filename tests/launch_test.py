@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -61,6 +62,40 @@ def start_modd(tmp: pathlib.Path) -> tuple[subprocess.Popen, pathlib.Path]:
     return proc, sock
 
 
+def test_game_exit_chord(tmp: pathlib.Path, roms: pathlib.Path) -> None:
+    source = LAUNCHER.parent / "src"
+    launcher = tmp / "launcher-chord"
+    subprocess.run(
+        ["cc", "-o", str(launcher), "-I", str(source),
+         *(str(obj) for obj in sorted(source.glob("*.o"))),
+         str(ROOT / "tests/fixtures/launch_input.c"),
+         "-Wl,--wrap=dp_input_open,--wrap=dp_input_poll"],
+        check=True,
+    )
+    ready = tmp / "chord-ready"
+    stopped = tmp / "chord-stopped"
+    child = tmp / "chord-child.sh"
+    child.write_text(
+        "trap 'echo stopped > \"$1\"; exit 0' TERM\n"
+        "touch \"$2\"\n"
+        "sleep 3\n"
+        "exit 23\n"
+    )
+    wrapper = tmp / "chord-wrapper.sh"
+    wrapper.write_text(f"sh {shlex.quote(str(child))} {shlex.quote(str(stopped))} "
+                       f"{shlex.quote(str(ready))} &\nwait $!\n")
+    registry = tmp / "chord-emulators.toml"
+    registry.write_text(f'md = "sh {wrapper} %ROM%"\n')
+    result = subprocess.run(
+        [str(launcher), "--roms", str(roms), "--emulators", str(registry),
+         "--run-game", "md:g0.md"],
+        capture_output=True, text=True, timeout=10,
+        env={**os.environ, "LAUNCH_CHORD_READY": str(ready)},
+    )
+    check(stopped.exists() and result.returncode == 0,
+          f"Select+Start must stop an emulator descendant and return normally: {result.returncode}")
+
+
 def main() -> int:
     check(LAUNCHER.exists(), f"launcher missing: {LAUNCHER}")
     check(MODD.exists(), f"modd missing: {MODD}")
@@ -76,6 +111,7 @@ def main() -> int:
         (roms / "md").mkdir(parents=True)
         (roms / "md" / "g0.md").write_text("rom")
         (roms / "md" / "blocked.md").write_text("rom")
+        test_game_exit_chord(tmp, roms)
 
         stub = tmp / "stub.sh"
         marker = tmp / "argv.txt"

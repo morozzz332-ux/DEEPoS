@@ -192,6 +192,16 @@ static int check_pad(const char *name, enum dp_key south, enum dp_key east, int 
     failed |= check_key(&input, BTN_SELECT, 0, DP_KEY_NONE);
     failed |= check_key(&input, BTN_SELECT, 1, DP_KEY_SELECT);
     failed |= check_key(&input, BTN_START, 1, dp_key_from_name("select+start"));
+    failed |= check_key(&input, BTN_START, 0, DP_KEY_NONE);
+    failed |= check_key(&input, BTN_SELECT, 0, DP_KEY_NONE);
+    input.game_only = 1;
+    failed |= check_axis(&input, ABS_X, 0, DP_KEY_NONE);
+    failed |= check_key(&input, BTN_SOUTH, 1, DP_KEY_NONE);
+    failed |= check_key(&input, BTN_SELECT, 1, DP_KEY_NONE);
+    failed |= check_key(&input, BTN_SELECT, 0, DP_KEY_NONE);
+    failed |= check_key(&input, BTN_START, 1, DP_KEY_NONE);
+    failed |= check_key(&input, BTN_SELECT, 1, DP_KEY_MENU_BACK);
+    failed |= check_key(&input, KEY_VOLUMEUP, 1, DP_KEY_VOL_UP);
     dp_input_close(&input);
     close(event_pipe[1]);
     return failed;
