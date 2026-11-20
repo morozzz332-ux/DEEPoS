@@ -1,5 +1,19 @@
 # Образы DEEPoS для R36S‑V20
 
+## 0.40-v20-test от 2026-11-20
+
+- image sha256: `1261b3e2666a4915a643f8ce5f552ed0d07d0c7acbbc1828c3bb7700f0e0449c`
+- Размер распакованного образа 4 294 967 296 байт.
+
+| Артефакт | Байты | SHA-256 | Путь |
+|---|---:|---|---|
+| image | 4294967296 | 1261b3e2666a4915a643f8ce5f552ed0d07d0c7acbbc1828c3bb7700f0e0449c | `build/deepos-r36s-v20-0.40-test.img.gz` |
+| rootfs | 2564096 | 8f2c187bdaf849e75021e0e03dde8a73ce416c137a605d3c03f7da75cac13ebd | `build/deepos-rootfs-0.40-v20-test.squashfs` |
+
+Новые настройки RetroArch и режимы OTG описаны в [руководстве](GUIDE.md).
+Образ прошёл 43 проверки структуры, загрузчика и файлов BOOT. DHCP, обнаружение
+диска ROMS на ПК и запуск игр с новыми настройками проверяются на R36S‑V20.
+
 ## 0.39-v20-terminal от 2026-11-20
 
 - image sha256: `52140057a9cbd6c8b9a5cb54db7a6ebfa1d7069a3f6217eee4b87fa167dab19a`
