@@ -51,7 +51,7 @@ def test_first_frame(tmpdir):
     source = BIN.parent / "src"
     launcher = tmpdir / "launcher-boot-test"
     wrappers = ("dp_display_open", "dp_display_present", "dp_display_close",
-                "dp_input_open", "dp_input_poll", "access", "execl")
+                "dp_input_open", "dp_input_poll", "dp_sound_play", "access", "execl")
     cmd = ["cc", "-o", str(launcher), "-I", str(source),
            *(str(obj) for obj in sorted(source.glob("*.o"))),
            str(ROOT / "tests" / "fixtures" / "launcher_boot.c"),
@@ -93,6 +93,13 @@ def test_first_frame(tmpdir):
               splash_fb.read_bytes() == ppm_to_565(frame))
     else:
         check("boot splash renders", False, result.stderr)
+
+    result = subprocess.run([str(launcher)], capture_output=True, text=True, timeout=10,
+                            env={**os.environ, "DEEPOS_TEST_FRAMEBUFFER": "hardware",
+                                 "DEEPOS_TEST_TONES": "1"})
+    tones = [line for line in result.stdout.splitlines() if line.startswith("tone ")]
+    check("only tab changes, back and confirmation produce tones",
+          result.returncode == 0 and tones == ["tone tab", "tone back", "tone confirm"], tones)
 
     data = tmpdir / "physical-data"
     data.mkdir()

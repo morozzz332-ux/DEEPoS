@@ -7,6 +7,7 @@
 
 #include "dp_display.h"
 #include "dp_input.h"
+#include "dp_sound.h"
 
 static int frame_presented;
 
@@ -41,7 +42,7 @@ void __wrap_dp_display_close(struct dp_display *display)
 int __wrap_dp_input_open(struct dp_input *input)
 {
     *input = (struct dp_input){ .fd = -1, .ready = 1 };
-    return getenv("DEEPOS_TEST_PHYSICAL_KEYS") ? 0 : -1;
+    return getenv("DEEPOS_TEST_PHYSICAL_KEYS") || getenv("DEEPOS_TEST_TONES") ? 0 : -1;
 }
 
 enum dp_key __wrap_dp_input_poll(struct dp_input *input, int timeout_ms)
@@ -49,8 +50,21 @@ enum dp_key __wrap_dp_input_poll(struct dp_input *input, int timeout_ms)
     (void)input;
     (void)timeout_ms;
     static unsigned next;
+    if (getenv("DEEPOS_TEST_TONES")) {
+        const enum dp_key sounds[] = { DP_KEY_DOWN, DP_KEY_R1, DP_KEY_A, DP_KEY_B,
+                                      DP_KEY_A, DP_KEY_DOWN, DP_KEY_QUIT };
+        return next < sizeof(sounds) / sizeof(sounds[0]) ? sounds[next++] : DP_KEY_QUIT;
+    }
     const enum dp_key keys[] = { DP_KEY_RIGHT, DP_KEY_RIGHT, DP_KEY_A, DP_KEY_QUIT };
     return next < sizeof(keys) / sizeof(keys[0]) ? keys[next++] : DP_KEY_QUIT;
+}
+
+pid_t __wrap_dp_sound_play(pid_t active, enum dp_tone tone)
+{
+    (void)active;
+    static const char *const names[] = { "tone tab\n", "tone confirm\n", "tone back\n" };
+    (void)write(STDOUT_FILENO, names[tone], strlen(names[tone]));
+    return 0;
 }
 
 int __real_access(const char *path, int mode);

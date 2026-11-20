@@ -11,7 +11,6 @@ import sys
 import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-BIN = ROOT / "apps/playdemo/playdemo"
 failures = []
 
 
@@ -23,8 +22,8 @@ def check(name, ok, detail=""):
         failures.append(name)
 
 
-def run(fb, keys=None, rom=None, extra=()):
-    cmd = [str(BIN), "--fb", str(fb)]
+def run(binary, fb, keys=None, rom=None, extra=()):
+    cmd = [str(binary), "--fb", str(fb)]
     if keys:
         cmd += ["--keys", keys]
     if rom:
@@ -41,9 +40,11 @@ def ink(path):
 def main():
     with tempfile.TemporaryDirectory() as name:
         tmp = pathlib.Path(name)
+        binary = tmp / "playdemo"
+        subprocess.run(["make", "-s", "-C", str(ROOT / "apps/playdemo"), f"BIN={binary}"], check=True)
         fb = tmp / "frame.bin"
 
-        p = run(fb, keys="DOWN,A,DOWN,B", rom="/storage/ports/demo.sh", extra=["--exit-after", "4"])
+        p = run(binary, fb, keys="DOWN,A,DOWN,B", rom="/storage/ports/demo.sh", extra=["--exit-after", "4"])
         check("demo runs with synthetic keys", p.returncode == 0, p.stderr.strip()[:200])
         check("demo reports the rom it was given", "rom=/storage/ports/demo.sh" in p.stdout,
               p.stdout.strip()[:200])
@@ -51,13 +52,13 @@ def main():
               str(fb.stat().st_size if fb.exists() else "missing"))
         check("frame has pixels", ink(fb) > 1000)
 
-        p = run(fb, keys="UP,UP", rom="/storage/ports/demo.sh", extra=["--exit-after", "2"])
+        p = run(binary, fb, keys="UP,UP", rom="/storage/ports/demo.sh", extra=["--exit-after", "2"])
         check("UP presses are counted", "presses=2" in p.stdout, p.stdout.strip()[:200])
 
-        p = run(fb, keys="B", rom="/storage/ports/demo.sh", extra=["--exit-after", "1"])
+        p = run(binary, fb, keys="B", rom="/storage/ports/demo.sh", extra=["--exit-after", "1"])
         check("B exits immediately", "done=1" in p.stdout)
 
-        p = run(tmp / "nested" / "missing.bin", keys="A", rom="x.md")
+        p = run(binary, tmp / "nested" / "missing.bin", keys="A", rom="x.md")
         check("missing display path fails cleanly",
               p.returncode != 0 and "no display" in (p.stderr or ""),
               (p.stderr or "").strip()[:200])
