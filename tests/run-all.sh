@@ -18,6 +18,7 @@ python3 tests/updatr_test.py
 python3 tests/launch_test.py
 python3 tests/config_test.py
 python3 tests/settings_test.py
+python3 tests/bios_test.py
 python3 tests/playdemo_test.py
 python3 tests/preflight_test.py
 python3 tests/release_test.py
