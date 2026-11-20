@@ -12,6 +12,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LAUNCHER = ROOT / "apps" / "launcher" / "launcher"
@@ -62,9 +63,9 @@ def start_modd(tmp: pathlib.Path) -> tuple[subprocess.Popen, pathlib.Path]:
     return proc, sock
 
 
-def test_game_exit_chord(tmp: pathlib.Path, roms: pathlib.Path) -> None:
+def wrapped_launcher(tmp: pathlib.Path, name: str) -> pathlib.Path:
     source = LAUNCHER.parent / "src"
-    launcher = tmp / "launcher-chord"
+    launcher = tmp / name
     subprocess.run(
         ["cc", "-o", str(launcher), "-I", str(source),
          *(str(obj) for obj in sorted(source.glob("*.o"))),
@@ -72,6 +73,55 @@ def test_game_exit_chord(tmp: pathlib.Path, roms: pathlib.Path) -> None:
          "-Wl,--wrap=dp_input_open,--wrap=dp_input_poll"],
         check=True,
     )
+    return launcher
+
+
+def test_hung_child(tmp: pathlib.Path, roms: pathlib.Path) -> None:
+    launcher = wrapped_launcher(tmp, "launcher-hung")
+    ready = tmp / "hung-ready"
+    pidfile = tmp / "hung.pid"
+    child = tmp / "hung-child.sh"
+    child.write_text(
+        "trap '' TERM\n"
+        f"echo $$ > {shlex.quote(str(pidfile))}\n"
+        "touch \"$1\"\n"
+        "sleep 10\n"
+        "exit 23\n"
+    )
+    wrapper = tmp / "hung-wrapper.sh"
+    wrapper.write_text(f"sh {shlex.quote(str(child))} {shlex.quote(str(ready))} &\nwait $!\n")
+    registry = tmp / "hung-emulators.toml"
+    registry.write_text(f'md = "sh {wrapper} %ROM%"\n')
+    started = time.monotonic()
+    result = subprocess.run(
+        [str(launcher), "--roms", str(roms), "--emulators", str(registry),
+         "--run-game", "md:g0.md"],
+        capture_output=True, text=True, timeout=12,
+        env={**os.environ, "LAUNCH_CHORD_READY": str(ready)},
+    )
+    elapsed = time.monotonic() - started
+    check(result.returncode == 0,
+          f"a child ignoring SIGTERM must end via SIGKILL and return 0: {result.returncode}")
+    check(elapsed < 5.0, f"the SIGKILL fallback took {elapsed:.1f}s, expected under 5s")
+    check(pidfile.exists(), "the hung child never started")
+    if pidfile.exists():
+        pid = int(pidfile.read_text().strip())
+        gone = False
+        for _ in range(40):
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                gone = True
+                break
+            except PermissionError:
+                gone = True
+                break
+            time.sleep(0.05)
+        check(gone, f"the hung child {pid} is still alive after the launcher returned")
+
+
+def test_game_exit_chord(tmp: pathlib.Path, roms: pathlib.Path) -> None:
+    launcher = wrapped_launcher(tmp, "launcher-chord")
     ready = tmp / "chord-ready"
     stopped = tmp / "chord-stopped"
     child = tmp / "chord-child.sh"
@@ -112,6 +162,7 @@ def main() -> int:
         (roms / "md" / "g0.md").write_text("rom")
         (roms / "md" / "blocked.md").write_text("rom")
         test_game_exit_chord(tmp, roms)
+        test_hung_child(tmp, roms)
 
         stub = tmp / "stub.sh"
         marker = tmp / "argv.txt"
